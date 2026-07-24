@@ -2,10 +2,9 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useChannel } from '@/hooks/useChannel'
-import { useAppStore } from '@/stores/useAppStore'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Reply, X, Send, Image as ImageIcon, Loader2 } from 'lucide-react'
+import { Reply, X, Send, Image as ImageIcon, Loader2, Smile } from 'lucide-react'
 import { toast } from 'sonner'
 
 interface MessageComposerProps {
@@ -19,15 +18,13 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
   const [uploading, setUploading] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // Auto-resize
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+    el.style.height = Math.min(el.scrollHeight, 160) + 'px'
   }, [text])
 
-  // Focus when reply target changes
   useEffect(() => {
     if (replyTo) textareaRef.current?.focus()
   }, [replyTo])
@@ -37,14 +34,11 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
     if (!trimmed || sending) return
     setSending(true)
     try {
-      await send({
-        body: trimmed,
-        replyToId: replyTo?.id || null,
-      })
+      await send({ body: trimmed, replyToId: replyTo?.id || null })
       setText('')
       setReplyTo(null)
       sendTyping(false)
-    } catch (e: any) {
+    } catch {
       toast.error('Failed to send message')
     } finally {
       setSending(false)
@@ -60,11 +54,8 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setText(e.target.value)
-    if (e.target.value.length > 0) {
-      sendTyping(true)
-    } else {
-      sendTyping(false)
-    }
+    if (e.target.value.length > 0) sendTyping(true)
+    else sendTyping(false)
   }
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -91,42 +82,51 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
   }
 
   return (
-    <div className="border-t bg-card p-3 space-y-2">
+    <div className="border-t bg-background px-3 md:px-6 py-3 pb-safe">
+      {/* Reply banner */}
       {replyTo && (
-        <div className="flex items-center gap-2 text-xs bg-muted/50 rounded p-2">
-          <Reply className="w-3 h-3" />
-          <span className="font-medium">{replyTo.senderName}:</span>
-          <span className="text-muted-foreground truncate flex-1">{replyTo.body}</span>
-          <button
-            onClick={() => setReplyTo(null)}
-            className="hover:bg-accent rounded p-0.5"
-          >
+        <div className="flex items-center gap-2 text-xs bg-muted rounded-lg p-2 mb-2">
+          <Reply className="w-3 h-3 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="font-medium">{replyTo.senderName}</div>
+            <div className="text-muted-foreground truncate">{replyTo.body}</div>
+          </div>
+          <button onClick={() => setReplyTo(null)} className="p-1 hover:bg-accent rounded">
             <X className="w-3 h-3" />
           </button>
         </div>
       )}
+
       <div className="flex items-end gap-2">
-        <label className="cursor-pointer p-2 hover:bg-accent rounded-lg">
+        {/* Upload button */}
+        <label className="cursor-pointer p-2.5 hover:bg-accent rounded-full transition-colors shrink-0">
           <ImageIcon className="w-5 h-5 text-muted-foreground" />
           <input type="file" className="hidden" accept="image/*,video/*,audio/*" onChange={handleUpload} disabled={uploading} />
         </label>
-        <Textarea
-          ref={textareaRef}
-          value={text}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          placeholder="Type a message..."
-          className="flex-1 resize-none min-h-[40px] max-h-[200px] bg-background"
-          disabled={sending || uploading}
-          rows={1}
-        />
-        <Button onClick={handleSend} disabled={!text.trim() || sending} size="icon">
+
+        {/* Text input — grows up to ~4 lines */}
+        <div className="flex-1 bg-muted rounded-2xl px-4 py-2 flex items-end">
+          <Textarea
+            ref={textareaRef}
+            value={text}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Message..."
+            className="flex-1 resize-none min-h-[24px] max-h-[160px] bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 p-0 text-[15px] leading-snug shadow-none"
+            disabled={sending || uploading}
+            rows={1}
+          />
+        </div>
+
+        {/* Send button */}
+        <Button
+          onClick={handleSend}
+          disabled={!text.trim() || sending}
+          size="icon"
+          className="rounded-full h-10 w-10 shrink-0 transition-transform active:scale-90"
+        >
           {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
         </Button>
-      </div>
-      <div className="text-xs text-muted-foreground pl-1">
-        Tip: use <code className="bg-muted px-1 rounded">/help</code> to see bot commands,{' '}
-        <code className="bg-muted px-1 rounded">@username</code> to mention a bot.
       </div>
     </div>
   )

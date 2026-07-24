@@ -2,36 +2,43 @@
 
 import { create } from 'zustand'
 
-export type ViewKey = 'chat' | 'status' | 'voice' | 'bots' | 'settings' | 'admin'
+export type ViewKey = 'chats' | 'status' | 'voice' | 'settings'
 
 interface AppState {
-  // Navigation
+  // Top-level destination (one of the bottom tabs on mobile / sidebar items on desktop)
   view: ViewKey
   setView: (v: ViewKey) => void
 
-  // Chat
+  // Active chat channel — when set, mobile shows full-screen chat
   activeChannelId: string | null
   setActiveChannel: (id: string | null) => void
+
+  // Whether chat info panel is open (mobile: Sheet, desktop: right panel)
+  chatInfoOpen: boolean
+  setChatInfoOpen: (open: boolean) => void
 
   // Reply target
   replyTo: { id: string; body: string; senderName: string } | null
   setReplyTo: (r: { id: string; body: string; senderName: string } | null) => void
 
-  // Sidebar (mobile)
-  sidebarOpen: boolean
-  setSidebarOpen: (open: boolean) => void
+  // Chat list filter
+  chatFilter: 'all' | 'unread' | 'groups' | 'dms' | 'bots'
+  setChatFilter: (f: AppState['chatFilter']) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
-  view: 'chat',
+  view: 'chats',
   setView: (view) => set({ view }),
 
   activeChannelId: null,
-  setActiveChannel: (id) => set({ activeChannelId: id }),
+  setActiveChannel: (id) => set({ activeChannelId: id, chatInfoOpen: false }),
+
+  chatInfoOpen: false,
+  setChatInfoOpen: (chatInfoOpen) => set({ chatInfoOpen }),
 
   replyTo: null,
   setReplyTo: (r) => set({ replyTo: r }),
 
-  sidebarOpen: false,
-  setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+  chatFilter: 'all',
+  setChatFilter: (chatFilter) => set({ chatFilter }),
 }))

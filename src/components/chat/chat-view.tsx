@@ -2,19 +2,20 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useAppStore } from '@/stores/useAppStore'
-import { ChannelList, JoinGroupButton, StartDmButton } from './channel-list'
+import { ChatList } from './chat-list'
 import { MessageList } from './message-list'
 import { MessageComposer } from './message-composer'
-import { Hash, Volume2, Users } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { StartVoiceCallButton } from '@/components/voice/voice-controls'
+import { ChatHeader } from './chat-header'
+import { ChatInfoPanel } from './chat-info-panel'
+import { MessageCircle } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 
 export function ChatView() {
   const activeChannelId = useAppStore((s) => s.activeChannelId)
+  const chatInfoOpen = useAppStore((s) => s.chatInfoOpen)
 
-  // Look up channel info
-  const { data: channelInfo } = useQuery({
+  // Preload channels so ChatHeader has data instantly
+  const { data: groups } = useQuery({
     queryKey: ['channels'],
     queryFn: async () => {
       const res = await fetch('/api/channels')
@@ -23,108 +24,55 @@ export function ChatView() {
     },
   })
 
-  const activeChannel = channelInfo
+  const activeChannel = groups
     ?.flatMap((g) => g.channels)
     .find((c) => c.id === activeChannelId)
 
   return (
     <div className="flex h-full">
-      {/* Channel list — left sidebar */}
-      <div className="w-64 shrink-0 border-r bg-card hidden md:flex flex-col">
-        <div className="p-3 border-b space-y-2">
-          <JoinGroupButton />
-          <StartDmButton />
-        </div>
-        <div className="flex-1 min-h-0">
-          <ChannelList />
-        </div>
+      {/* Chat list — full width on mobile when no chat is open, sidebar on desktop */}
+      <div
+        className={
+          activeChannelId
+            ? 'hidden lg:flex w-80 xl:w-96 shrink-0 border-r'
+            : 'flex w-full lg:w-80 xl:w-96 shrink-0 lg:border-r'
+        }
+      >
+        <ChatList />
       </div>
 
-      {/* Messages — main */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* Active chat — full screen on mobile (slides in over list), fills remaining on desktop */}
+      <AnimatePresence>
         {activeChannelId && activeChannel ? (
-          <>
-            <div className="h-12 border-b flex items-center justify-between px-4 shrink-0">
-              <div className="flex items-center gap-2 min-w-0">
-                {activeChannel.type === 'voice' ? (
-                  <Volume2 className="w-4 h-4 text-muted-foreground shrink-0" />
-                ) : (
-                  <Hash className="w-4 h-4 text-muted-foreground shrink-0" />
-                )}
-                <span className="font-semibold truncate">{activeChannel.name}</span>
-                {activeChannel.topic && (
-                  <>
-                    <span className="text-muted-foreground">·</span>
-                    <span className="text-sm text-muted-foreground truncate">{activeChannel.topic}</span>
-                  </>
-                )}
-              </div>
-              <ChannelMembers channelId={activeChannelId} />
-            </div>
-            <MessageList channelId={activeChannelId} />
-            <MessageComposer channelId={activeChannelId} />
-          </>
+          <motion.div
+            key="chat"
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'tween', duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
+            className="flex-1 flex flex-col min-w-0 bg-background fixed inset-0 z-40 lg:static lg:inset-auto lg:z-auto"
+          >
+            <ChatHeader channel={activeChannel} />
+            <MessageList channelId={activeChannel.id} />
+            <MessageComposer channelId={activeChannel.id} />
+          </motion.div>
         ) : (
-          <EmptyState />
+          <div className="hidden lg:flex flex-1 items-center justify-center bg-background">
+            <div className="text-center max-w-sm px-6">
+              <div className="w-20 h-20 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
+                <MessageCircle className="w-9 h-9 text-primary" />
+              </div>
+              <h2 className="text-xl font-semibold mb-1">Your messages</h2>
+              <p className="text-sm text-muted-foreground">
+                Pick a chat from the list, or start a new DM with the + button.
+              </p>
+            </div>
+          </div>
         )}
-      </div>
-    </div>
-  )
-}
+      </AnimatePresence>
 
-function ChannelMembers({ channelId }: { channelId: string }) {
-  const { data } = useQuery({
-    queryKey: ['channel-members', channelId],
-    queryFn: async () => {
-      const res = await fetch(`/api/channels/${channelId}/members`)
-      const data = await res.json()
-      return data.members as any[]
-    },
-  })
-  if (!data || data.length === 0) return null
-  return (
-    <div className="flex -space-x-2">
-      {data.slice(0, 5).map((m) => (
-        <Avatar key={m.id} className="w-6 h-6 border-2 border-background">
-          <AvatarImage src={m.avatarUrl || undefined} />
-          <AvatarFallback className="text-[10px]">
-            {m.displayName?.charAt(0) || '?'}
-          </AvatarFallback>
-        </Avatar>
-      ))}
-      {data.length > 5 && (
-        <div className="w-6 h-6 rounded-full bg-muted border-2 border-background flex items-center justify-center text-[10px] font-medium">
-          +{data.length - 5}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function EmptyState() {
-  const setActiveChannel = useAppStore((s) => s.setActiveChannel)
-  return (
-    <div className="flex-1 flex items-center justify-center p-8">
-      <div className="text-center space-y-3 max-w-sm">
-        <div className="w-16 h-16 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center">
-          <Hash className="w-8 h-8 text-primary" />
-        </div>
-        <h2 className="text-xl font-semibold">No channel selected</h2>
-        <p className="text-sm text-muted-foreground">
-          Pick a channel from the left, start a DM, or join a group with an invite code.
-        </p>
-        <p className="text-xs text-muted-foreground">
-          If this is your first time here, ask an admin to seed the default group — or click below.
-        </p>
-        <Button onClick={async () => {
-          const res = await fetch('/api/seed', { method: 'POST' })
-          if (res.ok) {
-            window.location.reload()
-          }
-        }}>
-          Seed default group
-        </Button>
-      </div>
+      {/* Chat info panel — desktop right panel / mobile Sheet */}
+      {chatInfoOpen && <ChatInfoPanel channel={activeChannel} />}
     </div>
   )
 }

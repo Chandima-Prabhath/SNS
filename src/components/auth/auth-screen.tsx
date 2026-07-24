@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Loader2, MessageCircle } from 'lucide-react'
+import { Loader2, MessageCircle, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 
 export function AuthScreen() {
@@ -81,18 +81,32 @@ export function AuthScreen() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-background via-background to-muted/30">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center space-y-2">
-          <div className="mx-auto w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-            <MessageCircle className="w-6 h-6 text-primary" />
+    <div className="min-h-screen flex items-center justify-center p-4 bg-background">
+      {/* Decorative gradient backdrop */}
+      <div
+        className="absolute inset-0 -z-10 opacity-30 pointer-events-none"
+        style={{
+          background:
+            'radial-gradient(60% 80% at 20% 0%, oklch(0.65 0.15 162 / 0.25), transparent 50%), radial-gradient(50% 70% at 80% 100%, oklch(0.55 0.15 162 / 0.2), transparent 50%)',
+        }}
+      />
+
+      <Card className="w-full max-w-md border-border/60 shadow-xl">
+        <CardHeader className="text-center space-y-3 pb-6">
+          <div className="mx-auto w-14 h-14 rounded-2xl bg-primary/15 flex items-center justify-center">
+            <MessageCircle className="w-7 h-7 text-primary" />
           </div>
-          <CardTitle className="text-2xl">SNS</CardTitle>
-          <CardDescription>A private social space for you and your friends.</CardDescription>
+          <div className="space-y-1">
+            <CardTitle className="text-2xl tracking-tight">SNS</CardTitle>
+            <CardDescription className="flex items-center justify-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5" />
+              A private space for you and your friends
+            </CardDescription>
+          </div>
         </CardHeader>
         <CardContent>
           <Tabs value={mode} onValueChange={(v) => setMode(v as any)}>
-            <TabsList className="grid w-full grid-cols-2 mb-4">
+            <TabsList className="grid w-full grid-cols-2 mb-5">
               <TabsTrigger value="signin">Sign in</TabsTrigger>
               <TabsTrigger value="signup">Create account</TabsTrigger>
             </TabsList>
@@ -107,6 +121,7 @@ export function AuthScreen() {
                     onChange={(e) => setIdentifier(e.target.value)}
                     autoComplete="username"
                     disabled={loading}
+                    className="h-11"
                   />
                 </div>
                 <div className="space-y-2">
@@ -118,9 +133,10 @@ export function AuthScreen() {
                     onChange={(e) => setPassword(e.target.value)}
                     autoComplete="current-password"
                     disabled={loading}
+                    className="h-11"
                   />
                 </div>
-                <Button type="submit" className="w-full" disabled={loading}>
+                <Button type="submit" className="w-full h-11" disabled={loading}>
                   {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                   Sign in
                 </Button>
@@ -137,6 +153,7 @@ export function AuthScreen() {
                     onChange={(e) => setDisplayName(e.target.value)}
                     placeholder="Jane Doe"
                     disabled={loading}
+                    className="h-11"
                   />
                 </div>
                 <div className="space-y-2">
@@ -148,6 +165,7 @@ export function AuthScreen() {
                     placeholder="janedoe"
                     autoCapitalize="none"
                     disabled={loading}
+                    className="h-11"
                   />
                 </div>
                 <div className="space-y-2">
@@ -160,6 +178,7 @@ export function AuthScreen() {
                     placeholder="jane@example.com"
                     autoCapitalize="none"
                     disabled={loading}
+                    className="h-11"
                   />
                 </div>
                 <div className="space-y-2">
@@ -171,9 +190,10 @@ export function AuthScreen() {
                     onChange={(e) => setSignupPassword(e.target.value)}
                     autoComplete="new-password"
                     disabled={loading}
+                    className="h-11"
                   />
                 </div>
-                <Button type="submit" className="w-full" disabled={loading}>
+                <Button type="submit" className="w-full h-11" disabled={loading}>
                   {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                   Create account
                 </Button>
