@@ -55,18 +55,16 @@ export async function POST(req: Request) {
       },
     })
 
-    // Auto-join the default group + general text channels if they exist
+    // Auto-join the default group + all channels (text + voice) if they exist
     const defaultGroup = await db.group.findFirst({
       where: { isDm: false },
       include: { channels: true },
     })
     if (defaultGroup) {
       for (const ch of defaultGroup.channels) {
-        if (ch.type === 'text') {
-          await db.channelMember
-            .create({ data: { channelId: ch.id, userId: user.id, role: 'member' } })
-            .catch(() => {})
-        }
+        await db.channelMember
+          .create({ data: { channelId: ch.id, userId: user.id, role: 'member' } })
+          .catch(() => {})
       }
     }
 

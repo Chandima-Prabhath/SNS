@@ -20,7 +20,7 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
   const setChatInfoOpen = useAppStore((s) => s.setChatInfoOpen)
   const setView = useAppStore((s) => s.setView)
   const presence = usePresence()
-  const { startCall } = useVoiceCall()
+  const { startCall, unlockAudio } = useVoiceCall()
   const { data: session } = useSession()
   const [callPending, setCallPending] = useState(false)
 
@@ -44,15 +44,13 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
       // Start our side of the call (mic + WebRTC)
       await startCall({ callId: data.call.id, channelId: channel.id })
 
+      // Unlock audio on this user gesture (clicking the call button)
+      // This is critical — browsers block autoplay until the user interacts.
+      unlockAudio()
+
       // For DM calls, ring the partner so they get an incoming-call UI.
-      // For group/voice-channel calls, we just join — others see us in the call list.
       if (partner && session?.user) {
         const myName = (session.user as any).displayName || (session.user as any).username || 'Someone'
-        // The useVoiceCall hook exposes the manager via the startCall return;
-        // we emit the ring via the socket directly through the hook's internal manager.
-        // Simpler: dispatch a custom event the voice hook listens for, OR
-        // call the manager method. Since we don't have direct access to the manager
-        // here, we'll emit via the socket by fetching it from the singleton.
         const { getSocket } = await import('@/lib/socket')
         const socket = await getSocket()
         socket.emit('call:ring', {

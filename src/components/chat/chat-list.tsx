@@ -139,7 +139,7 @@ export function ChatList() {
   }, [allChats, filter, search])
 
   return (
-    <div className="flex flex-col h-full bg-sidebar">
+    <div className="flex flex-col h-full w-full bg-sidebar">
       {/* Header */}
       <div className="px-4 pt-4 pb-3 space-y-3">
         <div className="flex items-center justify-between">

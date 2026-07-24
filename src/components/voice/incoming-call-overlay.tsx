@@ -5,7 +5,6 @@ import { useSession } from 'next-auth/react'
 import { useVoiceCall } from '@/hooks/useVoiceCall'
 import { useAppStore } from '@/stores/useAppStore'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Button } from '@/components/ui/button'
 import { Phone, PhoneOff, Loader2 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
@@ -22,18 +21,13 @@ interface IncomingCall {
 }
 
 /**
- * Full-screen overlay that appears when someone is calling you (DM calls only).
- *
- * Listens for `sns:incoming-call` custom events dispatched by the VoiceCallManager
- * (which receives them via the socket's `call:incoming` event).
- *
- * Accept → start our WebRTC, join the call, notify caller we accepted.
- * Reject → notify caller we rejected, dismiss overlay.
- * Caller cancels → overlay dismisses automatically via `sns:call-cancelled`.
+ * WhatsApp-style incoming call overlay.
+ * Full-screen, large avatar, green Accept + red Decline buttons.
+ * Accept unlocks audio (autoplay policy) and joins the call.
  */
 export function IncomingCallOverlay() {
   const { data: session } = useSession()
-  const { startCall, leaveCall } = useVoiceCall()
+  const { startCall, unlockAudio, leaveCall } = useVoiceCall()
   const setView = useAppStore((s) => s.setView)
 
   const [incoming, setIncoming] = useState<IncomingCall | null>(null)
@@ -42,7 +36,6 @@ export function IncomingCallOverlay() {
   useEffect(() => {
     const onIncoming = (e: Event) => {
       const detail = (e as CustomEvent).detail as IncomingCall
-      // Don't show if we're already in a call
       setIncoming(detail)
     }
     const onCancelled = (e: Event) => {
@@ -71,12 +64,16 @@ export function IncomingCallOverlay() {
         dmGroupId: incoming.dmGroupId,
       })
 
-      // Notify the caller that we accepted (so their UI stops ringing)
+      // CRITICAL: Unlock audio playback — this is a user gesture (button click),
+      // so the browser will allow audio.play() now. Without this, the remote
+      // audio element would be blocked by autoplay policy.
+      unlockAudio()
+
+      // Notify the caller that we accepted
       const { getSocket } = await import('@/lib/socket')
       const socket = await getSocket()
       socket.emit('call:accept', { callId: incoming.callId, byUserId: incoming.from.userId })
 
-      // Switch to the voice view
       setView('voice')
       setIncoming(null)
     } catch (e: any) {
@@ -104,48 +101,56 @@ export function IncomingCallOverlay() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] bg-background/95 backdrop-blur-xl flex items-center justify-center p-6"
+          className="fixed inset-0 z-[100] bg-gradient-to-b from-zinc-900 via-zinc-950 to-black flex flex-col items-center justify-between p-6 pt-safe pb-safe"
         >
+          {/* Top: "Incoming call" label */}
+          <div className="w-full text-center pt-12">
+            <motion.p
+              animate={{ opacity: [1, 0.4, 1] }}
+              transition={{ duration: 1.5, repeat: Infinity }}
+              className="text-white/60 text-sm font-medium"
+            >
+              Incoming voice call...
+            </motion.p>
+          </div>
+
+          {/* Center: avatar + name */}
           <motion.div
             initial={{ scale: 0.9, y: 20 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.9, y: 20 }}
             transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-            className="flex flex-col items-center text-center max-w-sm w-full"
+            className="flex flex-col items-center gap-4"
           >
-            {/* Avatar with pulsing ring */}
-            <div className="relative mb-6">
+            <div className="relative">
+              {/* Pulsing rings */}
               <motion.div
-                className="absolute inset-0 rounded-full bg-primary/30"
+                className="absolute inset-0 rounded-full bg-white/10"
                 animate={{ scale: [1, 1.4, 1.4], opacity: [0.6, 0, 0] }}
                 transition={{ duration: 2, repeat: Infinity, ease: 'easeOut' }}
               />
               <motion.div
-                className="absolute inset-0 rounded-full bg-primary/20"
+                className="absolute inset-0 rounded-full bg-white/5"
                 animate={{ scale: [1, 1.3, 1.3], opacity: [0.5, 0, 0] }}
                 transition={{ duration: 2, repeat: Infinity, ease: 'easeOut', delay: 0.5 }}
               />
-              <Avatar className="w-32 h-32 relative">
-                <AvatarImage src={undefined} />
-                <AvatarFallback className="text-5xl bg-primary/15 text-primary">
+              <Avatar className="w-36 h-36 relative border-4 border-white/10">
+                <AvatarFallback className="text-5xl bg-white/10 text-white">
                   {incoming.from.displayName?.charAt(0).toUpperCase() || '?'}
                 </AvatarFallback>
               </Avatar>
             </div>
 
-            <h2 className="text-2xl font-semibold mb-1">{incoming.from.displayName}</h2>
-            <p className="text-muted-foreground mb-1">@{incoming.from.username}</p>
-            <p className="text-sm text-muted-foreground mb-8 flex items-center gap-1.5">
-              <motion.span
-                animate={{ opacity: [1, 0.4, 1] }}
-                transition={{ duration: 1.5, repeat: Infinity }}
-              >
-                Incoming voice call...
-              </motion.span>
-            </p>
+            <div className="text-center">
+              <h1 className="text-2xl font-semibold text-white">{incoming.from.displayName}</h1>
+              <p className="text-white/60 text-sm mt-1">@{incoming.from.username}</p>
+            </div>
+          </motion.div>
 
-            {/* Action buttons */}
-            <div className="flex gap-8">
+          {/* Bottom: Accept / Decline buttons */}
+          <div className="w-full max-w-sm mx-auto pb-8">
+            <div className="flex items-center justify-center gap-16">
+              {/* Decline (red, left) */}
               <button
                 onClick={handleReject}
                 disabled={accepting}
@@ -154,25 +159,26 @@ export function IncomingCallOverlay() {
                 <div className="w-16 h-16 rounded-full bg-red-500 flex items-center justify-center hover:bg-red-600 transition-colors active:scale-95">
                   <PhoneOff className="w-7 h-7 text-white" />
                 </div>
-                <span className="text-sm text-muted-foreground">Decline</span>
+                <span className="text-sm text-white/60">Decline</span>
               </button>
 
+              {/* Accept (green, right) */}
               <button
                 onClick={handleAccept}
                 disabled={accepting}
                 className="flex flex-col items-center gap-2"
               >
-                <div className="w-16 h-16 rounded-full bg-status-online flex items-center justify-center hover:opacity-90 transition-opacity active:scale-95">
+                <div className="w-16 h-16 rounded-full bg-green-500 flex items-center justify-center hover:bg-green-600 transition-colors active:scale-95">
                   {accepting ? (
                     <Loader2 className="w-7 h-7 text-white animate-spin" />
                   ) : (
                     <Phone className="w-7 h-7 text-white" />
                   )}
                 </div>
-                <span className="text-sm text-muted-foreground">Accept</span>
+                <span className="text-sm text-white/60">Accept</span>
               </button>
             </div>
-          </motion.div>
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

@@ -88,6 +88,15 @@ export function useVoiceCall() {
     managerRef.current.setMuted(!managerRef.current.isMuted())
   }, [])
 
+  /**
+   * Unlock audio playback — call this on a user gesture (e.g., Accept call button).
+   * Browsers block autoplay until the user interacts with the page. This is why
+   * ontrack fires but no audio plays — the <audio>.play() promise rejects silently.
+   */
+  const unlockAudio = useCallback(() => {
+    managerRef.current?.unlockAudio()
+  }, [])
+
   const leaveCall = useCallback(async () => {
     if (managerRef.current) {
       await managerRef.current.leave()
@@ -111,6 +120,7 @@ export function useVoiceCall() {
     error,
     startCall,
     toggleMute,
+    unlockAudio,
     leaveCall,
   }
 }
