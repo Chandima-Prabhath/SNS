@@ -4,7 +4,6 @@ import { useEffect, useRef, useState, useMemo } from 'react'
 import { useChannel, type ChannelMessage } from '@/hooks/useChannel'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { format, isToday, isYesterday } from 'date-fns'
@@ -64,8 +63,8 @@ export function MessageList({ channelId }: MessageListProps) {
   }, [messages])
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-background">
-      <ScrollArea className="flex-1" ref={scrollRef as any}>
+    <div className="flex-1 flex flex-col min-h-0 bg-background overflow-hidden">
+      <div ref={scrollRef as any} className="flex-1 min-h-0 overflow-y-auto">
         <div className="px-3 md:px-6 py-4 space-y-3 max-w-4xl mx-auto">
           {isLoading && <LoadingState />}
 
@@ -136,7 +135,7 @@ export function MessageList({ channelId }: MessageListProps) {
             )}
           </AnimatePresence>
         </div>
-      </ScrollArea>
+      </div>
     </div>
   )
 }

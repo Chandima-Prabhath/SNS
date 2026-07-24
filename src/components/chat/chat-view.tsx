@@ -29,13 +29,13 @@ export function ChatView() {
     .find((c) => c.id === activeChannelId)
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full relative">
       {/* Chat list — full width on mobile when no chat is open, sidebar on desktop */}
       <div
         className={
           activeChannelId
-            ? 'hidden lg:flex w-80 xl:w-96 shrink-0 border-r'
-            : 'flex w-full lg:w-80 xl:w-96 shrink-0 lg:border-r'
+            ? 'hidden lg:flex w-80 xl:w-96 shrink-0 border-r h-full'
+            : 'flex w-full lg:w-80 xl:w-96 shrink-0 lg:border-r h-full'
         }
       >
         <ChatList />
@@ -50,7 +50,7 @@ export function ChatView() {
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'tween', duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-            className="flex-1 flex flex-col min-w-0 bg-background fixed inset-0 z-40 lg:static lg:inset-auto lg:z-auto"
+            className="flex flex-col min-w-0 bg-background absolute inset-0 z-40 lg:static lg:inset-auto lg:z-auto lg:flex-1 h-full"
           >
             <ChatHeader channel={activeChannel} />
             <MessageList channelId={activeChannel.id} />

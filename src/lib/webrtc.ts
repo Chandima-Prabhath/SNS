@@ -3,20 +3,18 @@
 /**
  * WebRTC voice call manager — perfect negotiation pattern.
  *
- * Fixes the "Cannot set remote answer in state stable" race condition by
- * implementing the W3C perfect negotiation algorithm:
- *   - Each peer pair has a deterministic polite/impolite role (based on socket ID comparison)
- *   - Impolite peer wins collisions (ignores incoming offer if it has a pending offer)
- *   - Polite peer yields (rolls back its offer and accepts the incoming one)
+ * One-way audio fix: the joiner adds tracks THEN creates the offer (so the offer
+ * includes the audio m-line). The existing peer receives the offer, sets remote
+ * description, creates answer that ALSO includes audio. Both sides have sendrecv.
  *
  * Audio enhancements:
  *   - echoCancellation, noiseSuppression, autoGainControl (browser DSP)
- *   - Silence detection: mutes the track when no voice is detected for ~500ms,
- *     unmutes when voice resumes. Saves ~70% bandwidth during a call.
- *   - Audio level monitoring for active-speaker UI
+ *   - Silence detection (auto-mute when not speaking)
+ *   - Active-speaker audio level monitoring
  *
- * Mesh topology: each peer connects directly to every other peer.
- * Works for ≤6 participants. For larger calls, swap to an SFU.
+ * Ringing: the call:incoming listener is registered GLOBALLY (in the module scope)
+ * so it works even when the user is not in a call. This lets the IncomingCallOverlay
+ * receive rings regardless of call state.
  */
 import type { Socket } from 'socket.io-client'
 
@@ -26,7 +24,7 @@ export interface VoiceCallCallbacks {
   onPeerLeft: (peerId: string) => void
   onStateChange: (state: 'connecting' | 'connected' | 'failed' | 'disconnected') => void
   onMuteChange?: (muted: boolean) => void
-  onAudioLevel?: (peerId: string, level: number) => void // 0..1, for active-speaker UI
+  onAudioLevel?: (peerId: string, level: number) => void
   onConnectionType?: (peerId: string, type: 'p2p' | 'turn' | 'unknown') => void
 }
 
@@ -43,6 +41,33 @@ interface PeerEntry {
   lastStatsType?: 'p2p' | 'turn' | 'unknown'
 }
 
+// Global listener for incoming calls — registered ONCE when the socket connects,
+// so rings arrive even if the user isn't in a call. The IncomingCallOverlay
+// listens for the 'sns:incoming-call' window event.
+let globalIncomingCallListenerRegistered = false
+
+export function registerGlobalCallListeners(socket: Socket) {
+  if (globalIncomingCallListenerRegistered) return
+  globalIncomingCallListenerRegistered = true
+
+  socket.on('call:incoming', (payload: any) => {
+    console.log('[webrtc] incoming call from', payload.from?.displayName)
+    window.dispatchEvent(new CustomEvent('sns:incoming-call', { detail: payload }))
+  })
+
+  socket.on('call:cancel', (payload: any) => {
+    window.dispatchEvent(new CustomEvent('sns:call-cancelled', { detail: payload }))
+  })
+
+  socket.on('call:reject', (payload: any) => {
+    window.dispatchEvent(new CustomEvent('sns:call-rejected', { detail: payload }))
+  })
+
+  socket.on('call:accept', (payload: any) => {
+    window.dispatchEvent(new CustomEvent('sns:call-accepted', { detail: payload }))
+  })
+}
+
 export class VoiceCallManager {
   private socket: Socket
   private callId: string
@@ -50,10 +75,9 @@ export class VoiceCallManager {
   private localStream: MediaStream | null = null
   private peers: Map<string, PeerEntry> = new Map()
   private iceServers: RTCIceServer[]
-  private muted = false
-  private userMuted = false // user's explicit mute choice
+  private userMuted = false
   private silenceDetectorActive = false
-  private silenceMuted = false // auto-muted due to silence
+  private silenceMuted = false
   private mySocketId: string | null = null
 
   constructor(params: {
@@ -71,26 +95,25 @@ export class VoiceCallManager {
   }
 
   private setupSignaling() {
-    // We need our own socket ID to determine polite/impolite role.
-    // Lower socket ID is impolite (initiates collisions), higher is polite (yields).
-    // This is deterministic — both sides compute the same role for the same pair.
+    // Someone ELSE joined the call — they will initiate the offer to us.
+    // We pre-create the peer connection (non-initiator) so we're ready to receive
+    // their offer and answer it.
     this.socket.on('call:peer-joined', async (payload: { peerId: string; userId: string; username: string }) => {
-      // Someone ELSE joined. They will initiate the offer to us.
-      // Pre-create the peer connection (as non-initiator) so we're ready to receive.
-      await this.createPeerConnection(payload.peerId, payload.userId, payload.username)
+      await this.createPeerConnection(payload.peerId, payload.userId, payload.username, false)
     })
 
+    // We just joined — the server tells us who's already here. We initiate offers
+    // to ALL of them (we're the newcomer).
     this.socket.on('call:peers', async (payload: { peers: Array<{ peerId: string; userId: string; username: string }> }) => {
-      // We just joined — initiate offers to all existing participants.
       this.mySocketId = this.socket.id
       for (const peer of payload.peers) {
-        await this.createPeerConnection(peer.peerId, peer.userId, peer.username)
-        // Immediately try to negotiate (will create+send offer)
-        await this.negotiate(peer.peerId)
+        // createPeerConnection adds local tracks, which fires onnegotiationneeded,
+        // which creates and sends the offer. No need to call negotiate() separately.
+        await this.createPeerConnection(peer.peerId, peer.userId, peer.username, true)
       }
     })
 
-    // Perfect negotiation: handle incoming offer/answer
+    // Perfect negotiation: handle incoming offer
     this.socket.on('call:offer', async (payload: { from: string; sdp: any }) => {
       const peer = this.peers.get(payload.from)
       if (!peer) {
@@ -102,7 +125,6 @@ export class VoiceCallManager {
       peer.ignoreOffer = !peer.isPolite && offerCollision
 
       if (peer.ignoreOffer) {
-        // Impolite peer ignores incoming offer — we keep our own outgoing offer
         return
       }
 
@@ -121,9 +143,6 @@ export class VoiceCallManager {
       try {
         await peer.pc.setRemoteDescription(new RTCSessionDescription(payload.sdp))
       } catch (e) {
-        // This is the race condition that used to crash — now we just log and ignore
-        // because perfect negotiation should prevent it. If we still hit it, the
-        // negotiationneeded event will retry.
         console.warn('[webrtc] setRemoteDescription(answer) failed:', (e as Error).message)
       }
     })
@@ -144,37 +163,16 @@ export class VoiceCallManager {
       this.removePeer(payload.peerId)
       this.callbacks.onPeerLeft(payload.peerId)
     })
-
-    // Incoming call ring (for DM calls)
-    this.socket.on('call:incoming', (payload: { callId: string; from: { userId: string; username: string; displayName: string }; channelId?: string; dmGroupId?: string }) => {
-      // Forward to UI via a custom event the hook can listen for
-      window.dispatchEvent(new CustomEvent('sns:incoming-call', { detail: payload }))
-    })
-
-    this.socket.on('call:cancel', (payload: { callId: string }) => {
-      window.dispatchEvent(new CustomEvent('sns:call-cancelled', { detail: payload }))
-    })
-
-    this.socket.on('call:reject', (payload: { callId: string }) => {
-      window.dispatchEvent(new CustomEvent('sns:call-rejected', { detail: payload }))
-    })
-
-    this.socket.on('call:accept', (payload: { callId: string; byUserId: string }) => {
-      window.dispatchEvent(new CustomEvent('sns:call-accepted', { detail: payload }))
-    })
   }
 
-  private async createPeerConnection(peerId: string, userId: string, username: string) {
+  private async createPeerConnection(peerId: string, userId: string, username: string, initiator: boolean) {
     if (this.peers.has(peerId)) return
 
-    // Determine polite/impolite role deterministically.
-    // We need our socket ID first; if we don't have it, fall back to local IDs.
     const myId = this.socket.id || this.mySocketId || ''
-    const isPolite = myId > peerId // higher ID is polite
+    const isPolite = myId > peerId
 
     const pc = new RTCPeerConnection({
       iceServers: this.iceServers,
-      // Improve connectivity — use all available interfaces (IPv4 + IPv6 + WiFi + cellular)
       iceTransportPolicy: 'all',
     })
 
@@ -189,7 +187,9 @@ export class VoiceCallManager {
     }
     this.peers.set(peerId, peer)
 
-    // Add local tracks
+    // CRITICAL: Add local tracks BEFORE creating any offer. This ensures the
+    // offer SDP includes the audio m-line (sendrecv). If we add tracks after
+    // creating the offer, the m-line would be recvonly and we'd get one-way audio.
     if (this.localStream) {
       for (const track of this.localStream.getTracks()) {
         const sender = pc.addTrack(track, this.localStream)
@@ -197,18 +197,31 @@ export class VoiceCallManager {
           peer.audioSender = sender
         }
       }
+    } else {
+      console.warn('[webrtc] no local stream when creating peer connection — audio will be recvonly!')
     }
 
-    // Remote stream
+    // Remote track handler — fires when we receive the peer's audio
     pc.ontrack = (event) => {
-      event.streams[0].getTracks().forEach((t) => peer.remoteStream.addTrack(t))
+      console.log('[webrtc] ontrack fired, kind:', event.track.kind, 'direction:', event.track.readyState)
+      // Add the incoming track to our remote stream
+      peer.remoteStream.addTrack(event.track)
       this.callbacks.onRemoteStream(peerId, peer.remoteStream, { userId, username })
-      // Start audio level monitoring for this peer
       this.startRemoteAudioMonitoring(peerId, peer.remoteStream)
     }
 
-    // Perfect negotiation: handle negotiationneeded
+    // Perfect negotiation: onnegotiationneeded fires after addTrack.
+    // The initiator (joiner) lets this create the offer. The non-initiator
+    // also has this fire (because they added tracks), but since they're waiting
+    // for an offer, the resulting offer would collide — perfect negotiation
+    // handles that. To be safe, only the initiator sends the initial offer.
     pc.onnegotiationneeded = async () => {
+      if (!initiator && peer.pc.connectionState === 'new') {
+        // Non-initiator: don't send an offer yet, wait for the joiner's offer.
+        // (onnegotiationneeded fires on both sides after addTrack; we only want
+        // the joiner to initiate.)
+        return
+      }
       try {
         peer.makingOffer = true
         await pc.setLocalDescription()
@@ -220,59 +233,28 @@ export class VoiceCallManager {
       }
     }
 
-    // ICE candidates → trickle
+    // ICE candidates → trickle to the peer
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         this.socket.emit('call:ice-candidate', { to: peerId, candidate: event.candidate })
       }
     }
 
-    // ICE connection state — drives onStateChange and onConnectionType
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState
+      console.log(`[webrtc] ICE state (${username}): ${state}`)
       if (state === 'connected' || state === 'completed') {
         this.callbacks.onStateChange('connected')
-        // Check connection type after a short delay (let stats settle)
-        setTimeout(() => this.checkConnectionType(peerId), 1000)
+        setTimeout(() => this.checkConnectionType(peerId), 1500)
       } else if (state === 'failed') {
         this.callbacks.onStateChange('failed')
-        // Try ICE restart
         pc.restartIce()
       } else if (state === 'disconnected') {
         this.callbacks.onStateChange('disconnected')
       }
     }
-
-    return peer
   }
 
-  /**
-   * Trigger negotiation for an existing peer (used when we initiate).
-   * In perfect negotiation, we just rely on onnegotiationneeded firing after
-   * addTrack — but if tracks were added before the PC existed, we need to nudge.
-   */
-  private async negotiate(peerId: string) {
-    const peer = this.peers.get(peerId)
-    if (!peer) return
-    // onnegotiationneeded should have fired during addTrack; nothing to do here.
-    // If for some reason it didn't, manually create an offer.
-    if (peer.pc.signalingState === 'stable' && !peer.makingOffer) {
-      try {
-        peer.makingOffer = true
-        await peer.pc.setLocalDescription()
-        this.socket.emit('call:offer', { to: peerId, sdp: peer.pc.localDescription })
-      } catch (e) {
-        console.error('[webrtc] negotiate error:', e)
-      } finally {
-        peer.makingOffer = false
-      }
-    }
-  }
-
-  /**
-   * Check whether the active ICE candidate pair is P2P (host/srflx) or TURN (relay).
-   * Reads RTCPeerConnection stats. Called 1s after connection.
-   */
   private async checkConnectionType(peerId: string) {
     const peer = this.peers.get(peerId)
     if (!peer) return
@@ -295,28 +277,42 @@ export class VoiceCallManager {
         this.callbacks.onConnectionType?.(peerId, foundType)
       }
     } catch (e) {
-      // stats API not available or peer closed
+      // stats API not available
     }
   }
 
   async start(micEnabled: boolean = true): Promise<void> {
     try {
-      // Request mic with browser DSP enhancements
+      // Request mic with browser DSP — these constraints force the browser to
+      // apply echo cancellation, noise suppression, and auto gain control.
+      // If the browser doesn't support a constraint, it's silently ignored.
       this.localStream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: true,    // prevents hearing your own voice from others' speakers
-          noiseSuppression: true,    // filters out background hum/fan/keyboard noise
-          autoGainControl: true,     // normalizes quiet/loud voices
-          channelCount: 1,           // mono — saves bandwidth
-        },
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        } as MediaTrackConstraints,
         video: false,
       })
+
+      // Log the actual settings we got (for debugging)
+      const audioTrack = this.localStream.getAudioTracks()[0]
+      if (audioTrack) {
+        const settings = audioTrack.getSettings()
+        console.log('[webrtc] mic settings:', {
+          echoCancellation: settings.echoCancellation,
+          noiseSuppression: settings.noiseSuppression,
+          autoGainControl: settings.autoGainControl,
+          channelCount: settings.channelCount,
+          sampleRate: settings.sampleRate,
+        })
+      }
+
       if (!micEnabled) this.setMuted(true)
       this.callbacks.onLocalStream(this.localStream)
       this.callbacks.onStateChange('connecting')
       this.socket.emit('call:join', this.callId)
-
-      // Start silence detection on the local stream
       this.startSilenceDetection(this.localStream)
     } catch (e: any) {
       console.error('[webrtc] getUserMedia error', e)
@@ -324,11 +320,6 @@ export class VoiceCallManager {
     }
   }
 
-  /**
-   * Silence detection — when no voice is detected for ~500ms, mute the audio sender
-   * to stop transmitting packets. Resumes when voice is detected.
-   * Saves ~70% bandwidth during a typical call.
-   */
   private startSilenceDetection(stream: MediaStream) {
     try {
       const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext
@@ -342,8 +333,8 @@ export class VoiceCallManager {
 
       const data = new Uint8Array(analyser.frequencyBinCount)
       let silentFrames = 0
-      const SILENCE_THRESHOLD = 8 // average amplitude (0-255)
-      const SILENCE_FRAMES_NEEDED = 30 // ~500ms at 60fps check rate
+      const SILENCE_THRESHOLD = 8
+      const SILENCE_FRAMES_NEEDED = 30
 
       this.silenceDetectorActive = true
       const check = () => {
@@ -372,9 +363,6 @@ export class VoiceCallManager {
     }
   }
 
-  /**
-   * Monitor remote peer's audio level for active-speaker UI.
-   */
   private startRemoteAudioMonitoring(peerId: string, stream: MediaStream) {
     try {
       const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext
@@ -382,7 +370,6 @@ export class VoiceCallManager {
       const peer = this.peers.get(peerId)
       if (!peer) return
 
-      // One AudioContext per manager is enough, but per-stream is simpler here.
       const ctx = new AudioContextClass()
       const source = ctx.createMediaStreamSource(stream)
       const analyser = ctx.createAnalyser()
@@ -402,23 +389,16 @@ export class VoiceCallManager {
       }
       check()
     } catch (e) {
-      // Audio monitoring is best-effort
+      // best-effort
     }
   }
 
-  /**
-   * Apply the combined mute state (user mute + silence detection).
-   * Called whenever either changes.
-   */
   private applyMuteState() {
     const shouldMute = this.userMuted || this.silenceMuted
     if (this.localStream) {
       this.localStream.getAudioTracks().forEach((t) => (t.enabled = !shouldMute))
     }
-    if (shouldMute !== this.muted) {
-      this.muted = shouldMute
-      this.callbacks.onMuteChange?.(shouldMute)
-    }
+    this.callbacks.onMuteChange?.(shouldMute)
   }
 
   setMuted(muted: boolean) {
@@ -428,45 +408,6 @@ export class VoiceCallManager {
 
   isMuted() {
     return this.userMuted
-  }
-
-  /**
-   * Ring a specific user (for DM calls). Sends a call:ring event via the server.
-   * The receiver's client will show an incoming-call UI.
-   */
-  ringUser(targetUserId: string, displayName: string, channelId?: string, dmGroupId?: string) {
-    this.socket.emit('call:ring', {
-      callId: this.callId,
-      targetUserId,
-      from: {
-        userId: (this.socket as any).userId,
-        username: (this.socket as any).username,
-        displayName,
-      },
-      channelId,
-      dmGroupId,
-    })
-  }
-
-  /**
-   * Accept an incoming call (sent by the receiver to the caller).
-   */
-  acceptIncomingCall(callId: string, callerUserId: string) {
-    this.socket.emit('call:accept', { callId, byUserId: callerUserId })
-  }
-
-  /**
-   * Reject an incoming call.
-   */
-  rejectIncomingCall(callId: string, callerUserId: string) {
-    this.socket.emit('call:reject', { callId, byUserId: callerUserId })
-  }
-
-  /**
-   * Cancel an outgoing call (caller hangs up before answer).
-   */
-  cancelOutgoingCall(callId: string, targetUserId: string) {
-    this.socket.emit('call:cancel', { callId, targetUserId })
   }
 
   private removePeer(peerId: string) {
@@ -488,16 +429,11 @@ export class VoiceCallManager {
       this.localStream = null
     }
     this.socket.emit('call:leave', this.callId)
-    // Remove all listeners we set
     this.socket.removeAllListeners('call:peer-joined')
     this.socket.removeAllListeners('call:peers')
     this.socket.removeAllListeners('call:offer')
     this.socket.removeAllListeners('call:answer')
     this.socket.removeAllListeners('call:ice-candidate')
     this.socket.removeAllListeners('call:peer-left')
-    this.socket.removeAllListeners('call:incoming')
-    this.socket.removeAllListeners('call:cancel')
-    this.socket.removeAllListeners('call:reject')
-    this.socket.removeAllListeners('call:accept')
   }
 }
