@@ -363,8 +363,14 @@ CLOUDFLARE_TURN_KEY_SECRET=...`}
         <h3 className="font-semibold mb-3">Architecture</h3>
         <div className="text-xs text-muted-foreground space-y-2">
           <p>
-            <strong>Realtime service:</strong> Socket.io mini-service on port 3003.
-            Dumb relay for chat, presence, and WebRTC signaling — never carries media.
+            <strong>Single-port server:</strong> Next.js + Socket.io share port 3090
+            via a custom <code>server.ts</code>. One tunnel, one process, one log file.
+            Socket.io is mounted at <code>/api/socket</code>.
+          </p>
+          <p>
+            <strong>Realtime:</strong> In-process Socket.io relay for chat, presence,
+            and WebRTC signaling — never carries media. Auth reads the NextAuth JWT
+            cookie directly (no HTTP roundtrip).
           </p>
           <p>
             <strong>Database:</strong> SQLite (file-based). For production with many

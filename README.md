@@ -19,17 +19,51 @@ A private social web app for you and your friends. Built to be lean, modular, an
 | Framework | Next.js 16 (App Router) | Server actions, RSC, simple deploys |
 | Language | TypeScript everywhere | Catch bugs at compile time |
 | DB | Prisma + SQLite | Zero-config dev. Swap `DATABASE_URL` for Postgres in prod |
-| Realtime | Socket.io mini-service (port 3003) | Standard, well-understood, dumb relay pattern |
+| Realtime | Socket.io (mounted inside Next.js) | Standard, well-understood, dumb relay pattern |
 | Auth | NextAuth.js (Credentials + JWT) | Simple, no external OAuth needed for a private app |
 | State | Zustand (client) + TanStack Query (server) | Minimal boilerplate, great caching |
 | UI | Tailwind 4 + shadcn/ui | Modern, accessible, easy to theme |
 | Voice | WebRTC P2P mesh | Works for ≤6 participants. SFU-ready signaling for later. |
 
+## Architecture: single-port (Cloudflare Tunnel–friendly)
+
+**Everything runs on port 3090.** The Next.js app and the Socket.io realtime service share one HTTP server, so you only need to tunnel one port.
+
+```
+                    Cloudflare Tunnel
+                          │
+                          ▼
+              ┌────────────────────────┐
+              │   Next.js app (port 3090) │
+              │   ├── HTTP routes /api/*    │
+              │   ├── Pages /               │
+              │   └── Socket.io /api/socket │  ← same process, same port
+              └────────────────────────┘
+```
+
+This is implemented via a custom Next.js server in `server.ts`:
+
+```ts
+import next from 'next'
+import { createServer } from 'http'
+import { attachRealtime } from './src/lib/realtime-server'
+
+const app = next({ dev, hostname, port: 3090 })
+const handle = app.getRequestHandler()
+
+await app.prepare()
+const httpServer = createServer((req, res) => handle(req, res, parse(req.url, true)))
+attachRealtime(httpServer)  // ← Socket.io attaches to the same httpServer
+httpServer.listen(3090)
+```
+
+The browser connects to Socket.io via `io({ path: '/api/socket', withCredentials: true })` — same origin, cookies sent automatically, no CORS, no port juggling.
+
 ## Project structure
 
 ```
 prisma/schema.prisma         # All data models (single source of truth)
-mini-services/realtime/      # Socket.io service (port 3003)
+server.ts                    # Custom Next.js server — mounts Socket.io on same port
 src/
   app/
     page.tsx                 # Single-page app shell (root route)
@@ -57,10 +91,11 @@ src/
   lib/
     db.ts                    # Prisma client
     auth.ts                  # NextAuth config (JWT, role refresh)
-    socket.ts                # socket.io client singleton
+    socket.ts                # socket.io client singleton (path: /api/socket)
     webrtc.ts                # VoiceCallManager (mesh, signaling, mute)
     turn.ts                  # Cloudflare TURN credential signer
     chat-utils.ts            # DM creation, channel membership helpers
+    realtime-server.ts       # Socket.io server (auth via NextAuth JWT cookie)
     bot/
       framework.ts           # dispatcher, registry, BotContext
       index.ts               # registers all bundled bots
@@ -72,25 +107,36 @@ src/
 ```bash
 bun install
 bun run db:push          # create SQLite DB from schema
-bun run dev              # main app on :3000
-# in another terminal:
-cd mini-services/realtime && bun run dev   # realtime service on :3003
+bun run dev              # starts Next.js + Socket.io on http://localhost:3090
 ```
 
-Open `http://localhost:3000`, sign up, then click "Seed default group" to bootstrap the Friends group with `general`, `memes`, and `voice-hangout` channels.
+Open `http://localhost:3090`, sign up, then click "Seed default group" to bootstrap the Friends group with `general`, `memes`, and `voice-hangout` channels.
 
 ## Production deployment via Cloudflare Tunnel
 
-You said you'll handle Cloudflare Tunnel yourself — the app is compatible out of the box. A few notes:
+You said you'll handle Cloudflare Tunnel yourself — the app is now optimized for that:
 
-1. **Set `NEXTAUTH_URL`** in `.env` to your final `https://sns.yourdomain.com` URL.
-2. **Set `NEXTAUTH_SECRET`** to a strong random string (`openssl rand -base64 32`).
-3. **Run both processes** behind the tunnel:
-   - Next.js app on port 3000
-   - Realtime Socket.io service on port 3003
-4. **Cloudflare Tunnel config** — expose both ports. The browser connects to Socket.io via the same hostname using `?XTransformPort=3003` query param (already wired in `src/lib/socket.ts`). If you use a single tunnel hostname, configure a path-based route that forwards `?XTransformPort=3003` requests to port 3003.
-5. **Database** — SQLite works for small groups. For >20 users, switch to PostgreSQL by changing `DATABASE_URL` and re-running `bun run db:push`.
-6. **Uploads** — currently stored in `public/uploads/`. For production, swap the `/api/upload` route to store to S3/R2 instead.
+1. **Single tunnel, single port.** Point your tunnel at `http://localhost:3090`. Both HTTP and WebSocket traffic go through the same connection.
+2. **Set environment variables:**
+   ```bash
+   NEXTAUTH_URL=https://sns.1911915.xyz
+   NEXTAUTH_SECRET=$(openssl rand -base64 32)
+   PORT=3090
+   ```
+3. **Cloudflare Tunnel config (cloudflared):**
+   ```yaml
+   ingress:
+     - hostname: sns.1911915.xyz
+       service: http://localhost:3090
+       originRequest:
+         noTLSVerify: true
+         http2Origin: false
+     - service: http_status:404
+   ```
+   That's it. One hostname, one backend. No path-based routing needed.
+4. **WebSocket support:** Cloudflare Tunnel supports WebSockets out of the box — no extra config needed. Socket.io will work over both `polling` and `websocket` transports.
+5. **Database:** SQLite works for small groups. For >20 users, switch to PostgreSQL by changing `DATABASE_URL` and re-running `bun run db:push`.
+6. **Uploads:** Currently stored in `public/uploads/`. For production, swap the `/api/upload` route to store to S3/R2 instead.
 
 ## Enabling Cloudflare TURN (free, optional)
 
@@ -145,18 +191,19 @@ The `BotContext` provides everything you need: `args`, `reply`, `getState`/`setS
 
 ## Architecture decisions (why this isn't bloated)
 
+- **Single-port architecture** — Next.js + Socket.io share one HTTP server via a custom `server.ts`. No Caddy multi-port routing, no `XTransformPort` query param. One tunnel, one process, one log file.
 - **Polymorphic sender** — bots and users post to the same `Message` table. One set of message UI, threading, and reactions code. No parallel bot system.
 - **Dumb realtime relay** — Socket.io only ferries events, never owns state. The DB is the source of truth. Easy to reason about, easy to debug.
+- **In-process realtime auth** — Socket.io middleware decodes the NextAuth JWT directly from the cookie (no HTTP roundtrip to `/api/auth/me`). Same-process, sub-millisecond auth.
 - **Bot framework = transport-agnostic** — currently only REST webhook style, but you can add a polling adapter or external webhook adapter without touching bot logic.
 - **Single-page app shell** — view switching via Zustand state, not Next.js routes. Means no full page reloads between Chat/Status/Voice/Bots/Settings/Admin.
 - **Self-contained modules** — every feature is one folder under `components/` + one hook + (optionally) one API route group. To remove a feature, delete the folder and the imports in `app-shell.tsx`.
 
 ## Debugging tips
 
-- **Realtime service log:** `/home/z/my-project/.zscripts/realtime.log`
-- **App log:** `/home/z/my-project/dev.log`
+- **App + realtime log:** `/home/z/my-project/dev.log` (single log file for everything)
 - **Prisma queries:** already logged in dev mode
-- **Socket events:** add `console.log` in `mini-services/realtime/index.ts` — `bun --hot` auto-restarts
+- **Socket events:** add `console.log` in `src/lib/realtime-server.ts` — Next.js dev mode auto-reloads
 - **Bot dispatch:** `[bot]` prefixed console logs show module registration; `[bot dispatch]` shows errors
 
 ## What's intentionally NOT included (yet)

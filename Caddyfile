@@ -1,23 +1,14 @@
+# SNS — single-port architecture.
+# Both the Next.js app and the Socket.io realtime service share port 3090.
+# Your Cloudflare Tunnel should point origin at http://localhost:81 (this Caddy)
+# OR — even simpler — point the tunnel directly at http://localhost:3090 and
+# skip Caddy entirely.
+
 :81 {
-	@transform_port_query {
-		query XTransformPort=*
-	}
-
-	handle @transform_port_query {
-		reverse_proxy localhost:{query.XTransformPort} {
-			header_up Host {host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Real-IP {remote_host}
-		}
-	}
-
-	handle {
-		reverse_proxy localhost:3000 {
-			header_up Host {host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Real-IP {remote_host}
-		}
+	reverse_proxy localhost:3090 {
+		header_up Host {host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Real-IP {remote_host}
 	}
 }
