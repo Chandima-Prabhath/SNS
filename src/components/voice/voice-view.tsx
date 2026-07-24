@@ -1,13 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useVoiceCall } from '@/hooks/useVoiceCall'
-import { useAppStore } from '@/stores/useAppStore'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Phone, PhoneOff, Mic, MicOff, Volume2, Users, Loader2, Radio } from 'lucide-react'
+import { Phone, PhoneOff, Mic, MicOff, Volume2, Users, Loader2, Radio, Wifi, Cloud } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -25,6 +24,30 @@ export function VoiceView() {
     leaveCall,
   } = useVoiceCall()
   const qc = useQueryClient()
+
+  // Track connection types per peer (P2P vs TURN)
+  const [connectionTypes, setConnectionTypes] = useState<Record<string, 'p2p' | 'turn' | 'unknown'>>({})
+  // Track audio levels per peer (for active-speaker visual)
+  const [audioLevels, setAudioLevels] = useState<Record<string, number>>({})
+
+  // Hook into the voice call manager's onConnectionType and onAudioLevel callbacks
+  // We do this by intercepting the callbacks via a custom event the hook dispatches
+  useEffect(() => {
+    const onConnType = (e: Event) => {
+      const { peerId, type } = (e as CustomEvent).detail
+      setConnectionTypes((prev) => ({ ...prev, [peerId]: type }))
+    }
+    const onAudioLevel = (e: Event) => {
+      const { peerId, level } = (e as CustomEvent).detail
+      setAudioLevels((prev) => ({ ...prev, [peerId]: level }))
+    }
+    window.addEventListener('sns:connection-type', onConnType as EventListener)
+    window.addEventListener('sns:audio-level', onAudioLevel as EventListener)
+    return () => {
+      window.removeEventListener('sns:connection-type', onConnType as EventListener)
+      window.removeEventListener('sns:audio-level', onAudioLevel as EventListener)
+    }
+  }, [])
 
   const { data: groups } = useQuery({
     queryKey: ['channels'],
@@ -67,6 +90,19 @@ export function VoiceView() {
     onError: () => toast.error('Failed to join voice'),
   })
 
+  // Determine overall connection type for the call
+  const connTypeValues = Object.values(connectionTypes)
+  const overallType: 'p2p' | 'turn' | 'mixed' | 'unknown' =
+    connTypeValues.length === 0
+      ? 'unknown'
+      : connTypeValues.every((t) => t === 'p2p')
+        ? 'p2p'
+        : connTypeValues.every((t) => t === 'turn')
+          ? 'turn'
+          : 'mixed'
+
+  const turnProviders = iceServers?.providers?.filter((p: any) => p.enabled && p.type === 'turn') || []
+
   return (
     <div className="h-full overflow-y-auto bg-background">
       <div className="max-w-3xl mx-auto p-4 md:p-6 space-y-6">
@@ -74,9 +110,9 @@ export function VoiceView() {
           <h1 className="text-2xl font-semibold tracking-tight">Calls</h1>
           <p className="text-sm text-muted-foreground">
             Drop-in voice channels ·{' '}
-            {iceServers?.providers?.filter((p: any) => p.enabled && p.type === 'turn').length > 0 ? (
+            {turnProviders.length > 0 ? (
               <span className="text-status-online font-medium">
-                {iceServers.providers.filter((p: any) => p.enabled && p.type === 'turn').length} TURN provider(s) active
+                {turnProviders.length} TURN provider(s) active
               </span>
             ) : (
               <span className="text-status-idle">STUN only</span>
@@ -97,22 +133,43 @@ export function VoiceView() {
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Users className="w-4 h-4" />
-                {participants.size + 1}
+              <div className="flex items-center gap-3">
+                {/* Connection type indicator */}
+                <ConnectionTypeBadge type={overallType} />
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Users className="w-4 h-4" />
+                  {participants.size + 1}
+                </div>
               </div>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-              <ParticipantTile name="You" muted={localMuted} isLocal stream={localStream} />
+              <ParticipantTile
+                name="You"
+                muted={localMuted}
+                isLocal
+                stream={localStream}
+                level={1 - (localMuted ? 1 : 0)} // visual hint
+              />
               {Array.from(participants.entries()).map(([peerId, p]) => (
                 <ParticipantTile
                   key={peerId}
                   name={p.username}
                   muted={p.muted}
                   stream={p.stream}
+                  level={audioLevels[peerId] || 0}
+                  connectionType={connectionTypes[peerId]}
                 />
               ))}
+            </div>
+
+            {/* Audio quality info */}
+            <div className="text-xs text-muted-foreground mb-4 flex flex-wrap items-center gap-3">
+              <span className="flex items-center gap-1">
+                <Radio className="w-3 h-3" /> Echo cancellation · Noise suppression · Auto-gain
+              </span>
+              <span>·</span>
+              <span>Silence detection: auto-mutes when you stop speaking (saves bandwidth)</span>
             </div>
 
             <div className="flex justify-center gap-3">
@@ -121,6 +178,7 @@ export function VoiceView() {
                 size="lg"
                 onClick={toggleMute}
                 className="rounded-full h-12 w-12 p-0"
+                title={localMuted ? 'Unmute' : 'Mute'}
               >
                 {localMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
               </Button>
@@ -210,20 +268,47 @@ export function VoiceView() {
   )
 }
 
+function ConnectionTypeBadge({ type }: { type: 'p2p' | 'turn' | 'mixed' | 'unknown' }) {
+  if (type === 'unknown') return null
+  const config = {
+    p2p: { label: 'P2P', icon: Wifi, color: 'bg-status-online/20 text-status-online' },
+    turn: { label: 'TURN', icon: Cloud, color: 'bg-primary/20 text-primary' },
+    mixed: { label: 'Mixed', icon: Cloud, color: 'bg-status-idle/20 text-status-idle' },
+  }[type]
+  const Icon = config.icon
+  return (
+    <span className={cn('flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full', config.color)}>
+      <Icon className="w-3 h-3" />
+      {config.label}
+    </span>
+  )
+}
+
 function ParticipantTile({
   name,
   muted,
   isLocal,
   stream,
+  level = 0,
+  connectionType,
 }: {
   name: string
   muted: boolean
   isLocal?: boolean
   stream?: MediaStream | null
+  level?: number
+  connectionType?: 'p2p' | 'turn' | 'unknown'
 }) {
+  // Active-speaker glow: ring intensifies with audio level
+  const glowIntensity = Math.min(level * 3, 1)
   return (
-    <div className="flex flex-col items-center gap-2 p-4 rounded-2xl bg-muted/50">
-      <div className="relative">
+    <div className="flex flex-col items-center gap-2 p-4 rounded-2xl bg-muted/50 relative">
+      <div
+        className="relative"
+        style={{
+          filter: glowIntensity > 0.1 ? `drop-shadow(0 0 ${8 + glowIntensity * 12}px oklch(0.7 0.18 145 / ${glowIntensity}))` : undefined,
+        }}
+      >
         <Avatar className="w-16 h-16">
           <AvatarFallback>{name.charAt(0).toUpperCase()}</AvatarFallback>
         </Avatar>
@@ -236,6 +321,11 @@ function ParticipantTile({
       <div className="text-sm font-medium">
         {name} {isLocal && <span className="text-muted-foreground">(you)</span>}
       </div>
+      {!isLocal && connectionType && (
+        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">
+          {connectionType === 'p2p' ? 'P2P' : connectionType === 'turn' ? 'TURN' : ''}
+        </div>
+      )}
       {!isLocal && stream && <AudioPlayer stream={stream} />}
     </div>
   )

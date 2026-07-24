@@ -178,9 +178,30 @@ export function useChannel(channelId: string | null) {
         if (old.some((m) => m.id === data.message.id)) return old
         return [...old, data.message]
       })
-      // Broadcast user message to other clients via socket
+      // Broadcast user message to other clients via socket — both the channel
+      // event (so they see it in the open chat) AND a notify event (so they get
+      // a badge/toast even if they're on a different screen).
       if (socket) {
         socket.emit('channel:message', { channelId, message: data.message })
+
+        // Push a notification to every recipient (server-side fan-out via socket)
+        if (data.recipientIds && Array.isArray(data.recipientIds)) {
+          for (const recipientId of data.recipientIds) {
+            socket.emit('notify:user', {
+              userId: recipientId,
+              type: 'message',
+              data: {
+                channelId,
+                messageId: data.message.id,
+                senderId: data.message.senderId,
+                senderName: data.message.sender?.displayName || data.message.sender?.username,
+                body: data.message.body,
+                senderType: data.message.senderType,
+              },
+            })
+          }
+        }
+
         // Also broadcast any bot replies that were generated server-side
         if (data.botReplies && Array.isArray(data.botReplies)) {
           for (const reply of data.botReplies) {
@@ -190,6 +211,23 @@ export function useChannel(channelId: string | null) {
               return [...old, reply]
             })
             socket.emit('channel:message', { channelId, message: reply })
+            // Notify recipients about the bot reply too
+            if (data.recipientIds) {
+              for (const recipientId of data.recipientIds) {
+                socket.emit('notify:user', {
+                  userId: recipientId,
+                  type: 'message',
+                  data: {
+                    channelId,
+                    messageId: reply.id,
+                    senderId: reply.senderId,
+                    senderName: reply.sender?.displayName || 'Bot',
+                    body: reply.body,
+                    senderType: 'bot',
+                  },
+                })
+              }
+            }
           }
         }
       }

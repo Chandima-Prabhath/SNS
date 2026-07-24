@@ -246,6 +246,99 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       io.to(payload.to).emit('call:ice-candidate', { from: socket.id, candidate: payload.candidate })
     })
 
+    // ─── DM call ringing (for 1:1 calls) ─────────────────────────────────
+    // The caller rings a specific user via their socket connection(s).
+    // We look up all sockets for that userId (via the presence map) and forward.
+    socket.on('call:ring', (payload: {
+      callId: string
+      targetUserId: string
+      from: { userId: string; username: string; displayName: string }
+      channelId?: string
+      dmGroupId?: string
+    }) => {
+      // Find all sockets owned by targetUserId
+      const targetPresence = presence.get(payload.targetUserId)
+      if (!targetPresence) {
+        // Target is offline — notify caller via a 'reject' with reason 'offline'
+        socket.emit('call:reject', { callId: payload.callId, byUserId: payload.targetUserId, reason: 'offline' })
+        return
+      }
+      for (const sid of targetPresence.socketIds) {
+        io.to(sid).emit('call:incoming', {
+          callId: payload.callId,
+          from: payload.from,
+          channelId: payload.channelId,
+          dmGroupId: payload.dmGroupId,
+        })
+      }
+    })
+
+    socket.on('call:accept', (payload: { callId: string; byUserId: string }) => {
+      // Notify all of caller's sockets that the call was accepted
+      const callerSockets = presence.get(payload.byUserId)
+      if (callerSockets) {
+        for (const sid of callerSockets.socketIds) {
+          io.to(sid).emit('call:accept', { callId: payload.callId, byUserId })
+        }
+      }
+    })
+
+    socket.on('call:reject', (payload: { callId: string; byUserId: string; reason?: string }) => {
+      const callerSockets = presence.get(payload.byUserId)
+      if (callerSockets) {
+        for (const sid of callerSockets.socketIds) {
+          io.to(sid).emit('call:reject', { callId: payload.callId, reason: payload.reason || 'rejected' })
+        }
+      }
+    })
+
+    socket.on('call:cancel', (payload: { callId: string; targetUserId: string }) => {
+      // Caller is cancelling an outgoing ring
+      const targetSockets = presence.get(payload.targetUserId)
+      if (targetSockets) {
+        for (const sid of targetSockets.socketIds) {
+          io.to(sid).emit('call:cancel', { callId: payload.callId })
+        }
+      }
+    })
+
+    // ─── Push notifications: server pushes new messages to all of a user's ─
+    // sessions so they get unread badges / notifications regardless of which
+    // screen they're on. Persistent socket connection = real-time notifications.
+    socket.on('notify:user', (payload: { userId: string; type: string; data: any }) => {
+      const targetPresence = presence.get(payload.userId)
+      if (!targetPresence) return
+      for (const sid of targetPresence.socketIds) {
+        // Don't echo back to the sender's own socket
+        if (sid === socket.id) continue
+        io.to(sid).emit('notify', { type: payload.type, data: payload.data })
+      }
+    })
+
+    // Broadcast a new message to all members of a channel (server-side driven,
+    // not just relying on the sender's socket to relay)
+    socket.on('channel:broadcast-message', (payload: { channelId: string; message: any; recipientIds: string[] }) => {
+      for (const uid of payload.recipientIds) {
+        const targetPresence = presence.get(uid)
+        if (!targetPresence) continue
+        for (const sid of targetPresence.socketIds) {
+          if (sid === socket.id) continue // skip sender
+          io.to(sid).emit('channel:message', payload.message)
+          io.to(sid).emit('notify', {
+            type: 'message',
+            data: {
+              channelId: payload.channelId,
+              messageId: payload.message.id,
+              senderId: payload.message.senderId,
+              senderName: payload.message.sender?.displayName || payload.message.sender?.username,
+              body: payload.message.body,
+              senderType: payload.message.senderType,
+            },
+          })
+        }
+      }
+    })
+
     // ─── Presence management ─────────────────────────────────────────────
     socket.on('presence:set', (status: string) => {
       setPresence(userId, username, status, socket.id)

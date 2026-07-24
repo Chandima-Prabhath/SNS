@@ -154,7 +154,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     orderBy: { createdAt: 'asc' },
   })
 
-  return NextResponse.json({ message, botReplies })
+  // Get all channel member user IDs so the client can broadcast notifications
+  // to every participant (not just the sender). The sender's socket will relay
+  // both the message and a notify event to each recipient.
+  const memberIds = await db.channelMember.findMany({
+    where: { channelId },
+    select: { userId: true },
+  })
+
+  return NextResponse.json({
+    message,
+    botReplies,
+    recipientIds: memberIds.map((m) => m.userId).filter((id) => id !== userId),
+  })
 }
 
 // PATCH — edit a message (only the sender)

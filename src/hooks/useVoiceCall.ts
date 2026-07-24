@@ -7,8 +7,8 @@ import { useCallStore } from '@/stores/useCallStore'
 
 export interface IceServerInfo {
   iceServers: RTCIceServer[]
-  turnEnabled: boolean
-  stunUrl: string
+  providers?: any[]
+  stun?: string
 }
 
 export function useVoiceCall() {
@@ -63,6 +63,14 @@ export function useVoiceCall() {
             },
             onMuteChange: (muted) => {
               callStore.setLocalMuted(muted)
+            },
+            onAudioLevel: (peerId, level) => {
+              // Forward to UI via custom event (voice view listens for this)
+              window.dispatchEvent(new CustomEvent('sns:audio-level', { detail: { peerId, level } }))
+            },
+            onConnectionType: (peerId, type) => {
+              // Forward to UI via custom event (voice view listens for this)
+              window.dispatchEvent(new CustomEvent('sns:connection-type', { detail: { peerId, type } }))
             },
           },
         })

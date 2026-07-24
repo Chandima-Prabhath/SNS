@@ -5,7 +5,7 @@ import { usePresence } from '@/hooks/usePresence'
 import { useSession } from 'next-auth/react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { ChevronLeft, MoreVertical, Hash, Phone, Volume2, Bot } from 'lucide-react'
+import { ChevronLeft, MoreVertical, Hash, Phone, Volume2, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -21,13 +21,13 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
   const setView = useAppStore((s) => s.setView)
   const presence = usePresence()
   const { startCall } = useVoiceCall()
+  const { data: session } = useSession()
   const [callPending, setCallPending] = useState(false)
 
   const isGroup = !channel.group?.isDm
   const isVoiceChannel = channel.type === 'voice'
   const partner = channel.partner
 
-  // Partner presence for DMs
   const partnerStatus = partner ? presence[partner.id]?.status || partner.status || 'offline' : 'offline'
 
   const handleStartCall = async () => {
@@ -40,9 +40,39 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
       })
       if (!res.ok) throw new Error('failed')
       const data = await res.json()
+
+      // Start our side of the call (mic + WebRTC)
       await startCall({ callId: data.call.id, channelId: channel.id })
+
+      // For DM calls, ring the partner so they get an incoming-call UI.
+      // For group/voice-channel calls, we just join — others see us in the call list.
+      if (partner && session?.user) {
+        const myName = (session.user as any).displayName || (session.user as any).username || 'Someone'
+        // The useVoiceCall hook exposes the manager via the startCall return;
+        // we emit the ring via the socket directly through the hook's internal manager.
+        // Simpler: dispatch a custom event the voice hook listens for, OR
+        // call the manager method. Since we don't have direct access to the manager
+        // here, we'll emit via the socket by fetching it from the singleton.
+        const { getSocket } = await import('@/lib/socket')
+        const socket = await getSocket()
+        socket.emit('call:ring', {
+          callId: data.call.id,
+          targetUserId: partner.id,
+          from: {
+            userId: (session.user as any).id,
+            username: (session.user as any).username,
+            displayName: myName,
+          },
+          channelId: channel.id,
+        })
+      }
+
       setView('voice')
-      toast.success('Call started')
+      if (partner) {
+        toast.info(`Ringing ${partner.displayName}...`)
+      } else {
+        toast.success('Joined voice channel')
+      }
     } catch {
       toast.error('Failed to start call')
     } finally {
@@ -121,7 +151,7 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
           onClick={handleStartCall}
           disabled={callPending}
         >
-          <Phone className="w-4 h-4" />
+          {callPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Phone className="w-4 h-4" />}
         </Button>
         <Button
           variant="ghost"

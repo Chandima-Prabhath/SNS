@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAppStore } from '@/stores/useAppStore'
 import { usePresence } from '@/hooks/usePresence'
+import { useUnreadCounts } from '@/hooks/useUnreadCounts'
 import { useSession } from 'next-auth/react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -63,6 +64,7 @@ export function ChatList() {
   const filter = useAppStore((s) => s.chatFilter)
   const setFilter = useAppStore((s) => s.setChatFilter)
   const presence = usePresence()
+  const { data: unreadData } = useUnreadCounts()
   const { data: session } = useSession()
   const myId = (session?.user as any)?.id
 
@@ -74,6 +76,16 @@ export function ChatList() {
       const res = await fetch('/api/channels')
       const data = await res.json()
       return data.groups as any[]
+    },
+  })
+
+  // Fetch all users for the "Discover people" section
+  const { data: users } = useQuery({
+    queryKey: ['users'],
+    queryFn: async () => {
+      const res = await fetch('/api/users')
+      const data = await res.json()
+      return data.users as any[]
     },
   })
 
@@ -177,62 +189,85 @@ export function ChatList() {
       <ScrollArea className="flex-1">
         <div className="px-2 pb-4">
           {filteredChats.length === 0 ? (
-            <EmptyChatList />
+            <EmptyChatList hasUsers={!!(users && users.length > 0)} />
           ) : (
-            <div className="space-y-0.5">
-              {filteredChats.map((row) => {
-                const active = row.channel.id === activeChannelId
-                const presenceInfo = row.partner ? presence[row.partner.id] : null
-                const presenceStatus = presenceInfo?.status || 'offline'
-                return (
-                  <button
-                    key={row.channel.id}
-                    onClick={() => setActiveChannel(row.channel.id)}
-                    className={cn(
-                      'w-full flex items-center gap-3 p-2.5 rounded-xl transition-colors text-left',
-                      active ? 'bg-accent' : 'hover:bg-accent/50'
-                    )}
-                  >
-                    {/* Avatar */}
-                    {row.isGroup ? (
-                      <div className="relative w-12 h-12 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
-                        <Hash className="w-5 h-5 text-primary" />
-                      </div>
-                    ) : (
-                      <div className="relative shrink-0">
-                        <Avatar className="w-12 h-12">
-                          <AvatarImage src={row.partner?.avatarUrl || undefined} />
-                          <AvatarFallback>
-                            {row.partner?.displayName?.charAt(0) || row.channel.name.charAt(0).toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span
-                          className={cn(
-                            'absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-sidebar',
-                            presenceStatus === 'online' && 'bg-status-online',
-                            presenceStatus === 'idle' && 'bg-status-idle',
-                            presenceStatus === 'dnd' && 'bg-status-dnd',
-                            presenceStatus === 'offline' && 'bg-status-offline'
-                          )}
-                        />
-                      </div>
-                    )}
+            <>
+              <div className="space-y-0.5">
+                {filteredChats.map((row) => {
+                  const active = row.channel.id === activeChannelId
+                  const presenceInfo = row.partner ? presence[row.partner.id] : null
+                  const presenceStatus = presenceInfo?.status || 'offline'
+                  const unreadCount = unreadData?.unread?.[row.channel.id] || 0
+                  return (
+                    <button
+                      key={row.channel.id}
+                      onClick={() => setActiveChannel(row.channel.id)}
+                      className={cn(
+                        'w-full flex items-center gap-3 p-2.5 rounded-xl transition-colors text-left',
+                        active ? 'bg-accent' : 'hover:bg-accent/50'
+                      )}
+                    >
+                      {/* Avatar */}
+                      {row.isGroup ? (
+                        <div className="relative w-12 h-12 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
+                          <Hash className="w-5 h-5 text-primary" />
+                        </div>
+                      ) : (
+                        <div className="relative shrink-0">
+                          <Avatar className="w-12 h-12">
+                            <AvatarImage src={row.partner?.avatarUrl || undefined} />
+                            <AvatarFallback>
+                              {row.partner?.displayName?.charAt(0) || row.channel.name.charAt(0).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span
+                            className={cn(
+                              'absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-sidebar',
+                              presenceStatus === 'online' && 'bg-status-online',
+                              presenceStatus === 'idle' && 'bg-status-idle',
+                              presenceStatus === 'dnd' && 'bg-status-dnd',
+                              presenceStatus === 'offline' && 'bg-status-offline'
+                            )}
+                          />
+                        </div>
+                      )}
 
-                    {/* Name + preview */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="font-medium truncate text-[15px]">
-                          {row.isGroup ? row.channel.name : row.partner?.displayName || row.channel.name}
-                        </span>
+                      {/* Name + preview */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span
+                            className={cn(
+                              'truncate text-[15px]',
+                              unreadCount > 0 ? 'font-semibold text-foreground' : 'font-medium'
+                            )}
+                          >
+                            {row.isGroup ? row.channel.name : row.partner?.displayName || row.channel.name}
+                          </span>
+                          {unreadCount > 0 && !active && (
+                            <span className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                              {unreadCount > 99 ? '99+' : unreadCount}
+                            </span>
+                          )}
+                        </div>
+                        <div
+                          className={cn(
+                            'text-xs truncate',
+                            unreadCount > 0 ? 'text-foreground/80 font-medium' : 'text-muted-foreground'
+                          )}
+                        >
+                          {row.isGroup ? row.groupName : `@${row.partner?.username || 'user'}`}
+                        </div>
                       </div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {row.isGroup ? row.groupName : `@${row.partner?.username || 'user'}`}
-                      </div>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Discover people to DM — only shown when not searching and filter is 'all' */}
+              {filter === 'all' && !search.trim() && users && users.length > 0 && (
+                <DiscoverPeople users={users} existingDmPartnerIds={filteredChats.filter(c => c.isDm).map(c => c.partner?.id).filter(Boolean)} />
+              )}
+            </>
           )}
         </div>
       </ScrollArea>
@@ -240,7 +275,75 @@ export function ChatList() {
   )
 }
 
-function EmptyChatList() {
+/**
+ * Discover section — shows all users you can DM but haven't yet.
+ * Helps first-time users find people to talk to without hunting for the + button.
+ */
+function DiscoverPeople({ users, existingDmPartnerIds }: { users: any[]; existingDmPartnerIds: string[] }) {
+  const qc = useQueryClient()
+  const setActiveChannel = useAppStore((s) => s.setActiveChannel)
+
+  const startDm = useMutation({
+    mutationFn: async (targetUserId: string) => {
+      const res = await fetch('/api/groups', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUserId }),
+      })
+      if (!res.ok) throw new Error('failed')
+      return res.json()
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['channels'] })
+      setActiveChannel(data.channel.id)
+      toast.success('DM started')
+    },
+  })
+
+  // Filter out users we already have a DM with
+  const newUsers = users.filter((u) => !existingDmPartnerIds.includes(u.id))
+  if (newUsers.length === 0) return null
+
+  return (
+    <div className="mt-6">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-2">
+        Discover people
+      </h3>
+      <div className="space-y-0.5">
+        {newUsers.map((u) => (
+          <button
+            key={u.id}
+            onClick={() => startDm.mutate(u.id)}
+            className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-accent/50 transition-colors text-left"
+          >
+            <div className="relative shrink-0">
+              <Avatar className="w-11 h-11">
+                <AvatarImage src={u.avatarUrl || undefined} />
+                <AvatarFallback>{u.displayName?.charAt(0) || '?'}</AvatarFallback>
+              </Avatar>
+              <span
+                className={cn(
+                  'absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-sidebar',
+                  u.status === 'online' && 'bg-status-online',
+                  u.status === 'idle' && 'bg-status-idle',
+                  u.status === 'dnd' && 'bg-status-dnd',
+                  u.status === 'offline' && 'bg-status-offline'
+                )}
+              />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-medium text-[15px] truncate">{u.displayName}</div>
+              <div className="text-xs text-muted-foreground truncate">@{u.username}</div>
+            </div>
+            <span className="text-xs text-primary font-medium shrink-0">Message</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function EmptyChatList({ hasUsers }: { hasUsers: boolean }) {
   return (
     <div className="text-center py-16 px-4">
       <div className="w-16 h-16 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
@@ -248,7 +351,9 @@ function EmptyChatList() {
       </div>
       <h3 className="font-medium text-base">No chats yet</h3>
       <p className="text-sm text-muted-foreground mt-1 max-w-xs mx-auto">
-        Start a DM with a friend or create a group to get the conversation going.
+        {hasUsers
+          ? 'Tap "Discover people" below to start a DM with someone, or use the + button to create a group.'
+          : 'Invite your friends to join! Share your invite code so they can sign up.'}
       </p>
     </div>
   )

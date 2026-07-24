@@ -7,18 +7,21 @@ import { ChatView } from '@/components/chat/chat-view'
 import { StatusView } from '@/components/status/status-view'
 import { VoiceView } from '@/components/voice/voice-view'
 import { SettingsView } from '@/components/settings/settings-view'
+import { IncomingCallOverlay } from '@/components/voice/incoming-call-overlay'
 import { useAppStore } from '@/stores/useAppStore'
 import { useSocket } from '@/hooks/useSocket'
+import { useNotifications } from '@/hooks/useNotifications'
 import { Toaster } from '@/components/ui/sonner'
 import { Loader2 } from 'lucide-react'
 
 export function AppShell() {
   const { status } = useSession()
   const view = useAppStore((s) => s.view)
-  const activeChannelId = useAppStore((s) => s.activeChannelId)
 
-  // Init the singleton socket connection (also drives presence + chat)
+  // Init the singleton socket connection (drives presence, chat, AND notifications)
   useSocket()
+  // Listen for notifications on every screen — toasts, badges, sounds
+  useNotifications()
 
   if (status === 'loading') {
     return (
@@ -45,9 +48,6 @@ export function AppShell() {
       {/* Main content area */}
       <div className="flex-1 flex flex-col min-w-0">
         <main className="flex-1 min-h-0 overflow-hidden">
-          {/* On mobile, when a chat is active, the chat view goes full-screen
-              (position: fixed, inset: 0, z-20) and covers the bottom nav. */}
-
           {view === 'chats' && <ChatView />}
           {view === 'status' && <StatusView />}
           {view === 'voice' && <VoiceView />}
@@ -55,8 +55,12 @@ export function AppShell() {
         </main>
       </div>
 
-      {/* Bottom tab bar — mobile only, hidden when a chat is active (chat covers it) */}
+      {/* Bottom tab bar — mobile only */}
       <BottomNav />
+
+      {/* Incoming call overlay — renders on top of everything when ringing */}
+      <IncomingCallOverlay />
+
       <Toaster />
     </div>
   )
