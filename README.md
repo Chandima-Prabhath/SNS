@@ -105,16 +105,25 @@ src/
 ## Local development
 
 ```bash
-# One command does everything: install deps, generate Prisma client, create DB
-bun run setup
-
-# Or step by step:
+# 1. Clone and install
+git clone https://github.com/Chandima-Prabhath/SNS.git
+cd SNS
 bun install           # installs dependencies (auto-runs `prisma generate` via postinstall)
+
+# 2. Set up your environment
+cp .env.example .env  # copy the template
+# Edit .env and fill in your values (NEXTAUTH_SECRET, TURN creds, etc.)
+
+# 3. Create the database
 bun run db:push       # creates the SQLite database from the Prisma schema
+
+# 4. Start the dev server
 bun run dev           # starts Next.js + Socket.io on http://localhost:3090
 ```
 
 Open `http://localhost:3090`, sign up, then click "Seed default group" to bootstrap the Friends group with `general`, `memes`, and `voice-hangout` channels.
+
+> **Important**: Never commit your real `.env` file. It's in `.gitignore` by default. The `.env.example` template is tracked — copy it to `.env` and fill in your own values.
 
 > **If you see `Cannot find module '@prisma/client-XXXXXXXX'`**: it means the Prisma client wasn't generated. Run `bun run db:generate` (or `bun run setup` from scratch). The `postinstall` script handles this automatically after `bun install`, but if you cloned with `--no-install` or skipped it, you'll need to run it manually.
 
