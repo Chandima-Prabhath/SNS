@@ -1,0 +1,347 @@
+// SNS — Social Network for Small groups
+// Designed for 8-15 friends. Keep it lean.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Users & Identity
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  username        String   @unique
+  displayName     String
+  passwordHash    String
+  avatarUrl       String?
+  bio             String?
+
+  // presence
+  status          String   @default("offline") // online | idle | dnd | offline
+  customStatus    String?
+  lastSeenAt      DateTime @default(now())
+  lastSeenVisible Boolean  @default(true)
+
+  // role
+  role            String   @default("member") // owner | admin | member
+
+  // privacy prefs (per-user)
+  readReceiptsEnabled   Boolean @default(true)
+  typingIndicatorsEnabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // relations
+  ownedGroups     Group[]          @relation("GroupOwner")
+  memberships     ChannelMember[]
+  messages        Message[]        @relation("MessageSender")
+  ownedBots       Bot[]
+  stories         Story[]
+  storyViews      StoryViewer[]
+  storyAudience   StoryAudience[]
+  readReceipts    MessageReadReceipt[]
+  callParticipants CallParticipant[]
+  callsStarted    VoiceCall[]      @relation("CallStarter")
+  botSessions     ConversationSession[]
+  settings        UserSetting[]
+  sessions        Session[]
+  accounts        Account[]
+
+  @@index([status])
+}
+
+model UserSetting {
+  id     String @id @default(cuid())
+  userId String
+  key    String
+  value  String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Groups & Channels (Discord-lite: groups → channels)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Group {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  iconUrl     String?
+  ownerId     String
+  owner       User     @relation("GroupOwner", fields: [ownerId], references: [id])
+  inviteCode  String   @unique @default(cuid())
+  isDm        Boolean  @default(false) // true for 1:1 DMs
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  channels    Channel[]
+}
+
+model Channel {
+  id          String   @id @default(cuid())
+  groupId     String
+  group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name        String
+  topic       String?
+  type        String   @default("text") // text | voice
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  members     ChannelMember[]
+  messages    Message[]
+  voiceCalls  VoiceCall[]
+
+  @@index([groupId])
+  @@index([type])
+}
+
+model ChannelMember {
+  id        String   @id @default(cuid())
+  channelId String
+  userId    String
+  role      String   @default("member") // owner | member | muted
+  joinedAt  DateTime @default(now())
+  lastReadMessageId String?
+
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, userId])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Messages (text + media, replies, edit/soft-delete, polymorphic sender)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Message {
+  id          String   @id @default(cuid())
+  channelId   String
+  channel     Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  // polymorphic sender: user or bot (senderId is the id of either User or Bot)
+  senderType  String   @default("user") // user | bot | system
+  senderId    String?
+  sender      User?    @relation("MessageSender", fields: [senderId], references: [id], onDelete: SetNull)
+
+  body        String
+  mediaUrl    String?
+  mediaType   String?  // image | video | audio | file
+
+  replyToId   String?
+  replyTo     Message?  @relation("MessageReply", fields: [replyToId], references: [id], onDelete: NoAction)
+  replies     Message[] @relation("MessageReply")
+
+  editedAt    DateTime?
+  deletedAt   DateTime?
+
+  // disappearing messages (TTL)
+  expiresAt   DateTime?
+
+  createdAt   DateTime @default(now())
+
+  readReceipts MessageReadReceipt[]
+
+  @@index([channelId, createdAt])
+  @@index([senderId])
+  @@index([replyToId])
+  @@index([expiresAt])
+}
+
+model MessageReadReceipt {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  readAt    DateTime @default(now())
+
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bots (Telegram-style: extensible command + callback framework)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Bot {
+  id            String   @id @default(cuid())
+  ownerId       String
+  owner         User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  name          String
+  username      String   @unique // e.g. "pollbot"
+  description   String?
+  avatarUrl     String?
+
+  // identifier of the bot module implemented in src/lib/bot/bots/*
+  module        String   @default("echo")
+
+  // how the bot is invoked
+  enabled       Boolean  @default(true)
+  privacyMode   Boolean  @default(true) // only respond to /commands and direct mentions
+
+  // per-bot configuration (JSON string)
+  config        String   @default("{}")
+
+  // webhook secret (for external bot transports — used as `token` in URL)
+  webhookToken  String   @default(cuid())
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions      ConversationSession[]
+
+  @@index([ownerId])
+}
+
+// Multi-step bot conversation state (FSM)
+model ConversationSession {
+  id        String   @id @default(cuid())
+  botId     String
+  userId    String
+  state     String   @default("{}") // JSON state
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  bot       Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([botId, userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Status / Stories (WhatsApp-style: 24h ephemeral, viewer list, privacy tiers)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Story {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  mediaUrl   String
+  mediaType  String   @default("image") // image | video | text
+  caption    String?
+
+  // privacy: all | include | exclude
+  audience   String   @default("all")
+  // include/exclude lists stored in StoryAudience
+
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  viewers    StoryViewer[]
+  audienceList StoryAudience[]
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
+model StoryViewer {
+  id        String   @id @default(cuid())
+  storyId   String
+  userId    String
+  viewedAt  DateTime @default(now())
+
+  story     Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([storyId, userId])
+}
+
+model StoryAudience {
+  id        String   @id @default(cuid())
+  storyId   String
+  userId    String
+
+  story     Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([storyId, userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Voice Calls (WebRTC: 1:1 DM calls + persistent voice channels)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model VoiceCall {
+  id          String    @id @default(cuid())
+  channelId   String?   // for voice-channel calls (persistent)
+  dmGroupId   String?   // for DM calls (1:1)
+  startedBy   String
+  starter     User      @relation("CallStarter", fields: [startedBy], references: [id])
+  status      String    @default("active") // active | ended
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+
+  channel     Channel?  @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  participants CallParticipant[]
+
+  @@index([channelId])
+  @@index([status])
+}
+
+model CallParticipant {
+  id        String   @id @default(cuid())
+  callId    String
+  userId    String
+  joinedAt  DateTime @default(now())
+  leftAt    DateTime?
+
+  call      VoiceCall @relation(fields: [callId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([callId, userId])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NextAuth required models
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
