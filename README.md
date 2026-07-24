@@ -105,12 +105,18 @@ src/
 ## Local development
 
 ```bash
-bun install
-bun run db:push          # create SQLite DB from schema
-bun run dev              # starts Next.js + Socket.io on http://localhost:3090
+# One command does everything: install deps, generate Prisma client, create DB
+bun run setup
+
+# Or step by step:
+bun install           # installs dependencies (auto-runs `prisma generate` via postinstall)
+bun run db:push       # creates the SQLite database from the Prisma schema
+bun run dev           # starts Next.js + Socket.io on http://localhost:3090
 ```
 
 Open `http://localhost:3090`, sign up, then click "Seed default group" to bootstrap the Friends group with `general`, `memes`, and `voice-hangout` channels.
+
+> **If you see `Cannot find module '@prisma/client-XXXXXXXX'`**: it means the Prisma client wasn't generated. Run `bun run db:generate` (or `bun run setup` from scratch). The `postinstall` script handles this automatically after `bun install`, but if you cloned with `--no-install` or skipped it, you'll need to run it manually.
 
 ## Production deployment via Cloudflare Tunnel
 
