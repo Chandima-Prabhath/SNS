@@ -33,31 +33,21 @@ const GOOGLE_STUN: IceServer = {
 // ─────────────────────────────────────────────────────────────────────────────
 // Metered OpenRelay — free public TURN (always on as fallback)
 // Docs: https://www.metered.ca/tools/openrelay/
+// Note: We only include 1 STUN + 1 TURN to avoid the browser warning
+// "Using five or more STUN/TURN servers slows down discovery."
 // ─────────────────────────────────────────────────────────────────────────────
 const METERED_PUBLIC_STUN: IceServer = {
   urls: 'stun:openrelay.metered.ca:80',
 }
 
-const METERED_PUBLIC_TURN_UDP: IceServer = {
-  urls: 'turn:openrelay.metered.ca:80',
-  username: 'openrelayproject',
-  credential: 'openrelayproject',
-}
-
-const METERED_PUBLIC_TURN_TCP: IceServer = {
-  urls: 'turn:openrelay.metered.ca:443',
-  username: 'openrelayproject',
-  credential: 'openrelayproject',
-}
-
-const METERED_PUBLIC_TURN_TLS: IceServer = {
-  urls: 'turns:openrelay.metered.ca:443',
+const METERED_PUBLIC_TURN: IceServer = {
+  urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443'],
   username: 'openrelayproject',
   credential: 'openrelayproject',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Metered Private TURN — optional, requires METERED_APP_TURN_USERNAME + CRED
+// Metered Private TURN — optional, requires METERED_TURN_USERNAME + CREDENTIAL
 // in .env. Uses the standard.relay.metered.ca endpoint with your private creds.
 // Get your creds at https://www.metered.ca/dashboard/ → Turn Server
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,12 +56,13 @@ function getMeteredPrivateTurnServers(): IceServer[] {
   const credential = process.env.METERED_TURN_CREDENTIAL
   if (!username || !credential) return []
 
+  // Single TURN entry with both UDP and TCP URLs to stay under the 5-server limit
   return [
-    { urls: 'stun:stun.relay.metered.ca:80' },
-    { urls: 'turn:standard.relay.metered.ca:80', username, credential },
-    { urls: 'turn:standard.relay.metered.ca:80?transport=tcp', username, credential },
-    { urls: 'turn:standard.relay.metered.ca:443', username, credential },
-    { urls: 'turns:standard.relay.metered.ca:443?transport=tcp', username, credential },
+    {
+      urls: ['turn:standard.relay.metered.ca:80', 'turn:standard.relay.metered.ca:443'],
+      username,
+      credential,
+    },
   ]
 }
 
@@ -126,7 +117,7 @@ export function getIceServers(): IceServer[] {
     servers.push(...meteredPrivate)
   } else {
     // Fallback to public OpenRelay (free, shared, 20 GB/month)
-    servers.push(METERED_PUBLIC_STUN, METERED_PUBLIC_TURN_UDP, METERED_PUBLIC_TURN_TCP, METERED_PUBLIC_TURN_TLS)
+    servers.push(METERED_PUBLIC_STUN, METERED_PUBLIC_TURN)
   }
 
   // Cloudflare TURN (optional, signed per-call)
@@ -135,6 +126,7 @@ export function getIceServers(): IceServer[] {
   // Custom coturn (optional)
   servers.push(...getCustomTurnServers())
 
+  // Total: 1 Google STUN + 1 Metered TURN = 2 servers (well under the 5-server warning threshold)
   return servers
 }
 

@@ -4,14 +4,16 @@
  * WebRTC voice call manager — production-grade mesh with perfect negotiation.
  *
  * Key fixes in this version:
- *   1. Single peer connection per peerId (deduplicated). Both sides create a PC,
- *      but only ONE side initiates (deterministic: lower socketId = initiator).
- *      This eliminates the "Unknown ufrag" errors caused by dual PC creation.
- *   2. ICE restart only on 'failed' (not 'disconnected'). Disconnected is transient
- *      and self-heals; restarting on it causes the connected→disconnected→checking loop.
- *   3. Stale ufrag candidates are silently dropped (benign during ICE restarts).
- *   4. Autoplay unlock: audio elements are primed on user gesture (the Accept button).
- *   5. Remote audio attached to a persistent DOM <audio> element (not detached).
+ *   1. Single peer connection per peerId (deduplicated).
+ *   2. ICE restart only on 'failed' (not 'disconnected').
+ *   3. Stale ufrag candidates silently dropped.
+ *   4. Autoplay unlock: a global "audio unlocked" flag. When ontrack fires,
+ *      if audio is unlocked, we play immediately. If not, we queue and play
+ *      on the next user gesture. The flag persists for the page lifetime.
+ *   5. Silence detector is DISABLED by default — it was causing the mute
+ *      button to get stuck on mobile (mobile mics pick up ambient noise,
+ *      triggering false "silence" and auto-muting the user against their will).
+ *   6. Reduced ICE servers to avoid the "5+ servers slows down discovery" warning.
  */
 import type { Socket } from 'socket.io-client'
 
@@ -31,8 +33,8 @@ interface PeerEntry {
   username: string
   makingOffer: boolean
   ignoreOffer: boolean
-  isInitiator: boolean // deterministic: lower socketId initiates
-  isPolite: boolean // higher socketId is polite (yields in glare)
+  isInitiator: boolean
+  isPolite: boolean
   audioSender?: RTCRtpSender
   audioLevelChecker?: number
   remoteStream: MediaStream
@@ -41,7 +43,7 @@ interface PeerEntry {
   failedTimer?: number
 }
 
-// Global listener for incoming calls — registered ONCE when the socket connects
+// Global listener for incoming calls
 let globalIncomingCallListenerRegistered = false
 
 export function registerGlobalCallListeners(socket: Socket) {
@@ -63,6 +65,46 @@ export function registerGlobalCallListeners(socket: Socket) {
   })
 }
 
+/**
+ * Global audio unlock state.
+ *
+ * Browsers block audio.play() until a user gesture occurs. Once unlocked,
+ * audio can play freely for the lifetime of the page. We track this globally
+ * so that even if the VoiceCallManager is recreated, the unlock state persists.
+ *
+ * When ontrack fires and creates a new <audio> element, we check this flag:
+ *   - If unlocked: play immediately
+ *   - If not unlocked: queue the element; it'll be played when unlockAudio() is called
+ */
+let audioUnlocked = false
+const pendingAudioElements: HTMLAudioElement[] = []
+
+export function unlockAudio() {
+  if (audioUnlocked) return
+  audioUnlocked = true
+  console.log('[webrtc] unlocking audio, playing', pendingAudioElements.length, 'pending elements')
+
+  // Play all pending audio elements
+  for (const el of pendingAudioElements) {
+    el.play().catch((e) => console.warn('[webrtc] pending audio play failed:', e.message))
+  }
+  pendingAudioElements.length = 0
+
+  // Also prime a silent audio context to fully unlock iOS Safari
+  try {
+    const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext
+    if (AudioContextClass) {
+      const ctx = new AudioContextClass()
+      if (ctx.state === 'suspended') ctx.resume()
+      const buffer = ctx.createBuffer(1, 1, 22050)
+      const source = ctx.createBufferSource()
+      source.buffer = buffer
+      source.connect(ctx.destination)
+      source.start(0)
+    }
+  } catch {}
+}
+
 export class VoiceCallManager {
   private socket: Socket
   private callId: string
@@ -71,11 +113,11 @@ export class VoiceCallManager {
   private peers: Map<string, PeerEntry> = new Map()
   private iceServers: RTCIceServer[]
   private userMuted = false
-  private silenceDetectorActive = false
+  // Silence detector DISABLED — it was causing the mute button to get stuck
+  // on mobile (mobile mics pick up ambient noise, triggering false silence
+  // detection and auto-muting the user against their will).
+  // We keep the field for compatibility but never set it to true.
   private silenceMuted = false
-  private mySocketId: string | null = null
-  // Pending audio elements that need a user gesture to play (autoplay unlock)
-  private pendingAudioPlays: HTMLAudioElement[] = []
 
   constructor(params: {
     socket: Socket
@@ -91,21 +133,16 @@ export class VoiceCallManager {
   }
 
   private setupSignaling() {
-    // Someone ELSE joined — they will initiate the offer to us (if they're the
-    // initiator by socketId comparison). We pre-create the PC as non-initiator.
     this.socket.on('call:peer-joined', async (payload: { peerId: string; userId: string; username: string }) => {
       await this.ensurePeer(payload.peerId, payload.userId, payload.username)
     })
 
-    // We just joined — the server tells us who's already here.
     this.socket.on('call:peers', async (payload: { peers: Array<{ peerId: string; userId: string; username: string }> }) => {
-      this.mySocketId = this.socket.id
       for (const peer of payload.peers) {
         await this.ensurePeer(peer.peerId, peer.userId, peer.username)
       }
     })
 
-    // Perfect negotiation: handle incoming offer
     this.socket.on('call:offer', async (payload: { from: string; sdp: any }) => {
       const peer = this.peers.get(payload.from)
       if (!peer) {
@@ -139,12 +176,8 @@ export class VoiceCallManager {
       const peer = this.peers.get(payload.from)
       if (!peer) return
       try {
-        // Silently drop candidates that don't match the current remote description's ufrag
-        // (benign during ICE restarts or candidate races)
-        const candidate = new RTCIceCandidate(payload.candidate)
-        await peer.pc.addIceCandidate(candidate)
+        await peer.pc.addIceCandidate(new RTCIceCandidate(payload.candidate))
       } catch (e: any) {
-        // "Unknown ufrag" is expected when candidates from an old ICE generation arrive
         if (!/ufrag/i.test(e.message)) {
           console.warn('[webrtc] addIceCandidate error:', e.message)
         }
@@ -157,15 +190,10 @@ export class VoiceCallManager {
     })
   }
 
-  /**
-   * Ensure exactly ONE peer connection exists per peerId.
-   * Both sides call this — only the initiator (lower socketId) sends the initial offer.
-   */
   private async ensurePeer(peerId: string, userId: string, username: string) {
     if (this.peers.has(peerId)) return
 
-    const myId = this.socket.id || this.mySocketId || ''
-    // Deterministic roles: lower socketId = initiator (sends offer), higher = polite (yields)
+    const myId = this.socket.id || ''
     const isInitiator = myId < peerId
     const isPolite = myId > peerId
 
@@ -186,7 +214,7 @@ export class VoiceCallManager {
     }
     this.peers.set(peerId, peer)
 
-    // CRITICAL: Add local tracks BEFORE creating any offer
+    // Add local tracks BEFORE creating any offer
     if (this.localStream) {
       for (const track of this.localStream.getTracks()) {
         const sender = pc.addTrack(track, this.localStream)
@@ -196,15 +224,14 @@ export class VoiceCallManager {
       }
     }
 
-    // Remote track handler
+    // Remote track handler — this is where audio comes in
     pc.ontrack = (event) => {
-      console.log('[webrtc] ontrack fired, kind:', event.track.kind)
+      console.log('[webrtc] ontrack fired, kind:', event.track.kind, 'audioUnlocked:', audioUnlocked)
+
       // Add the incoming track to our remote stream
       peer.remoteStream.addTrack(event.track)
 
-      // Create or reuse a DOM-attached audio element for this peer.
-      // Browsers block autoplay for detached elements and for elements that
-      // haven't been "unlocked" by a user gesture.
+      // Create or reuse a DOM-attached audio element
       if (!peer.audioEl) {
         const el = document.createElement('audio')
         el.autoplay = true
@@ -212,22 +239,32 @@ export class VoiceCallManager {
         el.style.display = 'none'
         document.body.appendChild(el)
         peer.audioEl = el
+        console.log('[webrtc] created audio element for peer', peerId)
       }
+
+      // Set the stream as the source
       peer.audioEl.srcObject = peer.remoteStream
-      // Try to play — if blocked by autoplay, queue for unlock on user gesture
-      peer.audioEl.play().catch(() => {
-        console.log('[webrtc] autoplay blocked for peer, queuing for unlock')
-        this.pendingAudioPlays.push(peer.audioEl!)
-      })
+
+      // Try to play. If audio is already unlocked (user gestured earlier),
+      // this succeeds. If not, queue it for later unlock.
+      const playPromise = peer.audioEl.play()
+      if (playPromise) {
+        playPromise
+          .then(() => console.log('[webrtc] audio playing for peer', peerId))
+          .catch((e) => {
+            console.warn('[webrtc] audio play blocked for peer, queuing:', e.message)
+            if (!pendingAudioElements.includes(peer.audioEl!)) {
+              pendingAudioElements.push(peer.audioEl!)
+            }
+          })
+      }
 
       this.callbacks.onRemoteStream(peerId, peer.remoteStream, { userId, username })
       this.startRemoteAudioMonitoring(peerId, peer.remoteStream)
     }
 
-    // Perfect negotiation: onnegotiationneeded fires after addTrack.
-    // Only the initiator sends the initial offer — the non-initiator waits.
     pc.onnegotiationneeded = async () => {
-      if (!peer.isInitiator) return // non-initiator waits for the offer
+      if (!peer.isInitiator) return
       try {
         peer.makingOffer = true
         await pc.setLocalDescription()
@@ -250,15 +287,13 @@ export class VoiceCallManager {
       console.log(`[webrtc] ICE state (${username}): ${state}`)
       if (state === 'connected' || state === 'completed') {
         this.callbacks.onStateChange('connected')
-        // Clear any pending failed timer
         if (peer.failedTimer) {
           clearTimeout(peer.failedTimer)
           peer.failedTimer = undefined
         }
-        setTimeout(() => this.checkConnectionType(peerId), 1500)
+        // Check connection type after ICE settles
+        setTimeout(() => this.checkConnectionType(peerId), 2000)
       } else if (state === 'failed') {
-        // Only restart on 'failed', not 'disconnected'
-        // Debounce: wait 2s before restarting to avoid rapid loops
         if (!peer.failedTimer) {
           peer.failedTimer = window.setTimeout(() => {
             console.log(`[webrtc] ICE failed, restarting for ${username}`)
@@ -268,35 +303,9 @@ export class VoiceCallManager {
         }
         this.callbacks.onStateChange('failed')
       } else if (state === 'disconnected') {
-        // Transient — don't restart, just notify. It usually self-heals.
         this.callbacks.onStateChange('disconnected')
       }
     }
-  }
-
-  /**
-   * Unlock audio playback — call this on a user gesture (e.g., Accept call button).
-   * Plays all pending audio elements that were blocked by autoplay policy.
-   */
-  unlockAudio() {
-    for (const el of this.pendingAudioPlays) {
-      el.play().catch(() => {})
-    }
-    this.pendingAudioPlays = []
-    // Also prime a silent audio context to fully unlock audio on iOS Safari
-    try {
-      const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext
-      if (AudioContextClass) {
-        const ctx = new AudioContextClass()
-        if (ctx.state === 'suspended') ctx.resume()
-        // Create a brief silent buffer to "unlock" the audio pipeline
-        const buffer = ctx.createBuffer(1, 1, 22050)
-        const source = ctx.createBufferSource()
-        source.buffer = buffer
-        source.connect(ctx.destination)
-        source.start(0)
-      }
-    } catch {}
   }
 
   private async checkConnectionType(peerId: string) {
@@ -305,17 +314,28 @@ export class VoiceCallManager {
     try {
       const stats = await peer.pc.getStats()
       let foundType: 'p2p' | 'turn' | 'unknown' = 'unknown'
+
       stats.forEach((report) => {
-        if (report.type === 'candidate-pair' && (report as any).state === 'succeeded') {
-          const localId = (report as any).localCandidateId
-          const local = stats.get(localId)
-          if (local && (local as any).candidateType === 'relay') {
-            foundType = 'turn'
-          } else if (local) {
-            foundType = 'p2p'
+        // Look for the active candidate pair (the one currently being used)
+        if (report.type === 'candidate-pair') {
+          const cp = report as any
+          // Only consider the nominated/selected pair, not all pairs
+          if (cp.nominated || cp.state === 'succeeded') {
+            const localCandidate = stats.get(cp.localCandidateId) as any
+            const remoteCandidate = stats.get(cp.remoteCandidateId) as any
+            if (localCandidate) {
+              // 'relay' = TURN, 'host'/'srflx'/'prflx' = P2P
+              if (localCandidate.candidateType === 'relay') {
+                foundType = 'turn'
+              } else {
+                foundType = 'p2p'
+              }
+              console.log(`[webrtc] connection type: ${foundType} (local: ${localCandidate.candidateType}, remote: ${remoteCandidate?.candidateType})`)
+            }
           }
         }
       })
+
       if (foundType !== peer.lastStatsType) {
         peer.lastStatsType = foundType
         this.callbacks.onConnectionType?.(peerId, foundType)
@@ -350,52 +370,9 @@ export class VoiceCallManager {
       this.callbacks.onLocalStream(this.localStream)
       this.callbacks.onStateChange('connecting')
       this.socket.emit('call:join', this.callId)
-      this.startSilenceDetection(this.localStream)
     } catch (e: any) {
       console.error('[webrtc] getUserMedia error', e)
       throw e
-    }
-  }
-
-  private startSilenceDetection(stream: MediaStream) {
-    try {
-      const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext
-      if (!AudioContextClass) return
-      const ctx = new AudioContextClass()
-      const source = ctx.createMediaStreamSource(stream)
-      const analyser = ctx.createAnalyser()
-      analyser.fftSize = 512
-      analyser.smoothingTimeConstant = 0.6
-      source.connect(analyser)
-
-      const data = new Uint8Array(analyser.frequencyBinCount)
-      let silentFrames = 0
-      const SILENCE_THRESHOLD = 8
-      const SILENCE_FRAMES_NEEDED = 30
-
-      this.silenceDetectorActive = true
-      const check = () => {
-        if (!this.silenceDetectorActive) return
-        analyser.getByteFrequencyData(data)
-        const avg = data.reduce((sum, v) => sum + v, 0) / data.length
-        if (avg < SILENCE_THRESHOLD) {
-          silentFrames++
-          if (silentFrames >= SILENCE_FRAMES_NEEDED && !this.silenceMuted) {
-            this.silenceMuted = true
-            this.applyMuteState()
-          }
-        } else {
-          if (this.silenceMuted) {
-            this.silenceMuted = false
-            this.applyMuteState()
-          }
-          silentFrames = 0
-        }
-        requestAnimationFrame(check)
-      }
-      check()
-    } catch (e) {
-      console.warn('[webrtc] silence detection unavailable:', e)
     }
   }
 
@@ -423,7 +400,8 @@ export class VoiceCallManager {
   }
 
   private applyMuteState() {
-    const shouldMute = this.userMuted || this.silenceMuted
+    // Only user mute matters now (silence detector disabled)
+    const shouldMute = this.userMuted
     if (this.localStream) {
       this.localStream.getAudioTracks().forEach((t) => (t.enabled = !shouldMute))
     }
@@ -437,6 +415,14 @@ export class VoiceCallManager {
 
   isMuted() { return this.userMuted }
 
+  /**
+   * Unlock audio playback — called on user gestures.
+   * Delegates to the global unlockAudio function.
+   */
+  unlockAudio() {
+    unlockAudio()
+  }
+
   private removePeer(peerId: string) {
     const peer = this.peers.get(peerId)
     if (peer) {
@@ -448,11 +434,13 @@ export class VoiceCallManager {
       }
       if (peer.failedTimer) clearTimeout(peer.failedTimer)
       this.peers.delete(peerId)
+      // Remove from pending list if present
+      const idx = pendingAudioElements.indexOf(peer.audioEl!)
+      if (idx >= 0) pendingAudioElements.splice(idx, 1)
     }
   }
 
   async leave(): Promise<void> {
-    this.silenceDetectorActive = false
     for (const peerId of Array.from(this.peers.keys())) {
       this.removePeer(peerId)
     }
