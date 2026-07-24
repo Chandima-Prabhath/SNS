@@ -4,7 +4,6 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 
 const RegisterSchema = z.object({
-  email: z.string().email(),
   username: z
     .string()
     .min(3)
@@ -14,6 +13,14 @@ const RegisterSchema = z.object({
   password: z.string().min(6).max(72),
 })
 
+/**
+ * POST /api/auth/register
+ *
+ * Simplified signup — no email required. We auto-generate a placeholder email
+ * (`<username>@sns.local`) since the User model requires an email field for
+ * NextAuth compatibility, but it's never used for password reset or anything
+ * user-facing. Users log in with their username + password.
+ */
 export async function POST(req: Request) {
   try {
     const body = await req.json()
@@ -25,20 +32,27 @@ export async function POST(req: Request) {
       )
     }
 
-    const { email, username, displayName, password } = parsed.data
-    const lowerEmail = email.toLowerCase()
+    const { username, displayName, password } = parsed.data
     const lowerUsername = username.toLowerCase()
+    const placeholderEmail = `${lowerUsername}@sns.local`
 
     const existing = await db.user.findFirst({
-      where: { OR: [{ email: lowerEmail }, { username: lowerUsername }] },
+      where: {
+        OR: [{ email: placeholderEmail }, { username: lowerUsername }],
+      },
     })
     if (existing) {
-      return NextResponse.json({ error: 'email or username already taken' }, { status: 409 })
+      return NextResponse.json({ error: 'username already taken' }, { status: 409 })
     }
 
     const passwordHash = await bcrypt.hash(password, 10)
     const user = await db.user.create({
-      data: { email: lowerEmail, username: lowerUsername, displayName, passwordHash },
+      data: {
+        email: placeholderEmail,
+        username: lowerUsername,
+        displayName,
+        passwordHash,
+      },
     })
 
     // Auto-join the default group + general text channels if they exist

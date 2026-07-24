@@ -43,6 +43,7 @@ export function ChatInfoPanel({ channel }: ChatInfoPanelProps) {
 
   const isGroup = !channel.group?.isDm
   const inviteCode = channel.group?.inviteCode
+  const partner = channel.partner
 
   const content = (
     <div className="flex flex-col h-full">
@@ -52,18 +53,26 @@ export function ChatInfoPanel({ channel }: ChatInfoPanelProps) {
           <div className="w-20 h-20 rounded-full bg-primary/15 flex items-center justify-center mb-3">
             <Hash className="w-9 h-9 text-primary" />
           </div>
+        ) : partner ? (
+          <Avatar className="w-20 h-20 mb-3">
+            <AvatarImage src={partner.avatarUrl || undefined} />
+            <AvatarFallback className="text-2xl">
+              {partner.displayName?.charAt(0) || '?'}
+            </AvatarFallback>
+          </Avatar>
         ) : (
           <Avatar className="w-20 h-20 mb-3">
-            <AvatarImage src={members?.[0]?.avatarUrl || undefined} />
             <AvatarFallback className="text-2xl">
               {channel.name.charAt(0).toUpperCase()}
             </AvatarFallback>
           </Avatar>
         )}
-        <h2 className="text-lg font-semibold">{channel.name}</h2>
+        <h2 className="text-lg font-semibold">
+          {isGroup ? channel.name : partner?.displayName || channel.name}
+        </h2>
         {channel.topic && <p className="text-sm text-muted-foreground mt-0.5">{channel.topic}</p>}
-        {!isGroup && members?.[0] && (
-          <p className="text-sm text-muted-foreground mt-0.5">@{members[0].username}</p>
+        {!isGroup && partner && (
+          <p className="text-sm text-muted-foreground mt-0.5">@{partner.username}</p>
         )}
 
         {isGroup && inviteCode && (

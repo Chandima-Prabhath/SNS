@@ -7,8 +7,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Loader2, MessageCircle, Sparkles } from 'lucide-react'
+import { Loader2, MessageCircle, Sparkles, Eye, EyeOff } from 'lucide-react'
 import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
 
 export function AuthScreen() {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin')
@@ -18,11 +19,12 @@ export function AuthScreen() {
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
 
-  // Sign-up fields
-  const [email, setEmail] = useState('')
+  // Sign-up fields (simplified — no email)
   const [username, setUsername] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [signupPassword, setSignupPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -38,7 +40,7 @@ export function AuthScreen() {
     })
     setLoading(false)
     if (res?.error) {
-      toast.error('Invalid credentials')
+      toast.error('Invalid username or password')
     } else {
       window.location.reload()
     }
@@ -46,12 +48,16 @@ export function AuthScreen() {
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!email || !username || !displayName || !signupPassword) {
+    if (!username || !displayName || !signupPassword) {
       toast.error('Fill in all fields')
       return
     }
     if (signupPassword.length < 6) {
       toast.error('Password must be at least 6 characters')
+      return
+    }
+    if (signupPassword !== confirmPassword) {
+      toast.error("Passwords don't match")
       return
     }
     setLoading(true)
@@ -60,7 +66,6 @@ export function AuthScreen() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email,
           username,
           displayName,
           password: signupPassword,
@@ -70,8 +75,8 @@ export function AuthScreen() {
       if (!res.ok) {
         toast.error(data.error || 'Registration failed')
       } else {
-        toast.success('Account created! Signing in...')
-        await signIn('credentials', { identifier: email, password: signupPassword, redirect: false })
+        toast.success('Account created! Signing you in...')
+        await signIn('credentials', { identifier: username, password: signupPassword, redirect: false })
         window.location.reload()
       }
     } catch (e) {
@@ -108,41 +113,43 @@ export function AuthScreen() {
           <Tabs value={mode} onValueChange={(v) => setMode(v as any)}>
             <TabsList className="grid w-full grid-cols-2 mb-5">
               <TabsTrigger value="signin">Sign in</TabsTrigger>
-              <TabsTrigger value="signup">Create account</TabsTrigger>
+              <TabsTrigger value="signup">Sign up</TabsTrigger>
             </TabsList>
 
+            {/* ─── Sign in ─── */}
             <TabsContent value="signin">
               <form onSubmit={handleSignIn} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="identifier">Email or username</Label>
+                  <Label htmlFor="identifier">Username</Label>
                   <Input
                     id="identifier"
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}
                     autoComplete="username"
                     disabled={loading}
-                    className="h-11"
+                    className="h-12"
+                    placeholder="janedoe"
+                    autoCapitalize="none"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="password">Password</Label>
-                  <Input
+                  <PasswordInput
                     id="password"
-                    type="password"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    autoComplete="current-password"
+                    onChange={setPassword}
                     disabled={loading}
-                    className="h-11"
+                    autoComplete="current-password"
                   />
                 </div>
-                <Button type="submit" className="w-full h-11" disabled={loading}>
+                <Button type="submit" className="w-full h-12" disabled={loading}>
                   {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                   Sign in
                 </Button>
               </form>
             </TabsContent>
 
+            {/* ─── Sign up ─── */}
             <TabsContent value="signup">
               <form onSubmit={handleSignUp} className="space-y-4">
                 <div className="space-y-2">
@@ -153,47 +160,50 @@ export function AuthScreen() {
                     onChange={(e) => setDisplayName(e.target.value)}
                     placeholder="Jane Doe"
                     disabled={loading}
-                    className="h-11"
+                    className="h-12"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="username">Username</Label>
-                  <Input
-                    id="username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="janedoe"
-                    autoCapitalize="none"
-                    disabled={loading}
-                    className="h-11"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="jane@example.com"
-                    autoCapitalize="none"
-                    disabled={loading}
-                    className="h-11"
-                  />
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">@</span>
+                    <Input
+                      id="username"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      placeholder="janedoe"
+                      autoCapitalize="none"
+                      disabled={loading}
+                      className="h-12 pl-7"
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">3+ chars, letters/numbers/underscore only</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="signupPassword">Password</Label>
-                  <Input
+                  <PasswordInput
                     id="signupPassword"
-                    type="password"
                     value={signupPassword}
-                    onChange={(e) => setSignupPassword(e.target.value)}
-                    autoComplete="new-password"
+                    onChange={setSignupPassword}
                     disabled={loading}
-                    className="h-11"
+                    autoComplete="new-password"
                   />
                 </div>
-                <Button type="submit" className="w-full h-11" disabled={loading}>
+                <div className="space-y-2">
+                  <Label htmlFor="confirmPassword">Confirm password</Label>
+                  <PasswordInput
+                    id="confirmPassword"
+                    value={confirmPassword}
+                    onChange={setConfirmPassword}
+                    disabled={loading}
+                    autoComplete="new-password"
+                    error={confirmPassword.length > 0 && confirmPassword !== signupPassword}
+                  />
+                  {confirmPassword.length > 0 && confirmPassword !== signupPassword && (
+                    <p className="text-xs text-red-500">Passwords don't match</p>
+                  )}
+                </div>
+                <Button type="submit" className="w-full h-12" disabled={loading}>
                   {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                   Create account
                 </Button>
@@ -202,6 +212,48 @@ export function AuthScreen() {
           </Tabs>
         </CardContent>
       </Card>
+    </div>
+  )
+}
+
+/**
+ * Password input with show/hide toggle.
+ */
+function PasswordInput({
+  id,
+  value,
+  onChange,
+  disabled,
+  autoComplete,
+  error,
+}: {
+  id: string
+  value: string
+  onChange: (v: string) => void
+  disabled?: boolean
+  autoComplete?: string
+  error?: boolean
+}) {
+  const [show, setShow] = useState(false)
+  return (
+    <div className="relative">
+      <Input
+        id={id}
+        type={show ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        autoComplete={autoComplete}
+        disabled={disabled}
+        className={cn('h-12 pr-11', error && 'border-red-500 focus-visible:ring-red-500')}
+      />
+      <button
+        type="button"
+        onClick={() => setShow(!show)}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+        tabIndex={-1}
+      >
+        {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+      </button>
     </div>
   )
 }

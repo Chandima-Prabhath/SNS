@@ -30,6 +30,13 @@ interface ChannelInfo {
   topic: string | null
   type: string
   order: number
+  partner?: {
+    id: string
+    displayName: string
+    username: string
+    avatarUrl: string | null
+    status: string
+  }
   group: {
     id: string
     name: string
@@ -45,13 +52,7 @@ interface ChatRow {
   isDm: boolean
   isGroup: boolean
   isBot: boolean
-  partner?: {
-    id: string
-    displayName: string
-    username: string
-    avatarUrl: string | null
-    status: string
-  }
+  partner?: ChannelInfo['partner']
   groupName: string
   groupIcon: string | null
 }
@@ -96,6 +97,7 @@ export function ChatList() {
           isDm: g.isDm,
           isGroup: !g.isDm,
           isBot: false,
+          partner: g.partner, // populated by the API for DM groups
           groupName: g.name,
           groupIcon: g.iconUrl,
         })
@@ -116,7 +118,9 @@ export function ChatList() {
       list = list.filter(
         (c) =>
           c.channel.name.toLowerCase().includes(q) ||
-          c.groupName.toLowerCase().includes(q)
+          c.groupName.toLowerCase().includes(q) ||
+          (c.partner?.displayName.toLowerCase().includes(q) ?? false) ||
+          (c.partner?.username.toLowerCase().includes(q) ?? false)
       )
     }
     return list

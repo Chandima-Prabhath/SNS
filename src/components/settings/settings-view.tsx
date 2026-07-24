@@ -235,11 +235,6 @@ function ProfileSection() {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="email">Email</Label>
-        <Input id="email" value={me?.email || ''} disabled className="h-11" />
-      </div>
-
-      <div className="space-y-2">
         <Label htmlFor="bio">Bio</Label>
         <Textarea
           id="bio"
@@ -803,27 +798,39 @@ function SystemSection() {
 
       <Card className="p-4">
         <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
-          <Hash className="w-4 h-4" /> WebRTC
+          <Hash className="w-4 h-4" /> WebRTC ICE Providers
         </h3>
         {isLoading ? (
           <div className="text-sm text-muted-foreground">Loading...</div>
         ) : (
-          <div className="space-y-2 text-sm">
+          <div className="space-y-2.5 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">STUN:</span>
-              <code>{data?.stunUrl}</code>
+              <code className="text-xs">{data?.stun}</code>
             </div>
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">TURN enabled:</span>
-              {data?.turnEnabled ? (
-                <Badge className="bg-status-online">Yes</Badge>
-              ) : (
-                <Badge variant="secondary">No</Badge>
-              )}
+            <div className="border-t pt-2.5 mt-2.5">
+              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                Active TURN providers
+              </div>
+              <div className="space-y-1.5">
+                {data?.providers?.map((p: any) => (
+                  <div key={p.name} className="flex items-center justify-between">
+                    <span className="font-mono text-xs">{p.name}</span>
+                    <div className="flex items-center gap-2">
+                      {p.note && <span className="text-xs text-muted-foreground">{p.note}</span>}
+                      {p.enabled ? (
+                        <Badge className="bg-status-online text-[10px]">ON</Badge>
+                      ) : (
+                        <Badge variant="secondary" className="text-[10px]">OFF</Badge>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-            {!data?.turnEnabled && (
+            {!data?.providers?.find((p: any) => p.name === 'cloudflare-turn')?.enabled && (
               <div className="mt-3 p-3 bg-muted/50 rounded text-xs">
-                <p className="font-medium mb-1">Enable Cloudflare TURN:</p>
+                <p className="font-medium mb-1">Add Cloudflare TURN (optional, 1 TB free):</p>
                 <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
                   <li>Cloudflare Dashboard → Realtime / Calls → Create TURN App</li>
                   <li>Copy Key ID and Secret to <code>.env</code></li>
@@ -831,6 +838,13 @@ function SystemSection() {
                 </ol>
               </div>
             )}
+            <div className="mt-2 p-3 bg-primary/5 border border-primary/20 rounded text-xs">
+              <p className="font-medium mb-1 text-primary">Metered OpenRelay is on by default</p>
+              <p className="text-muted-foreground">
+                Free TURN (20 GB/month) — works for most home/mobile networks.
+                For heavy use, add Cloudflare TURN (1 TB free) or self-host coturn.
+              </p>
+            </div>
           </div>
         )}
       </Card>

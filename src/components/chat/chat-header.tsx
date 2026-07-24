@@ -2,10 +2,14 @@
 
 import { useAppStore } from '@/stores/useAppStore'
 import { usePresence } from '@/hooks/usePresence'
+import { useSession } from 'next-auth/react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { ChevronLeft, MoreVertical, Hash, Phone, Volume2 } from 'lucide-react'
+import { ChevronLeft, MoreVertical, Hash, Phone, Volume2, Bot } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useState } from 'react'
+import { toast } from 'sonner'
+import { useVoiceCall } from '@/hooks/useVoiceCall'
 
 interface ChatHeaderProps {
   channel: any
@@ -14,20 +18,40 @@ interface ChatHeaderProps {
 export function ChatHeader({ channel }: ChatHeaderProps) {
   const setActiveChannel = useAppStore((s) => s.setActiveChannel)
   const setChatInfoOpen = useAppStore((s) => s.setChatInfoOpen)
+  const setView = useAppStore((s) => s.setView)
   const presence = usePresence()
+  const { startCall } = useVoiceCall()
+  const [callPending, setCallPending] = useState(false)
 
-  // For DMs, find the partner user. For groups, show the channel name.
   const isGroup = !channel.group?.isDm
   const isVoiceChannel = channel.type === 'voice'
+  const partner = channel.partner
 
-  // Look up partner's presence if this is a DM (we need to know who the partner is — comes from members)
-  // For simplicity in header, we just show the channel name; the info panel handles partner lookup
-  const partnerStatus = 'online' // placeholder — presence is updated in real-time elsewhere
+  // Partner presence for DMs
+  const partnerStatus = partner ? presence[partner.id]?.status || partner.status || 'offline' : 'offline'
+
+  const handleStartCall = async () => {
+    setCallPending(true)
+    try {
+      const res = await fetch('/api/calls', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId: channel.id }),
+      })
+      if (!res.ok) throw new Error('failed')
+      const data = await res.json()
+      await startCall({ callId: data.call.id, channelId: channel.id })
+      setView('voice')
+      toast.success('Call started')
+    } catch {
+      toast.error('Failed to start call')
+    } finally {
+      setCallPending(false)
+    }
+  }
 
   return (
-    <header
-      className="h-14 shrink-0 flex items-center gap-2 px-2 md:px-4 border-b bg-background/95 backdrop-blur-xl z-10"
-    >
+    <header className="h-14 shrink-0 flex items-center gap-2 px-2 md:px-4 border-b bg-background/95 backdrop-blur-xl z-10">
       {/* Back button — mobile only */}
       <Button
         variant="ghost"
@@ -51,21 +75,34 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
               <Hash className="w-4 h-4 text-primary" />
             )}
           </div>
+        ) : partner ? (
+          <div className="relative shrink-0">
+            <Avatar className="w-9 h-9">
+              <AvatarImage src={partner.avatarUrl || undefined} />
+              <AvatarFallback>{partner.displayName?.charAt(0) || '?'}</AvatarFallback>
+            </Avatar>
+            <span
+              className={cn(
+                'absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-background',
+                partnerStatus === 'online' && 'bg-status-online',
+                partnerStatus === 'idle' && 'bg-status-idle',
+                partnerStatus === 'dnd' && 'bg-status-dnd',
+                partnerStatus === 'offline' && 'bg-status-offline'
+              )}
+            />
+          </div>
         ) : (
           <Avatar className="w-9 h-9 shrink-0">
-            <AvatarFallback>
-              {channel.name.charAt(0).toUpperCase()}
-            </AvatarFallback>
+            <AvatarFallback>{channel.name.charAt(0).toUpperCase()}</AvatarFallback>
           </Avatar>
         )}
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-[15px] truncate">
-            {channel.name}
+            {isGroup ? channel.name : partner?.displayName || channel.name}
           </div>
-          {!isGroup && (
-            <div className="text-xs text-muted-foreground truncate flex items-center gap-1">
-              <span className={cn('w-1.5 h-1.5 rounded-full bg-status-online')} />
-              online
+          {!isGroup && partner && (
+            <div className="text-xs text-muted-foreground truncate">
+              {partnerStatus === 'online' ? 'online' : partnerStatus}
             </div>
           )}
           {isGroup && channel.topic && (
@@ -81,10 +118,8 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
           size="icon"
           className="h-9 w-9"
           title="Voice call"
-          onClick={() => {
-            // Voice calls are now in the Calls tab
-            // For DMs, the user can start a call from there
-          }}
+          onClick={handleStartCall}
+          disabled={callPending}
         >
           <Phone className="w-4 h-4" />
         </Button>

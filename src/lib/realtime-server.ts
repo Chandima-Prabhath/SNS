@@ -199,14 +199,30 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
     // ─── Voice call signaling (WebRTC) ───────────────────────────────────
     socket.on('call:join', (callId: string) => {
       socket.join(`call:${callId}`)
+
+      // Tell everyone already in the call that we joined (so they can offer)
       socket.to(`call:${callId}`).emit('call:peer-joined', {
         peerId: socket.id,
         userId,
         username,
       })
-      const peers = Array.from(io.sockets.adapter.rooms.get(`call:${callId}`) || []).filter(
+
+      // Tell the joiner who's already in the call.
+      // We need to look up each socket's userId/username — the socket.handshake.auth
+      // gives us our own, but for others we need a lookup. We use the presence map
+      // (userId → socketIds) in reverse, but that's awkward. Instead, we maintain
+      // a socketId → {userId, username} map on the io instance.
+      const roomSocketIds = Array.from(io.sockets.adapter.rooms.get(`call:${callId}`) || []).filter(
         (id) => id !== socket.id
       )
+      const peers = roomSocketIds.map((sid) => {
+        const otherSocket = io.sockets.sockets.get(sid) as any
+        return {
+          peerId: sid,
+          userId: otherSocket?.userId || '',
+          username: otherSocket?.username || 'user',
+        }
+      })
       socket.emit('call:peers', { peers })
     })
 

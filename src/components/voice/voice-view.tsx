@@ -73,11 +73,13 @@ export function VoiceView() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Calls</h1>
           <p className="text-sm text-muted-foreground">
-            Drop-in voice channels · Google STUN ·{' '}
-            {iceServers?.turnEnabled ? (
-              <span className="text-status-online font-medium">TURN on</span>
+            Drop-in voice channels ·{' '}
+            {iceServers?.providers?.filter((p: any) => p.enabled && p.type === 'turn').length > 0 ? (
+              <span className="text-status-online font-medium">
+                {iceServers.providers.filter((p: any) => p.enabled && p.type === 'turn').length} TURN provider(s) active
+              </span>
             ) : (
-              <span className="text-status-idle">P2P only</span>
+              <span className="text-status-idle">STUN only</span>
             )}
           </p>
         </div>

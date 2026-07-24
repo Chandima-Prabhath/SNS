@@ -3,7 +3,16 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
 
-// Start a new voice call in a channel
+/**
+ * POST /api/calls — start OR join a voice call.
+ *
+ * If there's an active call in the channel/DM, JOIN it (add participant).
+ * If not, CREATE a new one.
+ *
+ * This was the bug: previously every "Join" click created a new call,
+ * so two users clicking Join on the same channel ended up in two separate
+ * calls and couldn't see each other.
+ */
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -15,14 +24,42 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'channelId or dmGroupId required' }, { status: 400 })
   }
 
-  // End any other active call in the same channel/dm (one at a time)
-  if (channelId) {
-    await db.voiceCall.updateMany({
-      where: { channelId, status: 'active' },
-      data: { status: 'ended', endedAt: new Date() },
+  // Look for an existing active call in this channel/DM
+  const where = channelId
+    ? { channelId, status: 'active' as const }
+    : { dmGroupId, status: 'active' as const }
+
+  const existingCall = await db.voiceCall.findFirst({
+    where,
+    include: {
+      participants: {
+        include: { user: { select: { id: true, username: true, displayName: true, avatarUrl: true } } },
+      },
+    },
+  })
+
+  if (existingCall) {
+    // Join the existing call — add this user as a participant (or rejoin if they left)
+    await db.callParticipant.upsert({
+      where: { callId_userId: { callId: existingCall.id, userId } },
+      create: { callId: existingCall.id, userId },
+      update: { leftAt: null }, // re-join if they previously left
     })
+
+    // Refresh with the upserted participant
+    const refreshed = await db.voiceCall.findUnique({
+      where: { id: existingCall.id },
+      include: {
+        participants: {
+          include: { user: { select: { id: true, username: true, displayName: true, avatarUrl: true } } },
+        },
+      },
+    })
+
+    return NextResponse.json({ call: refreshed, joined: true })
   }
 
+  // No active call — create a new one
   const call = await db.voiceCall.create({
     data: {
       channelId: channelId || null,
@@ -33,9 +70,14 @@ export async function POST(req: Request) {
         create: { userId },
       },
     },
+    include: {
+      participants: {
+        include: { user: { select: { id: true, username: true, displayName: true, avatarUrl: true } } },
+      },
+    },
   })
 
-  return NextResponse.json({ call })
+  return NextResponse.json({ call, joined: false })
 }
 
 // List active calls
@@ -51,7 +93,10 @@ export async function GET(req: Request) {
       ...(channelId ? { channelId } : {}),
     },
     include: {
-      participants: { include: { user: { select: { id: true, username: true, displayName: true, avatarUrl: true } } } },
+      participants: {
+        where: { leftAt: null },
+        include: { user: { select: { id: true, username: true, displayName: true, avatarUrl: true } } },
+      },
       starter: { select: { id: true, username: true, displayName: true } },
     },
   })

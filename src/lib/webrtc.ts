@@ -46,20 +46,29 @@ export class VoiceCallManager {
 
   private setupSignaling() {
     this.socket.on('call:peer-joined', async (payload: { peerId: string; userId: string; username: string }) => {
-      // The new peer initiates the offer to existing peers
-      await this.createPeerConnection(payload.peerId, payload.userId, payload.username, true)
+      // Someone ELSE just joined the call. We DON'T initiate — the joiner
+      // receives our info via `call:peers` and initiates offers to us.
+      // We just remember who they are so when their offer arrives, we can answer.
+      // Pre-create the peer connection (as non-initiator) so we're ready to receive.
+      await this.createPeerConnection(payload.peerId, payload.userId, payload.username, false)
     })
 
-    this.socket.on('call:peers', async (payload: { peers: string[] }) => {
-      // We just joined — `peers` is the list of socket IDs already in the call.
-      // Existing peers will initiate offers to us via `call:peer-joined`.
+    this.socket.on('call:peers', async (payload: { peers: Array<{ peerId: string; userId: string; username: string }> }) => {
+      // We just joined — `peers` is the list of existing participants.
+      // We initiate offers to ALL of them (we're the newcomer).
+      for (const peer of payload.peers) {
+        await this.createPeerConnection(peer.peerId, peer.userId, peer.username, true)
+      }
     })
 
     this.socket.on('call:offer', async (payload: { from: string; sdp: any }) => {
       let peer = this.peers.get(payload.from)
       if (!peer) {
-        // We don't know who this is yet — create PC without userId (we'll learn it from peer-joined)
-        // In practice, peer-joined arrives first; this is a safety fallback.
+        // Race: we got an offer before `call:peers` arrived, or the PC was cleaned up.
+        // Create a non-initiator PC with placeholder identity; once `call:peers` or
+        // `call:peer-joined` arrives it'll be updated. For now, skip — the joiner
+        // should have received our info via call:peers first.
+        console.warn('[webrtc] offer from unknown peer', payload.from)
         return
       }
       await peer.pc.setRemoteDescription(new RTCSessionDescription(payload.sdp))
