@@ -3,19 +3,10 @@
 /**
  * WebRTC voice + video call manager.
  *
- * Audio enhancements:
- *   - Browser AEC (echoCancellation) + AGC (autoGainControl) — always on
- *   - RNNoise neural noise suppression via AudioWorklet — replaces browser's
- *     noiseSuppression for better quality (RNN-based, trained on real noise)
- *   - Falls back to browser noiseSuppression if RNNoise fails to load
- *
- * Video support:
- *   - 1:1: 720p @ 24fps, capped to 1 Mbps
- *   - Group (≤4): 480p @ 15fps, capped to 500 kbps
- *   - Camera toggle: track.enabled = false (no renegotiation)
- *   - Camera switch: sender.replaceTrack() (no renegotiation)
- *
- * Perfect negotiation pattern for glare-free offer/answer.
+ * Audio: browser AEC + AGC + RNNoise neural noise suppression via AudioWorklet.
+ * Video: 720p@24fps capped to 1Mbps, camera toggle + switch.
+ * Perfect negotiation for glare-free offer/answer.
+ * Single peer connection per peer (deduplicated).
  */
 import type { Socket } from 'socket.io-client'
 
@@ -66,6 +57,11 @@ export function registerGlobalCallListeners(socket: Socket) {
   socket.on('call:accept', (payload: any) => {
     window.dispatchEvent(new CustomEvent('sns:call-accepted', { detail: payload }))
   })
+  // Server-driven call ended (when the other person leaves)
+  socket.on('call:ended', (payload: { callId: string; reason: string }) => {
+    console.log('[webrtc] call ended by server:', payload.reason)
+    window.dispatchEvent(new CustomEvent('sns:call-ended', { detail: payload }))
+  })
 }
 
 let audioUnlocked = false
@@ -98,7 +94,6 @@ export class VoiceCallManager {
   private callId: string
   private callbacks: VoiceCallCallbacks
   private localStream: MediaStream | null = null
-  private videoStream: MediaStream | null = null // separate video stream for camera switching
   private audioContext: AudioContext | null = null
   private rnnoiseNode: any = null
   private peers: Map<string, PeerEntry> = new Map()
@@ -209,13 +204,11 @@ export class VoiceCallManager {
         const sender = pc.addTrack(track, this.localStream)
         if (track.kind === 'audio') {
           peer.audioSender = sender
-          // Cap audio bitrate
-          this.capSenderBitrate(sender, 32_000) // 32 kbps for opus voice
+          this.capSenderBitrate(sender, 32_000)
         }
         if (track.kind === 'video') {
           peer.videoSender = sender
-          // Cap video bitrate based on call type
-          this.capSenderBitrate(sender, this.enableVideo ? 1_000_000 : 500_000)
+          this.capSenderBitrate(sender, 1_000_000)
         }
       }
     }
@@ -295,9 +288,6 @@ export class VoiceCallManager {
     }
   }
 
-  /**
-   * Cap a sender's bitrate to limit bandwidth usage.
-   */
   private async capSenderBitrate(sender: RTCRtpSender, maxBitrate: number) {
     try {
       const params = sender.getParameters()
@@ -306,9 +296,7 @@ export class VoiceCallManager {
       }
       params.encodings[0].maxBitrate = maxBitrate
       await sender.setParameters(params)
-    } catch (e) {
-      // Some browsers don't support setParameters — ignore
-    }
+    } catch {}
   }
 
   private async checkConnectionType(peerId: string) {
@@ -328,7 +316,6 @@ export class VoiceCallManager {
               } else {
                 foundType = 'p2p'
               }
-              console.log(`[webrtc] connection type: ${foundType} (local: ${localCandidate.candidateType})`)
             }
           }
         }
@@ -342,40 +329,34 @@ export class VoiceCallManager {
 
   async start(micEnabled: boolean = true): Promise<void> {
     try {
-      // Get audio with AEC + AGC, but disable browser noiseSuppression if we're using RNNoise
-      const audioConstraints: MediaTrackConstraints = {
-        echoCancellation: true,
-        autoGainControl: true,
-        channelCount: 1,
+      // Get audio + video in a SINGLE getUserMedia call — this avoids the
+      // NotAllowedError that happens when you call getUserMedia twice
+      // (once for audio, once for video) on mobile browsers.
+      const constraints: MediaStreamConstraints = {
+        audio: {
+          echoCancellation: true,
+          autoGainControl: true,
+          channelCount: 1,
+          // Disable browser noiseSuppression if RNNoise is enabled
+          noiseSuppression: !this.enableRnnoise,
+        } as MediaTrackConstraints,
+        video: this.enableVideo
+          ? {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              frameRate: { ideal: 24, max: 30 },
+              facingMode: 'user',
+            }
+          : false,
       }
-      if (this.enableRnnoise) {
-        // RNNoise will handle noise suppression — disable browser's to avoid double processing
-        audioConstraints.noiseSuppression = false
-      } else {
-        audioConstraints.noiseSuppression = true
-      }
 
-      // Get video if enabled
-      const videoConstraints = this.enableVideo
-        ? {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            frameRate: { ideal: 24, max: 30 },
-            facingMode: 'user',
-          }
-        : false
+      this.localStream = await navigator.mediaDevices.getUserMedia(constraints)
 
-      this.localStream = await navigator.mediaDevices.getUserMedia({
-        audio: audioConstraints,
-        video: videoConstraints,
-      })
-
-      // Apply RNNoise if enabled
+      // Apply RNNoise if enabled (audio-only processing)
       if (this.enableRnnoise) {
         await this.applyRnnoise()
       }
 
-      // Log mic settings
       const audioTrack = this.localStream.getAudioTracks()[0]
       if (audioTrack) {
         const settings = audioTrack.getSettings()
@@ -400,8 +381,8 @@ export class VoiceCallManager {
 
   /**
    * Apply RNNoise neural noise suppression via AudioWorklet.
-   * Creates an audio processing graph: source → rnnoise → destination
-   * The destination stream replaces the original audio track.
+   * Uses the simple-rnnoise-wasm package's RNNoiseNode which handles
+   * WASM compilation and worklet registration.
    */
   private async applyRnnoise() {
     try {
@@ -411,11 +392,14 @@ export class VoiceCallManager {
         return
       }
 
-      this.audioContext = new AudioContextClass({
-        sampleRate: 48000, // RNNoise expects 48kHz
-      })
+      this.audioContext = new AudioContextClass({ sampleRate: 48000 })
 
-      // Load the RNNoise worklet
+      // Load the RNNoise WASM module
+      const wasmResponse = await fetch('/rnnoise.wasm')
+      const wasmBuffer = await wasmResponse.arrayBuffer()
+      const wasmModule = await WebAssembly.compile(wasmBuffer)
+
+      // Load the worklet
       await this.audioContext.audioWorklet.addModule('/rnnoise.worklet.js')
       console.log('[webrtc] RNNoise worklet loaded')
 
@@ -424,7 +408,13 @@ export class VoiceCallManager {
         new MediaStream([this.localStream!.getAudioTracks()[0]])
       )
       this.rnnoiseNode = new (window as any).AudioWorkletNode(this.audioContext, 'rnnoise', {
-        processorOptions: { frameSize: 480 },
+        channelCountMode: 'explicit',
+        channelCount: 1,
+        channelInterpretation: 'speakers',
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        processorOptions: { module: wasmModule },
       })
       const destination = this.audioContext.createMediaStreamDestination()
 
@@ -434,8 +424,6 @@ export class VoiceCallManager {
       // Replace the audio track with the processed one
       const processedTrack = destination.stream.getAudioTracks()[0]
       const originalTrack = this.localStream!.getAudioTracks()[0]
-
-      // Remove original audio track, add processed one
       this.localStream!.removeTrack(originalTrack)
       this.localStream!.addTrack(processedTrack)
 
@@ -501,9 +489,6 @@ export class VoiceCallManager {
 
   isMuted() { return this.userMuted }
 
-  /**
-   * Toggle video on/off (camera mute). Uses track.enabled to avoid renegotiation.
-   */
   setVideoEnabled(enabled: boolean) {
     this.videoEnabled = enabled
     if (this.localStream) {
@@ -514,20 +499,15 @@ export class VoiceCallManager {
 
   isVideoEnabled() { return this.videoEnabled }
 
-  /**
-   * Switch camera (front/back on mobile). Uses sender.replaceTrack to avoid renegotiation.
-   */
   async switchCamera(): Promise<boolean> {
     try {
       const videoTrack = this.localStream?.getVideoTracks()[0]
       if (!videoTrack) return false
 
-      // Get the current facing mode
       const settings = videoTrack.getSettings()
       const currentFacing = settings.facingMode || 'user'
       const newFacing = currentFacing === 'user' ? 'environment' : 'user'
 
-      // Get the new camera stream
       const newStream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1280 },
@@ -540,14 +520,12 @@ export class VoiceCallManager {
 
       const newTrack = newStream.getVideoTracks()[0]
 
-      // Replace the track in all peer connections
       for (const peer of this.peers.values()) {
         if (peer.videoSender) {
           await peer.videoSender.replaceTrack(newTrack)
         }
       }
 
-      // Update the local stream
       this.localStream!.removeTrack(videoTrack)
       this.localStream!.addTrack(newTrack)
       videoTrack.stop()

@@ -137,6 +137,33 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
     broadcastPresence()
   }
 
+  /**
+   * Check if a call should end (fewer than 2 participants).
+   * If so, notify all remaining participants and mark the call as ended.
+   */
+  function checkCallEnd(callId: string) {
+    const room = io.sockets.adapter.rooms.get(`call:${callId}`)
+    const participantCount = room ? room.size : 0
+
+    if (participantCount < 2) {
+      // Notify any remaining participant (or none) that the call ended
+      io.to(`call:${callId}`).emit('call:ended', {
+        callId,
+        reason: participantCount === 0 ? 'all_left' : 'insufficient_participants',
+      })
+
+      // Make remaining sockets leave the room
+      if (room) {
+        for (const sid of room) {
+          const s = io.sockets.sockets.get(sid)
+          s?.leave(`call:${callId}`)
+        }
+      }
+
+      console.log(`[realtime] call ${callId} ended (${participantCount} participants remaining)`)
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Connection lifecycle
   // ─────────────────────────────────────────────────────────────────────────
@@ -197,6 +224,9 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
     })
 
     // ─── Voice call signaling (WebRTC) ───────────────────────────────────
+    // The server tracks active calls and their participants. When a call
+    // drops below 2 participants, it's auto-ended and everyone is notified.
+
     socket.on('call:join', (callId: string) => {
       socket.join(`call:${callId}`)
 
@@ -207,11 +237,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
         username,
       })
 
-      // Tell the joiner who's already in the call.
-      // We need to look up each socket's userId/username — the socket.handshake.auth
-      // gives us our own, but for others we need a lookup. We use the presence map
-      // (userId → socketIds) in reverse, but that's awkward. Instead, we maintain
-      // a socketId → {userId, username} map on the io instance.
+      // Tell the joiner who's already in the call
       const roomSocketIds = Array.from(io.sockets.adapter.rooms.get(`call:${callId}`) || []).filter(
         (id) => id !== socket.id
       )
@@ -232,6 +258,24 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
         peerId: socket.id,
         userId,
       })
+
+      // Check if the call should end (fewer than 2 participants remain)
+      checkCallEnd(callId)
+    })
+
+    // Also handle disconnect — user might close the tab
+    socket.on('disconnect', () => {
+      // Find all calls this socket was in and check if they should end
+      for (const room of socket.rooms) {
+        if (room.startsWith('call:')) {
+          const callId = room.substring(5)
+          socket.to(room).emit('call:peer-left', {
+            peerId: socket.id,
+            userId,
+          })
+          checkCallEnd(callId)
+        }
+      }
     })
 
     socket.on('call:offer', (payload: { to: string; sdp: any }) => {

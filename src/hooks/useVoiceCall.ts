@@ -151,6 +151,34 @@ export function useVoiceCall() {
     console.log('[useVoiceCall] call store reset')
   }, [callStore])
 
+  // Listen for server-driven call ended (when the other person leaves)
+  useEffect(() => {
+    const onCallEnded = async (e: Event) => {
+      const detail = (e as CustomEvent).detail as { callId: string; reason: string }
+      console.log('[useVoiceCall] call ended by server:', detail.reason)
+
+      // Clean up our side
+      if (managerRef.current) {
+        try {
+          await managerRef.current.leave()
+        } catch {}
+        managerRef.current = null
+      }
+
+      callStore.end()
+      console.log('[useVoiceCall] call store reset (server-driven)')
+
+      // Show a toast
+      const { toast } = await import('sonner')
+      toast.info('Call ended')
+    }
+
+    window.addEventListener('sns:call-ended', onCallEnded as EventListener)
+    return () => {
+      window.removeEventListener('sns:call-ended', onCallEnded as EventListener)
+    }
+  }, [callStore])
+
   return {
     status: callStore.status,
     callId: callStore.callId,
