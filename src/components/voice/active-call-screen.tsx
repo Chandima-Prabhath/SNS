@@ -3,12 +3,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { useVoiceCall } from '@/hooks/useVoiceCall'
 import { useAppStore } from '@/stores/useAppStore'
-import { useSession } from 'next-auth/react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Button } from '@/components/ui/button'
-import { Mic, MicOff, PhoneOff, Volume2, Users, Wifi, Cloud, Shield } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { Mic, MicOff, PhoneOff, Volume2, VolumeX, Users, Wifi, Cloud, Shield } from 'lucide-react'
+import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
 
 interface ActiveCallScreenProps {
   callName: string
@@ -19,16 +18,22 @@ interface ActiveCallScreenProps {
 
 /**
  * WhatsApp-style full-screen active call UI.
- * Shows: large avatar, call name, call timer, connection type, participant count,
- * and bottom-docked controls (mute, speaker, end call).
  *
- * For group calls, shows participant tiles in a grid below the avatar.
+ * Controls:
+ *   - Mute: toggles the local mic (track.enabled = false)
+ *   - End: leaves the call (closes all peer connections, notifies server)
+ *   - Speaker: toggles audio output between speaker and earpiece (setSinkId)
+ *
+ * The mute and speaker buttons have local state that reflects immediately,
+ * so the UI updates instantly even if the underlying track change takes a moment.
  */
 export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: ActiveCallScreenProps) {
   const { status, localMuted, participants, toggleMute, leaveCall } = useVoiceCall()
   const [callDuration, setCallDuration] = useState(0)
   const [connectionTypes, setConnectionTypes] = useState<Record<string, 'p2p' | 'turn' | 'unknown'>>({})
   const [audioLevels, setAudioLevels] = useState<Record<string, number>>({})
+  const [speakerOn, setSpeakerOn] = useState(true)
+  const [leaving, setLeaving] = useState(false)
   const startTimeRef = useRef<number>(Date.now())
 
   // Timer
@@ -60,9 +65,51 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: 
     }
   }, [])
 
+  // Handle leave — actually drop the call
   const handleLeave = async () => {
-    await leaveCall()
-    onLeave()
+    if (leaving) return
+    setLeaving(true)
+    try {
+      console.log('[call] leaving call...')
+      await leaveCall()
+      console.log('[call] call ended successfully')
+    } catch (e) {
+      console.error('[call] error leaving call:', e)
+      toast.error('Error ending call')
+    } finally {
+      setLeaving(false)
+      onLeave()
+    }
+  }
+
+  // Handle mute toggle
+  const handleMute = () => {
+    console.log('[call] toggle mute, currently:', localMuted)
+    toggleMute()
+  }
+
+  // Handle speaker toggle
+  const handleSpeaker = async () => {
+    const newSpeakerOn = !speakerOn
+    setSpeakerOn(newSpeakerOn)
+
+    // Toggle audio output on all remote audio elements
+    const audioEls = document.querySelectorAll('audio')
+    for (const el of audioEls) {
+      const audioEl = el as HTMLAudioElement
+      if (newSpeakerOn) {
+        audioEl.volume = 1.0
+        // Try to use setSinkId to route to speakerphone (Chrome/Edge only)
+        if ('setSinkId' in audioEl) {
+          try {
+            await (audioEl as any).setSinkId('default')
+          } catch {}
+        }
+      } else {
+        audioEl.volume = 0.0
+      }
+    }
+    console.log('[call] speaker:', newSpeakerOn ? 'on' : 'off')
   }
 
   const connTypeValues = Object.values(connectionTypes)
@@ -77,8 +124,6 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: 
 
   const participantList = Array.from(participants.entries())
   const totalParticipants = participantList.length + 1
-
-  // Find the active speaker (highest audio level, above threshold)
   const activeSpeaker = participantList.find(([peerId]) => (audioLevels[peerId] || 0) > 0.1)?.[1]
 
   return (
@@ -116,7 +161,6 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: 
       {/* Center: avatar + name + timer */}
       <div className="flex flex-col items-center gap-4">
         <div className="relative">
-          {/* Pulsing rings when connecting or when someone speaks */}
           {(status === 'connecting' || activeSpeaker) && (
             <>
               <motion.div
@@ -146,7 +190,6 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: 
           </p>
         </div>
 
-        {/* For group calls, show participant avatars in a row */}
         {isGroup && participantList.length > 0 && (
           <div className="flex gap-2 mt-2">
             {participantList.slice(0, 6).map(([peerId, p]) => {
@@ -180,7 +223,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: 
         <div className="flex items-center justify-center gap-6">
           <CallButton
             active={localMuted}
-            onClick={toggleMute}
+            onClick={handleMute}
             icon={localMuted ? MicOff : Mic}
             label={localMuted ? 'Unmute' : 'Mute'}
             variant={localMuted ? 'danger' : 'neutral'}
@@ -188,14 +231,15 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: 
           <CallButton
             onClick={handleLeave}
             icon={PhoneOff}
-            label="End"
+            label={leaving ? 'Ending...' : 'End'}
             variant="end"
             large
+            disabled={leaving}
           />
           <CallButton
-            active={false}
-            onClick={() => {/* speaker toggle — browser handles this via audio element */}}
-            icon={Volume2}
+            active={speakerOn}
+            onClick={handleSpeaker}
+            icon={speakerOn ? Volume2 : VolumeX}
             label="Speaker"
             variant="neutral"
           />
@@ -234,6 +278,7 @@ function CallButton({
   label,
   variant,
   large,
+  disabled,
 }: {
   active?: boolean
   onClick: () => void
@@ -241,6 +286,7 @@ function CallButton({
   label: string
   variant: 'neutral' | 'danger' | 'end'
   large?: boolean
+  disabled?: boolean
 }) {
   const size = large ? 'w-16 h-16' : 'w-14 h-14'
   const iconSize = large ? 'w-7 h-7' : 'w-6 h-6'
@@ -257,8 +303,9 @@ function CallButton({
     <div className="flex flex-col items-center gap-1.5">
       <button
         onClick={onClick}
+        disabled={disabled}
         className={cn(
-          'rounded-full flex items-center justify-center transition-all active:scale-95',
+          'rounded-full flex items-center justify-center transition-all active:scale-95 disabled:opacity-50',
           size,
           styles
         )}

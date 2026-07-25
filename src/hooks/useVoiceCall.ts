@@ -18,6 +18,12 @@ export function useVoiceCall() {
   const [iceServers, setIceServers] = useState<IceServerInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Keep a ref to the current callId so leaveCall always has the latest value
+  const callIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    callIdRef.current = callStore.callId
+  }, [callStore.callId])
+
   // Fetch ICE servers once on mount
   useEffect(() => {
     fetch('/api/calls/ice-servers')
@@ -62,14 +68,13 @@ export function useVoiceCall() {
               callStore.setStatus(state)
             },
             onMuteChange: (muted) => {
+              console.log('[useVoiceCall] onMuteChange:', muted)
               callStore.setLocalMuted(muted)
             },
             onAudioLevel: (peerId, level) => {
-              // Forward to UI via custom event (voice view listens for this)
               window.dispatchEvent(new CustomEvent('sns:audio-level', { detail: { peerId, level } }))
             },
             onConnectionType: (peerId, type) => {
-              // Forward to UI via custom event (voice view listens for this)
               window.dispatchEvent(new CustomEvent('sns:connection-type', { detail: { peerId, type } }))
             },
           },
@@ -84,30 +89,49 @@ export function useVoiceCall() {
   )
 
   const toggleMute = useCallback(() => {
-    if (!managerRef.current) return
-    managerRef.current.setMuted(!managerRef.current.isMuted())
+    if (!managerRef.current) {
+      console.warn('[useVoiceCall] toggleMute: no manager')
+      return
+    }
+    const currentlyMuted = managerRef.current.isMuted()
+    console.log('[useVoiceCall] toggleMute: currently', currentlyMuted, '->', !currentlyMuted)
+    managerRef.current.setMuted(!currentlyMuted)
   }, [])
 
-  /**
-   * Unlock audio playback — call this on a user gesture (e.g., Accept call button).
-   * Browsers block autoplay until the user interacts with the page. This is why
-   * ontrack fires but no audio plays — the <audio>.play() promise rejects silently.
-   */
   const unlockAudio = useCallback(() => {
     managerRef.current?.unlockAudio()
   }, [])
 
   const leaveCall = useCallback(async () => {
+    console.log('[useVoiceCall] leaveCall called, callId:', callIdRef.current)
+
+    // 1. Stop all tracks and close peer connections
     if (managerRef.current) {
-      await managerRef.current.leave()
+      try {
+        await managerRef.current.leave()
+        console.log('[useVoiceCall] manager.leave() done')
+      } catch (e) {
+        console.error('[useVoiceCall] manager.leave() error:', e)
+      }
       managerRef.current = null
     }
-    if (callStore.callId) {
+
+    // 2. Notify the server to end the call
+    const callId = callIdRef.current
+    if (callId) {
       try {
-        await fetch(`/api/calls/${callStore.callId}`, { method: 'DELETE' })
-      } catch {}
+        const res = await fetch(`/api/calls/${callId}`, { method: 'DELETE' })
+        console.log('[useVoiceCall] DELETE /api/calls/' + callId, '->', res.status)
+        const data = await res.json().catch(() => ({}))
+        console.log('[useVoiceCall] call ended on server:', data)
+      } catch (e) {
+        console.error('[useVoiceCall] DELETE call error:', e)
+      }
     }
+
+    // 3. Reset the call store (this hides the active call screen)
     callStore.end()
+    console.log('[useVoiceCall] call store reset')
   }, [callStore])
 
   return {
