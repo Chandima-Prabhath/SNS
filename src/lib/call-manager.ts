@@ -237,8 +237,15 @@ export class CallManager {
     console.log('[call] local stream ready, video:', this.isVideoCall, 'rnnoise:', !!this.rnnoiseNode)
     this.callbacks?.onLocalStream(this.localStream)
 
+    // CRITICAL: Register signaling listeners BEFORE joining the call room.
+    // The server immediately sends 'call:peers' when we join, so we need
+    // the listeners in place BEFORE the emit. Otherwise the event arrives
+    // with no handler and the call never connects (stuck on 'connecting').
+    this.setupCallSignaling()
+
     // Join the call room
     this.socket.emit('call:join', this.callId)
+    console.log('[call] joined call room', this.callId)
   }
 
   /**
@@ -449,6 +456,7 @@ export class CallManager {
       this.socket.removeAllListeners('call:ice-candidate')
       this.socket.removeAllListeners('call:peer-left')
     }
+    this.signalingSetup = false // allow setupCallSignaling() on next call
 
     // Reset state
     this.callId = null
@@ -464,8 +472,12 @@ export class CallManager {
 
   // ─── WebRTC signaling ──────────────────────────────────────────────────
 
+  private signalingSetup = false
+
   private setupCallSignaling() {
-    if (!this.socket) return
+    if (!this.socket || this.signalingSetup) return
+    this.signalingSetup = true
+    console.log('[call] setting up signaling listeners')
 
     this.socket.on('call:peer-joined', async (payload: { peerId: string; userId: string; username: string }) => {
       await this.ensurePeer(payload.peerId, payload.userId, payload.username)
@@ -531,11 +543,6 @@ export class CallManager {
 
   private async ensurePeer(peerId: string, userId: string, username: string) {
     if (this.peers.has(peerId)) return
-
-    // Setup signaling listeners on first peer
-    if (this.peers.size === 0) {
-      this.setupCallSignaling()
-    }
 
     const myId = this.socket!.id || ''
     const isInitiator = myId < peerId
