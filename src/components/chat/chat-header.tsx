@@ -5,7 +5,7 @@ import { usePresence } from '@/hooks/usePresence'
 import { useSession } from 'next-auth/react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { ChevronLeft, MoreVertical, Hash, Phone, Volume2, Loader2 } from 'lucide-react'
+import { ChevronLeft, MoreVertical, Hash, Phone, Video, Volume2, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -30,7 +30,7 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
 
   const partnerStatus = partner ? presence[partner.id]?.status || partner.status || 'offline' : 'offline'
 
-  const handleStartCall = async () => {
+  const handleStartCall = async (video: boolean = false) => {
     setCallPending(true)
     try {
       const res = await fetch('/api/calls', {
@@ -42,13 +42,12 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
       const data = await res.json()
 
       // Start our side of the call (mic + WebRTC)
-      await startCall({ callId: data.call.id, channelId: channel.id })
+      await startCall({ callId: data.call.id, channelId: channel.id, enableVideo: video })
 
-      // Unlock audio on this user gesture (clicking the call button)
-      // This is critical — browsers block autoplay until the user interacts.
+      // Unlock audio on this user gesture
       unlockAudio()
 
-      // For DM calls, ring the partner so they get an incoming-call UI.
+      // For DM calls, ring the partner
       if (partner && session?.user) {
         const myName = (session.user as any).displayName || (session.user as any).username || 'Someone'
         const { getSocket } = await import('@/lib/socket')
@@ -62,6 +61,7 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
             displayName: myName,
           },
           channelId: channel.id,
+          video, // tell the receiver this is a video call
         })
       }
 
@@ -69,7 +69,7 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
       if (partner) {
         toast.info(`Ringing ${partner.displayName}...`)
       } else {
-        toast.success('Joined voice channel')
+        toast.success(video ? 'Started video call' : 'Joined voice channel')
       }
     } catch {
       toast.error('Failed to start call')
@@ -146,11 +146,23 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
           size="icon"
           className="h-9 w-9"
           title="Voice call"
-          onClick={handleStartCall}
+          onClick={() => handleStartCall(false)}
           disabled={callPending}
         >
           {callPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Phone className="w-4 h-4" />}
         </Button>
+        {partner && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9"
+            title="Video call"
+            onClick={() => handleStartCall(true)}
+            disabled={callPending}
+          >
+            <Video className="w-4 h-4" />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"

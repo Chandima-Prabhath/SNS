@@ -83,6 +83,7 @@ export function VoiceView() {
     let callName = 'Voice Call'
     let callAvatarUrl: string | undefined
     let isGroup = true
+    const isVideoCall = false // voice channel calls are always audio-only
 
     // Try to find the call's channel from active calls
     const activeCall = activeCalls?.find((c: any) => c.id === callId)
@@ -105,6 +106,7 @@ export function VoiceView() {
         callName={callName}
         callAvatarUrl={callAvatarUrl}
         isGroup={isGroup}
+        isVideoCall={isVideoCall}
         onLeave={() => setView('chats')}
       />
     )

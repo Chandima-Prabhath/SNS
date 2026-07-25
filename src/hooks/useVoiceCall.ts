@@ -18,13 +18,11 @@ export function useVoiceCall() {
   const [iceServers, setIceServers] = useState<IceServerInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // Keep a ref to the current callId so leaveCall always has the latest value
   const callIdRef = useRef<string | null>(null)
   useEffect(() => {
     callIdRef.current = callStore.callId
   }, [callStore.callId])
 
-  // Fetch ICE servers once on mount
   useEffect(() => {
     fetch('/api/calls/ice-servers')
       .then((r) => r.json())
@@ -33,7 +31,12 @@ export function useVoiceCall() {
   }, [])
 
   const startCall = useCallback(
-    async (params: { callId: string; channelId?: string | null; dmGroupId?: string | null }) => {
+    async (params: {
+      callId: string
+      channelId?: string | null
+      dmGroupId?: string | null
+      enableVideo?: boolean
+    }) => {
       if (!socket || !connected) {
         setError('Socket not connected')
         return
@@ -55,6 +58,7 @@ export function useVoiceCall() {
                 channelId: params.channelId,
                 dmGroupId: params.dmGroupId,
                 localStream: stream,
+                isVideoCall: params.enableVideo ?? false,
               })
             },
             onRemoteStream: (peerId, stream, meta) => {
@@ -71,6 +75,10 @@ export function useVoiceCall() {
               console.log('[useVoiceCall] onMuteChange:', muted)
               callStore.setLocalMuted(muted)
             },
+            onVideoToggle: (enabled) => {
+              console.log('[useVoiceCall] onVideoToggle:', enabled)
+              callStore.setVideoEnabled(enabled)
+            },
             onAudioLevel: (peerId, level) => {
               window.dispatchEvent(new CustomEvent('sns:audio-level', { detail: { peerId, level } }))
             },
@@ -78,6 +86,8 @@ export function useVoiceCall() {
               window.dispatchEvent(new CustomEvent('sns:connection-type', { detail: { peerId, type } }))
             },
           },
+          enableVideo: params.enableVideo ?? false,
+          enableRnnoise: true,
         })
         managerRef.current = manager
         await manager.start(true)
@@ -98,6 +108,18 @@ export function useVoiceCall() {
     managerRef.current.setMuted(!currentlyMuted)
   }, [])
 
+  const toggleVideo = useCallback(() => {
+    if (!managerRef.current) return
+    const currentlyEnabled = managerRef.current.isVideoEnabled()
+    console.log('[useVoiceCall] toggleVideo: currently', currentlyEnabled, '->', !currentlyEnabled)
+    managerRef.current.setVideoEnabled(!currentlyEnabled)
+  }, [])
+
+  const switchCamera = useCallback(async () => {
+    if (!managerRef.current) return false
+    return managerRef.current.switchCamera()
+  }, [])
+
   const unlockAudio = useCallback(() => {
     managerRef.current?.unlockAudio()
   }, [])
@@ -105,7 +127,6 @@ export function useVoiceCall() {
   const leaveCall = useCallback(async () => {
     console.log('[useVoiceCall] leaveCall called, callId:', callIdRef.current)
 
-    // 1. Stop all tracks and close peer connections
     if (managerRef.current) {
       try {
         await managerRef.current.leave()
@@ -116,20 +137,16 @@ export function useVoiceCall() {
       managerRef.current = null
     }
 
-    // 2. Notify the server to end the call
     const callId = callIdRef.current
     if (callId) {
       try {
         const res = await fetch(`/api/calls/${callId}`, { method: 'DELETE' })
         console.log('[useVoiceCall] DELETE /api/calls/' + callId, '->', res.status)
-        const data = await res.json().catch(() => ({}))
-        console.log('[useVoiceCall] call ended on server:', data)
       } catch (e) {
         console.error('[useVoiceCall] DELETE call error:', e)
       }
     }
 
-    // 3. Reset the call store (this hides the active call screen)
     callStore.end()
     console.log('[useVoiceCall] call store reset')
   }, [callStore])
@@ -139,11 +156,15 @@ export function useVoiceCall() {
     callId: callStore.callId,
     localStream: callStore.localStream,
     localMuted: callStore.localMuted,
+    videoEnabled: callStore.videoEnabled,
+    isVideoCall: callStore.isVideoCall,
     participants: callStore.participants,
     iceServers,
     error,
     startCall,
     toggleMute,
+    toggleVideo,
+    switchCamera,
     unlockAudio,
     leaveCall,
   }

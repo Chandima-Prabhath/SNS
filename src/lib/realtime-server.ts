@@ -255,6 +255,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       from: { userId: string; username: string; displayName: string }
       channelId?: string
       dmGroupId?: string
+      video?: boolean
     }) => {
       // Find all sockets owned by targetUserId
       const targetPresence = presence.get(payload.targetUserId)
@@ -269,6 +270,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
           from: payload.from,
           channelId: payload.channelId,
           dmGroupId: payload.dmGroupId,
+          video: payload.video ?? false,
         })
       }
     })

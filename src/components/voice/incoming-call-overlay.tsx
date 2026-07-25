@@ -5,7 +5,7 @@ import { useSession } from 'next-auth/react'
 import { useVoiceCall } from '@/hooks/useVoiceCall'
 import { useAppStore } from '@/stores/useAppStore'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Phone, PhoneOff, Loader2 } from 'lucide-react'
+import { Phone, PhoneOff, Loader2, Video } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 
@@ -18,6 +18,7 @@ interface IncomingCall {
   }
   channelId?: string
   dmGroupId?: string
+  video?: boolean
 }
 
 /**
@@ -57,16 +58,15 @@ export function IncomingCallOverlay() {
     if (!incoming || !session?.user) return
     setAccepting(true)
     try {
-      // Start our WebRTC side
+      // Start our WebRTC side — pass video flag if it's a video call
       await startCall({
         callId: incoming.callId,
         channelId: incoming.channelId,
         dmGroupId: incoming.dmGroupId,
+        enableVideo: incoming.video ?? false,
       })
 
-      // CRITICAL: Unlock audio playback — this is a user gesture (button click),
-      // so the browser will allow audio.play() now. Without this, the remote
-      // audio element would be blocked by autoplay policy.
+      // CRITICAL: Unlock audio playback — this is a user gesture
       unlockAudio()
 
       // Notify the caller that we accepted
@@ -108,9 +108,10 @@ export function IncomingCallOverlay() {
             <motion.p
               animate={{ opacity: [1, 0.4, 1] }}
               transition={{ duration: 1.5, repeat: Infinity }}
-              className="text-white/60 text-sm font-medium"
+              className="text-white/60 text-sm font-medium flex items-center justify-center gap-1.5"
             >
-              Incoming voice call...
+              {incoming.video && <Video className="w-4 h-4" />}
+              Incoming {incoming.video ? 'video' : 'voice'} call...
             </motion.p>
           </div>
 

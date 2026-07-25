@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useVoiceCall } from '@/hooks/useVoiceCall'
 import { useAppStore } from '@/stores/useAppStore'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Mic, MicOff, PhoneOff, Volume2, VolumeX, Users, Wifi, Cloud, Shield } from 'lucide-react'
+import { Mic, MicOff, PhoneOff, Volume2, VolumeX, Users, Wifi, Cloud, Shield, Video, VideoOff, SwitchCamera } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -13,28 +13,26 @@ interface ActiveCallScreenProps {
   callName: string
   callAvatarUrl?: string
   isGroup: boolean
+  isVideoCall: boolean
   onLeave: () => void
 }
 
 /**
  * WhatsApp-style full-screen active call UI.
+ * Supports both voice and video calls.
  *
- * Controls:
- *   - Mute: toggles the local mic (track.enabled = false)
- *   - End: leaves the call (closes all peer connections, notifies server)
- *   - Speaker: toggles audio output between speaker and earpiece (setSinkId)
- *
- * The mute and speaker buttons have local state that reflects immediately,
- * so the UI updates instantly even if the underlying track change takes a moment.
+ * For video calls: shows local + remote video tiles, camera toggle,
+ * and camera switch (front/back on mobile).
  */
-export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: ActiveCallScreenProps) {
-  const { status, localMuted, participants, toggleMute, leaveCall } = useVoiceCall()
+export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall, onLeave }: ActiveCallScreenProps) {
+  const { status, localMuted, videoEnabled, localStream, participants, toggleMute, toggleVideo, switchCamera, leaveCall } = useVoiceCall()
   const [callDuration, setCallDuration] = useState(0)
   const [connectionTypes, setConnectionTypes] = useState<Record<string, 'p2p' | 'turn' | 'unknown'>>({})
   const [audioLevels, setAudioLevels] = useState<Record<string, number>>({})
   const [speakerOn, setSpeakerOn] = useState(true)
   const [leaving, setLeaving] = useState(false)
   const startTimeRef = useRef<number>(Date.now())
+  const localVideoRef = useRef<HTMLVideoElement>(null)
 
   // Timer
   useEffect(() => {
@@ -47,7 +45,16 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: 
     }
   }, [status])
 
-  // Listen for connection type and audio level events
+  // Attach local stream to video element
+  useEffect(() => {
+    if (localVideoRef.current && localStream && isVideoCall) {
+      localVideoRef.current.srcObject = localStream
+      localVideoRef.current.muted = true // don't hear yourself
+      localVideoRef.current.play().catch(() => {})
+    }
+  }, [localStream, isVideoCall])
+
+  // Listen for events
   useEffect(() => {
     const onConnType = (e: Event) => {
       const { peerId, type } = (e as CustomEvent).detail
@@ -65,51 +72,39 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: 
     }
   }, [])
 
-  // Handle leave — actually drop the call
   const handleLeave = async () => {
     if (leaving) return
     setLeaving(true)
     try {
-      console.log('[call] leaving call...')
       await leaveCall()
-      console.log('[call] call ended successfully')
     } catch (e) {
-      console.error('[call] error leaving call:', e)
-      toast.error('Error ending call')
+      console.error('[call] error leaving:', e)
     } finally {
       setLeaving(false)
       onLeave()
     }
   }
 
-  // Handle mute toggle
-  const handleMute = () => {
-    console.log('[call] toggle mute, currently:', localMuted)
-    toggleMute()
-  }
+  const handleMute = () => toggleMute()
 
-  // Handle speaker toggle
   const handleSpeaker = async () => {
     const newSpeakerOn = !speakerOn
     setSpeakerOn(newSpeakerOn)
-
-    // Toggle audio output on all remote audio elements
     const audioEls = document.querySelectorAll('audio')
     for (const el of audioEls) {
-      const audioEl = el as HTMLAudioElement
-      if (newSpeakerOn) {
-        audioEl.volume = 1.0
-        // Try to use setSinkId to route to speakerphone (Chrome/Edge only)
-        if ('setSinkId' in audioEl) {
-          try {
-            await (audioEl as any).setSinkId('default')
-          } catch {}
-        }
-      } else {
-        audioEl.volume = 0.0
-      }
+      (el as HTMLAudioElement).volume = newSpeakerOn ? 1.0 : 0.0
     }
-    console.log('[call] speaker:', newSpeakerOn ? 'on' : 'off')
+  }
+
+  const handleVideoToggle = () => {
+    toggleVideo()
+  }
+
+  const handleSwitchCamera = async () => {
+    const success = await switchCamera()
+    if (!success) {
+      toast.error('Could not switch camera')
+    }
   }
 
   const connTypeValues = Object.values(connectionTypes)
@@ -126,6 +121,108 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: 
   const totalParticipants = participantList.length + 1
   const activeSpeaker = participantList.find(([peerId]) => (audioLevels[peerId] || 0) > 0.1)?.[1]
 
+  // Video call layout
+  if (isVideoCall) {
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 bg-black flex flex-col"
+      >
+        {/* Top bar */}
+        <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between text-white/80 text-sm p-4 pt-safe bg-gradient-to-b from-black/60 to-transparent">
+          <div className="flex items-center gap-2">
+            <ConnectionTypeBadge type={overallType} />
+            {isGroup && (
+              <span className="flex items-center gap-1">
+                <Users className="w-3.5 h-3.5" />
+                {totalParticipants}
+              </span>
+            )}
+          </div>
+          <span className="text-white/60 text-xs">
+            {status === 'connected' ? formatDuration(callDuration) : status}
+          </span>
+        </div>
+
+        {/* Remote video (fills the screen) */}
+        <div className="flex-1 relative">
+          {participantList.length > 0 ? (
+            <RemoteVideoGrid participants={participantList} />
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center">
+                <Avatar className="w-32 h-32 mx-auto mb-4 border-4 border-white/10">
+                  <AvatarImage src={callAvatarUrl} />
+                  <AvatarFallback className="text-4xl bg-white/10 text-white">
+                    {callName.charAt(0).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <p className="text-white/80 text-sm">Connecting video...</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Local video (PiP) */}
+        {videoEnabled && (
+          <div className="absolute top-16 right-4 w-32 h-48 md:w-40 md:h-56 rounded-2xl overflow-hidden border-2 border-white/20 bg-zinc-900 shadow-xl z-10">
+            <video
+              ref={localVideoRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full h-full object-cover scale-x-[-1]"
+            />
+          </div>
+        )}
+
+        {/* Bottom controls */}
+        <div className="absolute bottom-0 left-0 right-0 z-10 p-6 pb-safe bg-gradient-to-t from-black/80 to-transparent">
+          <div className="flex items-center justify-center gap-4 max-w-md mx-auto">
+            <VideoCallButton
+              active={localMuted}
+              onClick={handleMute}
+              icon={localMuted ? MicOff : Mic}
+              label="Mute"
+              variant={localMuted ? 'danger' : 'neutral'}
+            />
+            <VideoCallButton
+              active={!videoEnabled}
+              onClick={handleVideoToggle}
+              icon={videoEnabled ? Video : VideoOff}
+              label="Video"
+              variant={!videoEnabled ? 'danger' : 'neutral'}
+            />
+            <VideoCallButton
+              onClick={handleSwitchCamera}
+              icon={SwitchCamera}
+              label="Flip"
+              variant="neutral"
+            />
+            <VideoCallButton
+              active={speakerOn}
+              onClick={handleSpeaker}
+              icon={speakerOn ? Volume2 : VolumeX}
+              label="Speaker"
+              variant="neutral"
+            />
+            <VideoCallButton
+              onClick={handleLeave}
+              icon={PhoneOff}
+              label="End"
+              variant="end"
+              large
+              disabled={leaving}
+            />
+          </div>
+        </div>
+      </motion.div>
+    )
+  }
+
+  // Voice call layout (original)
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -133,7 +230,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: 
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black flex flex-col items-center justify-between p-6 pt-safe pb-safe"
     >
-      {/* Top: connection info */}
+      {/* Top */}
       <div className="w-full flex items-center justify-between text-white/60 text-sm pt-4">
         <div className="flex items-center gap-2">
           <ConnectionTypeBadge type={overallType} />
@@ -158,7 +255,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: 
         )}
       </div>
 
-      {/* Center: avatar + name + timer */}
+      {/* Center */}
       <div className="flex flex-col items-center gap-4">
         <div className="relative">
           {(status === 'connecting' || activeSpeaker) && (
@@ -218,7 +315,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: 
         )}
       </div>
 
-      {/* Bottom: controls */}
+      {/* Controls */}
       <div className="w-full max-w-sm mx-auto pb-6">
         <div className="flex items-center justify-center gap-6">
           <CallButton
@@ -246,6 +343,60 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, onLeave }: 
         </div>
       </div>
     </motion.div>
+  )
+}
+
+/**
+ * Remote video grid — fills the screen with remote participant videos.
+ * For 1:1: single video fills the screen.
+ * For group: 2x2 grid.
+ */
+function RemoteVideoGrid({ participants }: { participants: [string, any][] }) {
+  const videoRefs = useRef<Map<string, HTMLVideoElement>>(new Map())
+
+  useEffect(() => {
+    for (const [peerId, p] of participants) {
+      const el = videoRefs.current.get(peerId)
+      if (el && p.stream && el.srcObject !== p.stream) {
+        el.srcObject = p.stream
+        el.play().catch(() => {})
+      }
+    }
+  }, [participants])
+
+  if (participants.length === 1) {
+    const [peerId, p] = participants[0]
+    return (
+      <video
+        key={peerId}
+        ref={(el) => { if (el) videoRefs.current.set(peerId, el) }}
+        autoPlay
+        playsInline
+        className="w-full h-full object-cover"
+      />
+    )
+  }
+
+  // Grid for group calls
+  return (
+    <div className={cn(
+      'grid h-full',
+      participants.length === 2 ? 'grid-rows-2' : 'grid-cols-2 grid-rows-2'
+    )}>
+      {participants.slice(0, 4).map(([peerId, p]) => (
+        <div key={peerId} className="relative bg-zinc-900">
+          <video
+            ref={(el) => { if (el) videoRefs.current.set(peerId, el) }}
+            autoPlay
+            playsInline
+            className="w-full h-full object-cover"
+          />
+          <div className="absolute bottom-2 left-2 text-white text-xs font-medium bg-black/50 px-2 py-1 rounded">
+            {p.username}
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -290,29 +441,59 @@ function CallButton({
 }) {
   const size = large ? 'w-16 h-16' : 'w-14 h-14'
   const iconSize = large ? 'w-7 h-7' : 'w-6 h-6'
-
   const styles = {
-    neutral: active
-      ? 'bg-white text-zinc-900'
-      : 'bg-white/10 text-white hover:bg-white/20',
+    neutral: active ? 'bg-white text-zinc-900' : 'bg-white/10 text-white hover:bg-white/20',
     danger: 'bg-red-500 text-white hover:bg-red-600',
     end: 'bg-red-500 text-white hover:bg-red-600',
   }[variant]
-
   return (
     <div className="flex flex-col items-center gap-1.5">
       <button
         onClick={onClick}
         disabled={disabled}
-        className={cn(
-          'rounded-full flex items-center justify-center transition-all active:scale-95 disabled:opacity-50',
-          size,
-          styles
-        )}
+        className={cn('rounded-full flex items-center justify-center transition-all active:scale-95 disabled:opacity-50', size, styles)}
       >
         <Icon className={iconSize} />
       </button>
       <span className="text-xs text-white/60">{label}</span>
+    </div>
+  )
+}
+
+function VideoCallButton({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+  variant,
+  large,
+  disabled,
+}: {
+  active?: boolean
+  onClick: () => void
+  icon: typeof Mic
+  label: string
+  variant: 'neutral' | 'danger' | 'end'
+  large?: boolean
+  disabled?: boolean
+}) {
+  const size = large ? 'w-14 h-14' : 'w-12 h-12'
+  const iconSize = large ? 'w-6 h-6' : 'w-5 h-5'
+  const styles = {
+    neutral: active ? 'bg-white text-zinc-900' : 'bg-white/10 text-white hover:bg-white/20',
+    danger: 'bg-red-500 text-white hover:bg-red-600',
+    end: 'bg-red-500 text-white hover:bg-red-600',
+  }[variant]
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className={cn('rounded-full flex items-center justify-center transition-all active:scale-95 disabled:opacity-50', size, styles)}
+      >
+        <Icon className={iconSize} />
+      </button>
+      <span className="text-[10px] text-white/60">{label}</span>
     </div>
   )
 }
