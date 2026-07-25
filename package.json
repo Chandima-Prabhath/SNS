@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "bun run server.ts 2>&1 | tee dev.log",
-    "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/ && cp -r src .next/standalone/ && cp server.ts .next/standalone/ && cp package.json .next/standalone/",
+    "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/ && cp -r src .next/standalone/ && cp server.ts .next/standalone/ && cp package.json .next/standalone/ && cp -r prisma .next/standalone/ && cd .next/standalone && bunx prisma generate && cd ../..",
     "start": "NODE_ENV=production bun .next/standalone/server.ts 2>&1 | tee server.log",
     "lint": "eslint .",
     "postinstall": "prisma generate",

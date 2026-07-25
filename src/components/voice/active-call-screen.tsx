@@ -252,25 +252,27 @@ function RemoteVideoGrid({ participants }: { participants: any[] }) {
   if (participants.length === 1) {
     const p = participants[0]
     return (
-      <video
-        key={p.peerId}
-        ref={(el) => { if (el) videoRefs.current.set(p.peerId, el) }}
-        autoPlay
-        playsInline
-        className="w-full h-full object-cover"
-      />
+      <div className="w-full h-full flex items-center justify-center bg-black">
+        <video
+          key={p.peerId}
+          ref={(el) => { if (el) videoRefs.current.set(p.peerId, el) }}
+          autoPlay
+          playsInline
+          className="w-full h-full object-contain"
+        />
+      </div>
     )
   }
 
   return (
     <div className={cn('grid h-full', participants.length === 2 ? 'grid-rows-2' : 'grid-cols-2 grid-rows-2')}>
       {participants.slice(0, 4).map((p) => (
-        <div key={p.peerId} className="relative bg-zinc-900">
+        <div key={p.peerId} className="relative bg-zinc-900 flex items-center justify-center">
           <video
             ref={(el) => { if (el) videoRefs.current.set(p.peerId, el) }}
             autoPlay
             playsInline
-            className="w-full h-full object-cover"
+            className="w-full h-full object-contain"
           />
           <div className="absolute bottom-2 left-2 text-white text-xs font-medium bg-black/50 px-2 py-1 rounded">
             {p.username}

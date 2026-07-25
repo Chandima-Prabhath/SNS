@@ -41,7 +41,6 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-
   --color-bubble-mine: var(--bubble-mine);
   --color-bubble-mine-foreground: var(--bubble-mine-foreground);
   --color-bubble-other: var(--bubble-other);
@@ -52,10 +51,7 @@
   --color-status-offline: var(--status-offline);
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * LIGHT THEME
- * Clean, airy, with a teal-emerald accent.
- * ──────────────────────────────────────────────────────────────────────── */
+/* LIGHT THEME */
 :root {
   --radius: 0.75rem;
   --background: oklch(0.99 0.001 247);
@@ -89,22 +85,17 @@
   --sidebar-accent-foreground: oklch(0.2 0.005 247);
   --sidebar-border: oklch(0.92 0.003 247);
   --sidebar-ring: oklch(0.55 0.15 162);
-
   --bubble-mine: oklch(0.55 0.15 162);
   --bubble-mine-foreground: oklch(0.99 0 0);
   --bubble-other: oklch(0.96 0.003 247);
   --bubble-other-foreground: oklch(0.18 0.005 247);
-
   --status-online: oklch(0.65 0.18 145);
   --status-idle: oklch(0.78 0.16 75);
   --status-dnd: oklch(0.6 0.22 25);
   --status-offline: oklch(0.55 0.01 247);
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * DARK THEME (default)
- * Deep, near-black canvas with subtle blue undertone. Emerald accent.
- * ──────────────────────────────────────────────────────────────────────── */
+/* DARK THEME (default) */
 .dark {
   --background: oklch(0.14 0.005 247);
   --foreground: oklch(0.97 0.003 247);
@@ -137,12 +128,10 @@
   --sidebar-accent-foreground: oklch(0.97 0.003 247);
   --sidebar-border: oklch(1 0 0 / 7%);
   --sidebar-ring: oklch(0.7 0.15 162);
-
   --bubble-mine: oklch(0.55 0.15 162);
   --bubble-mine-foreground: oklch(0.99 0 0);
   --bubble-other: oklch(0.22 0.005 247);
   --bubble-other-foreground: oklch(0.97 0.003 247);
-
   --status-online: oklch(0.7 0.18 145);
   --status-idle: oklch(0.82 0.16 75);
   --status-dnd: oklch(0.65 0.22 25);
@@ -163,7 +152,6 @@
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
   }
-  /* Custom scrollbar — slim, themed */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -198,5 +186,16 @@
   }
   .h-safe-bottom {
     height: env(safe-area-inset-bottom, 0px);
+  }
+  /* Smooth scroll for chat messages */
+  .scroll-smooth-touch {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Glassmorphism for overlays */
+  .glass {
+    background: var(--popover);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
   }
 }

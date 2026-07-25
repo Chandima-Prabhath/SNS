@@ -125,33 +125,56 @@ Open `http://localhost:3090`, sign up, then click "Seed default group" to bootst
 
 > **Important**: Never commit your real `.env` file. It's in `.gitignore` by default. The `.env.example` template is tracked — copy it to `.env` and fill in your own values.
 
+## Production deployment
+
+Since this is a small friend-group app, you can run the production build on the same machine:
+
+```bash
+# 1. Set production environment variables in .env
+NEXTAUTH_URL=https://sns.1911915.xyz    # your domain
+NEXTAUTH_SECRET=openssl-rand-base64-32  # generate a strong secret
+NODE_ENV=production
+PORT=3090
+
+# 2. Build the production bundle
+bun run build    # creates .next/standalone/ with all files + prisma client
+
+# 3. Run the production server
+bun run start    # starts Next.js + Socket.io on port 3090 (production mode)
+
+# 4. Point your Cloudflare Tunnel at http://localhost:3090
+```
+
+The production build:
+- Compiles Next.js into a standalone bundle (`.next/standalone/`)
+- Copies `server.ts`, `src/`, `public/`, `prisma/`, and `package.json` into standalone
+- Runs `prisma generate` inside standalone (so the Prisma client works)
+- Uses the same single-port architecture (Next.js + Socket.io on port 3090)
+- Serves the built static assets efficiently
+
+**Notes:**
+- Keep `NEXTAUTH_SECRET` the same between dev and prod (rotating it invalidates sessions)
+- For more than ~20 users, switch `DATABASE_URL` to PostgreSQL
+- The `.env` file is read from the project root in both dev and prod
+
 > **If you see `Cannot find module '@prisma/client-XXXXXXXX'`**: it means the Prisma client wasn't generated. Run `bun run db:generate` (or `bun run setup` from scratch). The `postinstall` script handles this automatically after `bun install`, but if you cloned with `--no-install` or skipped it, you'll need to run it manually.
 
-## Production deployment via Cloudflare Tunnel
+## Cloudflare Tunnel configuration
 
-You said you'll handle Cloudflare Tunnel yourself — the app is now optimized for that:
+Point your tunnel at `http://localhost:3090` — both HTTP and WebSocket traffic go through the same connection.
 
-1. **Single tunnel, single port.** Point your tunnel at `http://localhost:3090`. Both HTTP and WebSocket traffic go through the same connection.
-2. **Set environment variables:**
-   ```bash
-   NEXTAUTH_URL=https://sns.1911915.xyz
-   NEXTAUTH_SECRET=$(openssl rand -base64 32)
-   PORT=3090
-   ```
-3. **Cloudflare Tunnel config (cloudflared):**
-   ```yaml
-   ingress:
-     - hostname: sns.1911915.xyz
-       service: http://localhost:3090
-       originRequest:
-         noTLSVerify: true
-         http2Origin: false
-     - service: http_status:404
-   ```
-   That's it. One hostname, one backend. No path-based routing needed.
-4. **WebSocket support:** Cloudflare Tunnel supports WebSockets out of the box — no extra config needed. Socket.io will work over both `polling` and `websocket` transports.
-5. **Database:** SQLite works for small groups. For >20 users, switch to PostgreSQL by changing `DATABASE_URL` and re-running `bun run db:push`.
-6. **Uploads:** Currently stored in `public/uploads/`. For production, swap the `/api/upload` route to store to S3/R2 instead.
+```yaml
+# cloudflared config
+ingress:
+  - hostname: sns.1911915.xyz
+    service: http://localhost:3090
+    originRequest:
+      noTLSVerify: true
+      http2Origin: false
+  - service: http_status:404
+```
+
+WebSocket support is built-in — no extra config needed.
 
 ## Enabling Cloudflare TURN (free, optional)
 
