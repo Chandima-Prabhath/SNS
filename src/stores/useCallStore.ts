@@ -1,99 +1,51 @@
 'use client'
 
 import { create } from 'zustand'
+import type { CallStatus, CallParticipant } from '@/lib/call-manager'
 
 interface CallState {
+  status: CallStatus
   callId: string | null
-  channelId: string | null
-  dmGroupId: string | null
-  participants: Map<string, { userId: string; username: string; stream?: MediaStream; muted: boolean }>
   localStream: MediaStream | null
+  participants: CallParticipant[]
   localMuted: boolean
   videoEnabled: boolean
   isVideoCall: boolean
-  status: 'idle' | 'connecting' | 'connected' | 'failed' | 'ended'
 
-  start: (params: { callId: string; channelId?: string | null; dmGroupId?: string | null; localStream: MediaStream; isVideoCall?: boolean }) => void
-  addPeer: (peerId: string, meta: { userId: string; username: string }) => void
-  setPeerStream: (peerId: string, stream: MediaStream) => void
-  setPeerMuted: (peerId: string, muted: boolean) => void
+  setStatus: (status: CallStatus) => void
+  setCallId: (callId: string | null) => void
+  setLocalStream: (stream: MediaStream | null) => void
+  setParticipants: (participants: CallParticipant[]) => void
   setLocalMuted: (muted: boolean) => void
   setVideoEnabled: (enabled: boolean) => void
-  setStatus: (s: CallState['status']) => void
-  removePeer: (peerId: string) => void
-  end: () => void
+  setVideoCall: (isVideo: boolean) => void
+  reset: () => void
 }
 
 export const useCallStore = create<CallState>((set) => ({
+  status: 'idle',
   callId: null,
-  channelId: null,
-  dmGroupId: null,
-  participants: new Map(),
   localStream: null,
+  participants: [],
   localMuted: false,
   videoEnabled: true,
   isVideoCall: false,
-  status: 'idle',
-
-  start: ({ callId, channelId = null, dmGroupId = null, localStream, isVideoCall = false }) =>
-    set({
-      callId,
-      channelId,
-      dmGroupId,
-      localStream,
-      status: 'connecting',
-      participants: new Map(),
-      localMuted: false,
-      videoEnabled: true,
-      isVideoCall,
-    }),
-
-  addPeer: (peerId, meta) =>
-    set((s) => {
-      const participants = new Map(s.participants)
-      participants.set(peerId, { ...meta, muted: false })
-      return { participants }
-    }),
-
-  setPeerStream: (peerId, stream) =>
-    set((s) => {
-      const participants = new Map(s.participants)
-      const p = participants.get(peerId)
-      if (p) participants.set(peerId, { ...p, stream })
-      return { participants }
-    }),
-
-  setPeerMuted: (peerId, muted) =>
-    set((s) => {
-      const participants = new Map(s.participants)
-      const p = participants.get(peerId)
-      if (p) participants.set(peerId, { ...p, muted })
-      return { participants }
-    }),
-
-  setLocalMuted: (localMuted) => set({ localMuted }),
-
-  setVideoEnabled: (videoEnabled) => set({ videoEnabled }),
 
   setStatus: (status) => set({ status }),
-
-  removePeer: (peerId) =>
-    set((s) => {
-      const participants = new Map(s.participants)
-      participants.delete(peerId)
-      return { participants }
-    }),
-
-  end: () =>
+  setCallId: (callId) => set({ callId }),
+  setLocalStream: (localStream) => set({ localStream }),
+  setParticipants: (participants) => set({ participants }),
+  setLocalMuted: (localMuted) => set({ localMuted }),
+  setVideoEnabled: (videoEnabled) => set({ videoEnabled }),
+  setVideoCall: (isVideoCall) => set({ isVideoCall }),
+  reset: () =>
     set({
+      status: 'idle',
       callId: null,
-      channelId: null,
-      dmGroupId: null,
-      participants: new Map(),
       localStream: null,
+      participants: [],
       localMuted: false,
       videoEnabled: true,
       isVideoCall: false,
-      status: 'idle',
     }),
 }))

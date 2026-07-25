@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { useVoiceCall } from '@/hooks/useVoiceCall'
+import { useCall } from '@/hooks/useCall'
 import { useAppStore } from '@/stores/useAppStore'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Mic, MicOff, PhoneOff, Volume2, VolumeX, Users, Wifi, Cloud, Shield, Video, VideoOff, SwitchCamera } from 'lucide-react'
@@ -17,15 +17,8 @@ interface ActiveCallScreenProps {
   onLeave: () => void
 }
 
-/**
- * WhatsApp-style full-screen active call UI.
- * Supports both voice and video calls.
- *
- * For video calls: shows local + remote video tiles, camera toggle,
- * and camera switch (front/back on mobile).
- */
 export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall, onLeave }: ActiveCallScreenProps) {
-  const { status, localMuted, videoEnabled, localStream, participants, toggleMute, toggleVideo, switchCamera, leaveCall } = useVoiceCall()
+  const { status, localMuted, videoEnabled, localStream, participants, toggleMute, toggleVideo, switchCamera, endCall } = useCall()
   const [callDuration, setCallDuration] = useState(0)
   const [connectionTypes, setConnectionTypes] = useState<Record<string, 'p2p' | 'turn' | 'unknown'>>({})
   const [audioLevels, setAudioLevels] = useState<Record<string, number>>({})
@@ -34,7 +27,6 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
   const startTimeRef = useRef<number>(Date.now())
   const localVideoRef = useRef<HTMLVideoElement>(null)
 
-  // Timer
   useEffect(() => {
     if (status === 'connected') {
       startTimeRef.current = Date.now()
@@ -45,16 +37,14 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
     }
   }, [status])
 
-  // Attach local stream to video element
   useEffect(() => {
     if (localVideoRef.current && localStream && isVideoCall) {
       localVideoRef.current.srcObject = localStream
-      localVideoRef.current.muted = true // don't hear yourself
+      localVideoRef.current.muted = true
       localVideoRef.current.play().catch(() => {})
     }
   }, [localStream, isVideoCall])
 
-  // Listen for events
   useEffect(() => {
     const onConnType = (e: Event) => {
       const { peerId, type } = (e as CustomEvent).detail
@@ -76,7 +66,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
     if (leaving) return
     setLeaving(true)
     try {
-      await leaveCall()
+      await endCall()
     } catch (e) {
       console.error('[call] error leaving:', e)
     } finally {
@@ -84,8 +74,6 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
       onLeave()
     }
   }
-
-  const handleMute = () => toggleMute()
 
   const handleSpeaker = async () => {
     const newSpeakerOn = !speakerOn
@@ -96,32 +84,22 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
     }
   }
 
-  const handleVideoToggle = () => {
-    toggleVideo()
-  }
-
   const handleSwitchCamera = async () => {
     const success = await switchCamera()
-    if (!success) {
-      toast.error('Could not switch camera')
-    }
+    if (!success) toast.error('Could not switch camera')
   }
 
   const connTypeValues = Object.values(connectionTypes)
   const overallType: 'p2p' | 'turn' | 'mixed' | 'unknown' =
-    connTypeValues.length === 0
-      ? 'unknown'
-      : connTypeValues.every((t) => t === 'p2p')
-        ? 'p2p'
-        : connTypeValues.every((t) => t === 'turn')
-          ? 'turn'
-          : 'mixed'
+    connTypeValues.length === 0 ? 'unknown'
+    : connTypeValues.every((t) => t === 'p2p') ? 'p2p'
+    : connTypeValues.every((t) => t === 'turn') ? 'turn'
+    : 'mixed'
 
-  const participantList = Array.from(participants.entries())
+  const participantList = participants
   const totalParticipants = participantList.length + 1
-  const activeSpeaker = participantList.find(([peerId]) => (audioLevels[peerId] || 0) > 0.1)?.[1]
+  const activeSpeaker = participantList.find((p) => (audioLevels[p.peerId] || 0) > 0.1)
 
-  // Video call layout
   if (isVideoCall) {
     return (
       <motion.div
@@ -130,23 +108,16 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-50 bg-black flex flex-col"
       >
-        {/* Top bar */}
         <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between text-white/80 text-sm p-4 pt-safe bg-gradient-to-b from-black/60 to-transparent">
           <div className="flex items-center gap-2">
             <ConnectionTypeBadge type={overallType} />
-            {isGroup && (
-              <span className="flex items-center gap-1">
-                <Users className="w-3.5 h-3.5" />
-                {totalParticipants}
-              </span>
-            )}
+            {isGroup && <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" />{totalParticipants}</span>}
           </div>
           <span className="text-white/60 text-xs">
             {status === 'connected' ? formatDuration(callDuration) : status}
           </span>
         </div>
 
-        {/* Remote video (fills the screen) */}
         <div className="flex-1 relative">
           {participantList.length > 0 ? (
             <RemoteVideoGrid participants={participantList} />
@@ -154,7 +125,6 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
                 <Avatar className="w-32 h-32 mx-auto mb-4 border-4 border-white/10">
-                  <AvatarImage src={callAvatarUrl} />
                   <AvatarFallback className="text-4xl bg-white/10 text-white">
                     {callName.charAt(0).toUpperCase()}
                   </AvatarFallback>
@@ -165,7 +135,6 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
           )}
         </div>
 
-        {/* Local video (PiP) */}
         {videoEnabled && (
           <div className="absolute top-16 right-4 w-32 h-48 md:w-40 md:h-56 rounded-2xl overflow-hidden border-2 border-white/20 bg-zinc-900 shadow-xl z-10">
             <video
@@ -178,51 +147,19 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
           </div>
         )}
 
-        {/* Bottom controls */}
         <div className="absolute bottom-0 left-0 right-0 z-10 p-6 pb-safe bg-gradient-to-t from-black/80 to-transparent">
           <div className="flex items-center justify-center gap-4 max-w-md mx-auto">
-            <VideoCallButton
-              active={localMuted}
-              onClick={handleMute}
-              icon={localMuted ? MicOff : Mic}
-              label="Mute"
-              variant={localMuted ? 'danger' : 'neutral'}
-            />
-            <VideoCallButton
-              active={!videoEnabled}
-              onClick={handleVideoToggle}
-              icon={videoEnabled ? Video : VideoOff}
-              label="Video"
-              variant={!videoEnabled ? 'danger' : 'neutral'}
-            />
-            <VideoCallButton
-              onClick={handleSwitchCamera}
-              icon={SwitchCamera}
-              label="Flip"
-              variant="neutral"
-            />
-            <VideoCallButton
-              active={speakerOn}
-              onClick={handleSpeaker}
-              icon={speakerOn ? Volume2 : VolumeX}
-              label="Speaker"
-              variant="neutral"
-            />
-            <VideoCallButton
-              onClick={handleLeave}
-              icon={PhoneOff}
-              label="End"
-              variant="end"
-              large
-              disabled={leaving}
-            />
+            <VideoCallButton active={localMuted} onClick={toggleMute} icon={localMuted ? MicOff : Mic} label="Mute" variant={localMuted ? 'danger' : 'neutral'} />
+            <VideoCallButton active={!videoEnabled} onClick={toggleVideo} icon={videoEnabled ? Video : VideoOff} label="Video" variant={!videoEnabled ? 'danger' : 'neutral'} />
+            <VideoCallButton onClick={handleSwitchCamera} icon={SwitchCamera} label="Flip" variant="neutral" />
+            <VideoCallButton active={speakerOn} onClick={handleSpeaker} icon={speakerOn ? Volume2 : VolumeX} label="Speaker" variant="neutral" />
+            <VideoCallButton onClick={handleLeave} icon={PhoneOff} label={leaving ? '...' : 'End'} variant="end" large disabled={leaving} />
           </div>
         </div>
       </motion.div>
     )
   }
 
-  // Voice call layout (original)
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -230,46 +167,24 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black flex flex-col items-center justify-between p-6 pt-safe pb-safe"
     >
-      {/* Top */}
       <div className="w-full flex items-center justify-between text-white/60 text-sm pt-4">
         <div className="flex items-center gap-2">
           <ConnectionTypeBadge type={overallType} />
-          {isGroup && (
-            <span className="flex items-center gap-1">
-              <Users className="w-3.5 h-3.5" />
-              {totalParticipants}
-            </span>
-          )}
+          {isGroup && <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" />{totalParticipants}</span>}
         </div>
         {status === 'connecting' && (
-          <motion.span
-            animate={{ opacity: [1, 0.4, 1] }}
-            transition={{ duration: 1.5, repeat: Infinity }}
-            className="text-xs"
-          >
+          <motion.span animate={{ opacity: [1, 0.4, 1] }} transition={{ duration: 1.5, repeat: Infinity }} className="text-xs">
             Connecting...
           </motion.span>
         )}
-        {status === 'disconnected' && (
-          <span className="text-xs text-yellow-400">Reconnecting...</span>
-        )}
       </div>
 
-      {/* Center */}
       <div className="flex flex-col items-center gap-4">
         <div className="relative">
           {(status === 'connecting' || activeSpeaker) && (
             <>
-              <motion.div
-                className="absolute inset-0 rounded-full bg-white/10"
-                animate={{ scale: [1, 1.4, 1.4], opacity: [0.6, 0, 0] }}
-                transition={{ duration: 2, repeat: Infinity, ease: 'easeOut' }}
-              />
-              <motion.div
-                className="absolute inset-0 rounded-full bg-white/5"
-                animate={{ scale: [1, 1.3, 1.3], opacity: [0.5, 0, 0] }}
-                transition={{ duration: 2, repeat: Infinity, ease: 'easeOut', delay: 0.5 }}
-              />
+              <motion.div className="absolute inset-0 rounded-full bg-white/10" animate={{ scale: [1, 1.4, 1.4], opacity: [0.6, 0, 0] }} transition={{ duration: 2, repeat: Infinity, ease: 'easeOut' }} />
+              <motion.div className="absolute inset-0 rounded-full bg-white/5" animate={{ scale: [1, 1.3, 1.3], opacity: [0.5, 0, 0] }} transition={{ duration: 2, repeat: Infinity, ease: 'easeOut', delay: 0.5 }} />
             </>
           )}
           <Avatar className="w-36 h-36 relative border-4 border-white/10">
@@ -289,19 +204,14 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
 
         {isGroup && participantList.length > 0 && (
           <div className="flex gap-2 mt-2">
-            {participantList.slice(0, 6).map(([peerId, p]) => {
-              const level = audioLevels[peerId] || 0
+            {participantList.slice(0, 6).map((p) => {
+              const level = audioLevels[p.peerId] || 0
               const isActive = level > 0.1
               return (
                 <div
-                  key={peerId}
-                  className={cn(
-                    'relative rounded-full transition-all',
-                    isActive && 'ring-2 ring-green-400 ring-offset-2 ring-offset-zinc-950'
-                  )}
-                  style={{
-                    transform: isActive ? `scale(${1 + level * 0.2})` : 'scale(1)',
-                  }}
+                  key={p.peerId}
+                  className={cn('relative rounded-full transition-all', isActive && 'ring-2 ring-green-400 ring-offset-2 ring-offset-zinc-950')}
+                  style={{ transform: isActive ? `scale(${1 + level * 0.2})` : 'scale(1)' }}
                 >
                   <Avatar className="w-10 h-10">
                     <AvatarFallback className="text-sm bg-white/10 text-white">
@@ -315,48 +225,23 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
         )}
       </div>
 
-      {/* Controls */}
       <div className="w-full max-w-sm mx-auto pb-6">
         <div className="flex items-center justify-center gap-6">
-          <CallButton
-            active={localMuted}
-            onClick={handleMute}
-            icon={localMuted ? MicOff : Mic}
-            label={localMuted ? 'Unmute' : 'Mute'}
-            variant={localMuted ? 'danger' : 'neutral'}
-          />
-          <CallButton
-            onClick={handleLeave}
-            icon={PhoneOff}
-            label={leaving ? 'Ending...' : 'End'}
-            variant="end"
-            large
-            disabled={leaving}
-          />
-          <CallButton
-            active={speakerOn}
-            onClick={handleSpeaker}
-            icon={speakerOn ? Volume2 : VolumeX}
-            label="Speaker"
-            variant="neutral"
-          />
+          <CallButton active={localMuted} onClick={toggleMute} icon={localMuted ? MicOff : Mic} label={localMuted ? 'Unmute' : 'Mute'} variant={localMuted ? 'danger' : 'neutral'} />
+          <CallButton onClick={handleLeave} icon={PhoneOff} label={leaving ? 'Ending...' : 'End'} variant="end" large disabled={leaving} />
+          <CallButton active={speakerOn} onClick={handleSpeaker} icon={speakerOn ? Volume2 : VolumeX} label="Speaker" variant="neutral" />
         </div>
       </div>
     </motion.div>
   )
 }
 
-/**
- * Remote video grid — fills the screen with remote participant videos.
- * For 1:1: single video fills the screen.
- * For group: 2x2 grid.
- */
-function RemoteVideoGrid({ participants }: { participants: [string, any][] }) {
+function RemoteVideoGrid({ participants }: { participants: any[] }) {
   const videoRefs = useRef<Map<string, HTMLVideoElement>>(new Map())
 
   useEffect(() => {
-    for (const [peerId, p] of participants) {
-      const el = videoRefs.current.get(peerId)
+    for (const p of participants) {
+      const el = videoRefs.current.get(p.peerId)
       if (el && p.stream && el.srcObject !== p.stream) {
         el.srcObject = p.stream
         el.play().catch(() => {})
@@ -365,11 +250,11 @@ function RemoteVideoGrid({ participants }: { participants: [string, any][] }) {
   }, [participants])
 
   if (participants.length === 1) {
-    const [peerId, p] = participants[0]
+    const p = participants[0]
     return (
       <video
-        key={peerId}
-        ref={(el) => { if (el) videoRefs.current.set(peerId, el) }}
+        key={p.peerId}
+        ref={(el) => { if (el) videoRefs.current.set(p.peerId, el) }}
         autoPlay
         playsInline
         className="w-full h-full object-cover"
@@ -377,16 +262,12 @@ function RemoteVideoGrid({ participants }: { participants: [string, any][] }) {
     )
   }
 
-  // Grid for group calls
   return (
-    <div className={cn(
-      'grid h-full',
-      participants.length === 2 ? 'grid-rows-2' : 'grid-cols-2 grid-rows-2'
-    )}>
-      {participants.slice(0, 4).map(([peerId, p]) => (
-        <div key={peerId} className="relative bg-zinc-900">
+    <div className={cn('grid h-full', participants.length === 2 ? 'grid-rows-2' : 'grid-cols-2 grid-rows-2')}>
+      {participants.slice(0, 4).map((p) => (
+        <div key={p.peerId} className="relative bg-zinc-900">
           <video
-            ref={(el) => { if (el) videoRefs.current.set(peerId, el) }}
+            ref={(el) => { if (el) videoRefs.current.set(p.peerId, el) }}
             autoPlay
             playsInline
             className="w-full h-full object-cover"
@@ -422,23 +303,7 @@ function ConnectionTypeBadge({ type }: { type: 'p2p' | 'turn' | 'mixed' | 'unkno
   )
 }
 
-function CallButton({
-  active,
-  onClick,
-  icon: Icon,
-  label,
-  variant,
-  large,
-  disabled,
-}: {
-  active?: boolean
-  onClick: () => void
-  icon: typeof Mic
-  label: string
-  variant: 'neutral' | 'danger' | 'end'
-  large?: boolean
-  disabled?: boolean
-}) {
+function CallButton({ active, onClick, icon: Icon, label, variant, large, disabled }: any) {
   const size = large ? 'w-16 h-16' : 'w-14 h-14'
   const iconSize = large ? 'w-7 h-7' : 'w-6 h-6'
   const styles = {
@@ -448,11 +313,7 @@ function CallButton({
   }[variant]
   return (
     <div className="flex flex-col items-center gap-1.5">
-      <button
-        onClick={onClick}
-        disabled={disabled}
-        className={cn('rounded-full flex items-center justify-center transition-all active:scale-95 disabled:opacity-50', size, styles)}
-      >
+      <button onClick={onClick} disabled={disabled} className={cn('rounded-full flex items-center justify-center transition-all active:scale-95 disabled:opacity-50', size, styles)}>
         <Icon className={iconSize} />
       </button>
       <span className="text-xs text-white/60">{label}</span>
@@ -460,23 +321,7 @@ function CallButton({
   )
 }
 
-function VideoCallButton({
-  active,
-  onClick,
-  icon: Icon,
-  label,
-  variant,
-  large,
-  disabled,
-}: {
-  active?: boolean
-  onClick: () => void
-  icon: typeof Mic
-  label: string
-  variant: 'neutral' | 'danger' | 'end'
-  large?: boolean
-  disabled?: boolean
-}) {
+function VideoCallButton({ active, onClick, icon: Icon, label, variant, large, disabled }: any) {
   const size = large ? 'w-14 h-14' : 'w-12 h-12'
   const iconSize = large ? 'w-6 h-6' : 'w-5 h-5'
   const styles = {
@@ -486,11 +331,7 @@ function VideoCallButton({
   }[variant]
   return (
     <div className="flex flex-col items-center gap-1">
-      <button
-        onClick={onClick}
-        disabled={disabled}
-        className={cn('rounded-full flex items-center justify-center transition-all active:scale-95 disabled:opacity-50', size, styles)}
-      >
+      <button onClick={onClick} disabled={disabled} className={cn('rounded-full flex items-center justify-center transition-all active:scale-95 disabled:opacity-50', size, styles)}>
         <Icon className={iconSize} />
       </button>
       <span className="text-[10px] text-white/60">{label}</span>

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
-import { useVoiceCall } from '@/hooks/useVoiceCall'
+import { useCall } from '@/hooks/useCall'
+import { unlockAudio } from '@/lib/call-manager'
 import { useAppStore } from '@/stores/useAppStore'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Phone, PhoneOff, Loader2, Video } from 'lucide-react'
@@ -28,7 +29,7 @@ interface IncomingCall {
  */
 export function IncomingCallOverlay() {
   const { data: session } = useSession()
-  const { startCall, unlockAudio, leaveCall } = useVoiceCall()
+  const { startCall, endCall } = useCall()
   const setView = useAppStore((s) => s.setView)
 
   const [incoming, setIncoming] = useState<IncomingCall | null>(null)
@@ -58,27 +59,21 @@ export function IncomingCallOverlay() {
     if (!incoming || !session?.user) return
     setAccepting(true)
     try {
-      // Start our WebRTC side — pass video flag if it's a video call
       await startCall({
         callId: incoming.callId,
         channelId: incoming.channelId,
         dmGroupId: incoming.dmGroupId,
         enableVideo: incoming.video ?? false,
       })
-
-      // CRITICAL: Unlock audio playback — this is a user gesture
       unlockAudio()
-
-      // Notify the caller that we accepted
       const { getSocket } = await import('@/lib/socket')
       const socket = await getSocket()
       socket.emit('call:accept', { callId: incoming.callId, byUserId: incoming.from.userId })
-
       setView('voice')
       setIncoming(null)
     } catch (e: any) {
       toast.error('Failed to join call: ' + e.message)
-      await leaveCall()
+      await endCall()
     } finally {
       setAccepting(false)
     }

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useVoiceCall } from '@/hooks/useVoiceCall'
+import { useCall } from '@/hooks/useCall'
 import { useAppStore } from '@/stores/useAppStore'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -11,20 +11,10 @@ import { Phone, PhoneOff, Mic, MicOff, Volume2, Users, Loader2, Radio } from 'lu
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { ActiveCallScreen } from './active-call-screen'
+import { unlockAudio } from '@/lib/call-manager'
 
 export function VoiceView() {
-  const {
-    status,
-    callId,
-    localMuted,
-    participants,
-    iceServers,
-    error,
-    startCall,
-    unlockAudio,
-    toggleMute,
-    leaveCall,
-  } = useVoiceCall()
+  const { status, callId, isVideoCall, startCall, endCall, participants } = useCall()
   const qc = useQueryClient()
   const setView = useAppStore((s) => s.setView)
 
@@ -64,28 +54,22 @@ export function VoiceView() {
     },
     onSuccess: async (data) => {
       await startCall({ callId: data.call.id, channelId: data.call.channelId })
-      // Unlock audio on this user gesture (clicking Join)
       unlockAudio()
       toast.success('Joined voice channel')
     },
     onError: () => toast.error('Failed to join voice'),
   })
 
-  // When in an active call, show the full-screen WhatsApp-style call UI
+  // When in an active call, show the full-screen call UI
   if (status !== 'idle' && callId) {
-    // Find the channel/DM name for the call
     const allChannels = groups?.flatMap((g: any) =>
       g.channels.map((c: any) => ({ ...c, groupName: g.name, isDm: g.isDm, partner: g.partner }))
     ) || []
-    const callChannel = allChannels.find((c: any) => c.id === (groups?.flatMap((g: any) => g.channels).find((c: any) => c.id)?.id))
 
-    // For the call name, use the channel name or partner name
     let callName = 'Voice Call'
     let callAvatarUrl: string | undefined
     let isGroup = true
-    const isVideoCall = false // voice channel calls are always audio-only
 
-    // Try to find the call's channel from active calls
     const activeCall = activeCalls?.find((c: any) => c.id === callId)
     if (activeCall?.channelId) {
       const channel = allChannels.find((c: any) => c.id === activeCall.channelId)
@@ -112,26 +96,16 @@ export function VoiceView() {
     )
   }
 
-  const turnProviders = iceServers?.providers?.filter((p: any) => p.enabled && p.type === 'turn') || []
+  const turnProviders = participants
 
   return (
     <div className="h-full overflow-y-auto bg-background">
       <div className="max-w-3xl mx-auto p-4 md:p-6 space-y-6">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Calls</h1>
-          <p className="text-sm text-muted-foreground">
-            Drop-in voice channels ·{' '}
-            {turnProviders.length > 0 ? (
-              <span className="text-status-online font-medium">
-                {turnProviders.length} TURN provider(s) active
-              </span>
-            ) : (
-              <span className="text-status-idle">STUN only</span>
-            )}
-          </p>
+          <p className="text-sm text-muted-foreground">Drop-in voice channels</p>
         </div>
 
-        {/* Voice channels list */}
         <section>
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">
             Voice Channels
@@ -197,12 +171,6 @@ export function VoiceView() {
             </div>
           )}
         </section>
-
-        {error && (
-          <Card className="p-4 border-red-500/50 bg-red-500/10">
-            <p className="text-sm text-red-500">{error}</p>
-          </Card>
-        )}
       </div>
     </div>
   )

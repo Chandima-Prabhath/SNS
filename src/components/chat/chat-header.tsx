@@ -9,7 +9,8 @@ import { ChevronLeft, MoreVertical, Hash, Phone, Video, Volume2, Loader2 } from 
 import { cn } from '@/lib/utils'
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { useVoiceCall } from '@/hooks/useVoiceCall'
+import { useCall } from '@/hooks/useCall'
+import { unlockAudio } from '@/lib/call-manager'
 
 interface ChatHeaderProps {
   channel: any
@@ -20,7 +21,7 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
   const setChatInfoOpen = useAppStore((s) => s.setChatInfoOpen)
   const setView = useAppStore((s) => s.setView)
   const presence = usePresence()
-  const { startCall, unlockAudio } = useVoiceCall()
+  const { startCall } = useCall()
   const { data: session } = useSession()
   const [callPending, setCallPending] = useState(false)
 
