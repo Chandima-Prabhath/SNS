@@ -118,8 +118,12 @@ function UploadStoryCard() {
       const formData = new FormData()
       formData.append('file', file)
       const res = await fetch('/api/upload', { method: 'POST', body: formData })
+      // Check status BEFORE parsing JSON — prevents "Unexpected token" errors
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text.slice(0, 120) || 'Upload failed')
+      }
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
       setMediaUrl(data.url)
       setMediaType(data.type.startsWith('video') ? 'video' : 'image')
     } catch (e: any) {

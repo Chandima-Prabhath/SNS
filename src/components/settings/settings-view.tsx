@@ -186,8 +186,11 @@ function ProfileSection() {
       const formData = new FormData()
       formData.append('file', file)
       const res = await fetch('/api/upload', { method: 'POST', body: formData })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text.slice(0, 120) || 'Upload failed')
+      }
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
       setAvatarUrl(data.url)
       toast.success('Avatar uploaded — click Save to apply')
     } catch (e: any) {

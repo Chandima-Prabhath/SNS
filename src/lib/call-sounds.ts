@@ -1,27 +1,18 @@
 /**
  * Call sound effects — Web Audio API synthesis.
- * No audio files needed. Tiny, instant, sample-accurate.
  *
- * Sounds:
- *   - Ringback: US ringback tone (440+480Hz, 2s on / 4s off) — what the CALLER hears
- *   - Incoming: European ring tone (440Hz, 1s on / 3s off) — what the RECEIVER hears
- *   - Connected: short double-beep — call connected
- *   - Ended: low descending tone — call ended
- *   - Message: subtle pop — new message notification
- *
- * Usage:
- *   import { CallSounds } from '@/lib/call-sounds'
- *   CallSounds.unlock()                    // call on first user gesture
- *   CallSounds.startRingback()             // caller hears this while waiting
- *   CallSounds.startIncoming()             // receiver hears this
- *   CallSounds.stop()                      // stop any playing sound
- *   CallSounds.playConnected()             // call connected beep
- *   CallSounds.playEnded()                 // call ended tone
- *   CallSounds.playMessage()               // message notification pop
+ * Mobile fixes:
+ *   - Uses upfront scheduled automation (not setInterval) — sample-accurate,
+ *     immune to background timer throttling
+ *   - Proper cleanup: cancelScheduledValues + disconnect all nodes
+ *   - Generation counter so stale stop() can't clobber newer sounds
+ *   - visibilitychange listener resumes suspended AudioContext
+ *   - stop() called directly from call-manager (not just React events)
  */
 
 let ctx: AudioContext | null = null
-let activeNodes: { stop: () => void } | null = null
+let activeStop: (() => void) | null = null
+let generation = 0
 
 function getCtx(): AudioContext | null {
   if (typeof window === 'undefined') return null
@@ -29,29 +20,34 @@ function getCtx(): AudioContext | null {
     const AC = (window as any).AudioContext || (window as any).webkitAudioContext
     if (!AC) return null
     ctx = new AC()
+    // Resume on visibility change (mobile suspends when backgrounded)
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && ctx?.state === 'suspended') {
+        ctx.resume()
+      }
+    })
   }
   return ctx
 }
 
 export const CallSounds = {
-  /** Unlock audio — call on first user gesture (click, touch, keypress) */
   unlock() {
     const c = getCtx()
     if (!c) return
     if (c.state === 'suspended') c.resume()
   },
 
-  /** Stop any currently playing sound */
   stop() {
-    if (activeNodes) {
-      activeNodes.stop()
-      activeNodes = null
+    if (activeStop) {
+      activeStop()
+      activeStop = null
     }
   },
 
   /**
-   * Ringback tone — what the CALLER hears while waiting for answer.
+   * Ringback tone — what the CALLER hears while waiting.
    * US cadence: 440+480Hz, 2s on, 4s off.
+   * Uses scheduled automation (not setInterval) for mobile reliability.
    */
   startRingback() {
     const c = getCtx()
@@ -59,6 +55,7 @@ export const CallSounds = {
     this.stop()
     if (c.state === 'suspended') c.resume()
 
+    const myGen = ++generation
     const o1 = c.createOscillator()
     o1.frequency.value = 440
     o1.type = 'sine'
@@ -73,32 +70,33 @@ export const CallSounds = {
     o1.start()
     o2.start()
 
+    // Schedule 10 minutes of ringback (2s on, 4s off, 6s cycle)
+    const ON = 2
+    const CYCLE = 6
     const now = c.currentTime
-    g.gain.setValueAtTime(0.12, now)
-    g.gain.setValueAtTime(0, now + 2)
-
-    const interval = setInterval(() => {
-      const t = c.currentTime
+    for (let i = 0; i < 100; i++) {
+      const t = now + i * CYCLE
       g.gain.setValueAtTime(0.12, t)
-      g.gain.setValueAtTime(0, t + 2)
-    }, 6000)
+      g.gain.setValueAtTime(0.0, t + ON)
+    }
 
-    activeNodes = {
-      stop: () => {
-        clearInterval(interval)
-        try {
-          g.gain.cancelScheduledValues(c.currentTime)
-          g.gain.setValueAtTime(0, c.currentTime)
-          o1.stop()
-          o2.stop()
-        } catch {}
-      },
+    activeStop = () => {
+      if (myGen !== generation) return // stale, ignore
+      try {
+        g.gain.cancelScheduledValues(c.currentTime)
+        g.gain.setValueAtTime(0, c.currentTime)
+        o1.stop()
+        o2.stop()
+        o1.disconnect()
+        o2.disconnect()
+        g.disconnect()
+      } catch {}
     }
   },
 
   /**
-   * Incoming ring — what the RECEIVER hears when getting a call.
-   * European cadence: 440Hz, 1s on, 3s off. Higher pitch for urgency.
+   * Incoming ring — what the RECEIVER hears.
+   * 480Hz, 1s on, 3s off.
    */
   startIncoming() {
     const c = getCtx()
@@ -106,6 +104,7 @@ export const CallSounds = {
     this.stop()
     if (c.state === 'suspended') c.resume()
 
+    const myGen = ++generation
     const o = c.createOscillator()
     o.frequency.value = 480
     o.type = 'sine'
@@ -115,25 +114,25 @@ export const CallSounds = {
     g.connect(c.destination)
     o.start()
 
+    // Schedule 10 minutes of incoming ring (1s on, 3s off, 4s cycle)
+    const ON = 1
+    const CYCLE = 4
     const now = c.currentTime
-    g.gain.setValueAtTime(0.15, now)
-    g.gain.setValueAtTime(0, now + 1)
-
-    const interval = setInterval(() => {
-      const t = c.currentTime
+    for (let i = 0; i < 150; i++) {
+      const t = now + i * CYCLE
       g.gain.setValueAtTime(0.15, t)
-      g.gain.setValueAtTime(0, t + 1)
-    }, 4000)
+      g.gain.setValueAtTime(0.0, t + ON)
+    }
 
-    activeNodes = {
-      stop: () => {
-        clearInterval(interval)
-        try {
-          g.gain.cancelScheduledValues(c.currentTime)
-          g.gain.setValueAtTime(0, c.currentTime)
-          o.stop()
-        } catch {}
-      },
+    activeStop = () => {
+      if (myGen !== generation) return
+      try {
+        g.gain.cancelScheduledValues(c.currentTime)
+        g.gain.setValueAtTime(0, c.currentTime)
+        o.stop()
+        o.disconnect()
+        g.disconnect()
+      } catch {}
     }
   },
 

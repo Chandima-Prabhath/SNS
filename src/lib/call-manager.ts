@@ -151,10 +151,21 @@ export class CallManager {
     })
 
     this.socket.on('call:reject', (payload: any) => {
+      console.log('[call] call rejected by remote')
+      // Stop ringback sound immediately
+      import('./call-sounds').then(m => m.CallSounds.stop()).catch(() => {})
+      // If we're the caller and the call was rejected, end our side
+      if (this.callId && this.status !== 'idle') {
+        this.endCallCleanup()
+        this.callbacks?.onCallEnded('rejected')
+      }
       window.dispatchEvent(new CustomEvent('sns:call-rejected', { detail: payload }))
     })
 
     this.socket.on('call:accept', (payload: any) => {
+      console.log('[call] call accepted by remote')
+      // Stop ringback sound — the call is connecting now
+      import('./call-sounds').then(m => m.CallSounds.stop()).catch(() => {})
       window.dispatchEvent(new CustomEvent('sns:call-accepted', { detail: payload }))
     })
 

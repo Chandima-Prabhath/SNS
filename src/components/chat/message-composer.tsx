@@ -66,8 +66,11 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
       const formData = new FormData()
       formData.append('file', file)
       const res = await fetch('/api/upload', { method: 'POST', body: formData })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text.slice(0, 120) || 'Upload failed')
+      }
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
       await send({
         body: data.type.startsWith('image') ? '📷' : '📎',
         mediaUrl: data.url,

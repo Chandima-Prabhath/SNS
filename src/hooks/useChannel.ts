@@ -295,11 +295,13 @@ export function useChannel(channelId: string | null) {
           body: JSON.stringify({ messageId }),
         })
         if (socket) socket.emit('channel:read', { channelId, messageId })
+        // Invalidate unread counts so the badge clears immediately
+        qc.invalidateQueries({ queryKey: ['unread-counts'] })
       } catch (e) {
         // silent fail
       }
     },
-    [channelId, socket]
+    [channelId, socket, qc]
   )
 
   return {
