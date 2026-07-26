@@ -6,7 +6,6 @@ import { useSession } from 'next-auth/react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Dialog,
   DialogContent,
@@ -35,12 +34,10 @@ export function StatusView() {
 
   return (
     <div className="h-full overflow-y-auto bg-background">
-      <div className="max-w-3xl mx-auto p-4 md:p-6 space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Status</h1>
-            <p className="text-sm text-muted-foreground">Share moments that disappear in 24h</p>
-          </div>
+      <div className="max-w-2xl mx-auto p-4 md:p-6 space-y-6">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Status</h1>
+          <p className="text-sm text-muted-foreground">Share moments that disappear in 24h</p>
         </div>
 
         {/* My status */}
@@ -118,7 +115,6 @@ function UploadStoryCard() {
       const formData = new FormData()
       formData.append('file', file)
       const res = await fetch('/api/upload', { method: 'POST', body: formData })
-      // Check status BEFORE parsing JSON — prevents "Unexpected token" errors
       if (!res.ok) {
         const text = await res.text()
         throw new Error(text.slice(0, 120) || 'Upload failed')
@@ -135,13 +131,10 @@ function UploadStoryCard() {
   }
 
   const handleSubmit = async () => {
-    if (!mediaUrl) {
-      toast.error('Upload an image first')
-      return
-    }
+    if (!mediaUrl) return
     try {
       await upload({ mediaUrl, mediaType, caption: caption.trim() || undefined })
-      toast.success('Story posted!')
+      toast.success('Status posted')
       setOpen(false)
       reset()
     } catch {
@@ -176,7 +169,7 @@ function UploadStoryCard() {
           <DialogTrigger asChild>
             <Button size="sm">Add</Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle>Post a status</DialogTitle>
               <DialogDescription>Disappears in 24 hours.</DialogDescription>
@@ -290,11 +283,10 @@ function StoryRow({ story }: { story: StoryGroup }) {
         onClick={() => setViewerOpen(true)}
         className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-accent/50 transition-colors text-left"
       >
-        {/* Avatar with story ring */}
         <div
           className={cn(
             'relative rounded-full p-0.5',
-            someUnviewed ? 'bg-gradient-to-tr from-primary to-primary/60' : 'bg-muted'
+            someUnviewed ? 'bg-primary' : 'bg-muted'
           )}
         >
           <Avatar className="w-14 h-14 border-2 border-background">
@@ -311,15 +303,20 @@ function StoryRow({ story }: { story: StoryGroup }) {
         </div>
       </button>
 
-      <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
-        <DialogContent className="max-w-md p-0 overflow-hidden border-0 bg-black">
+      {/* Full-screen story viewer — no Dialog wrapper (avoids duplicate close buttons) */}
+      <AnimatePresence>
+        {viewerOpen && (
           <StoryViewer story={story} onClose={() => setViewerOpen(false)} />
-        </DialogContent>
-      </Dialog>
+        )}
+      </AnimatePresence>
     </>
   )
 }
 
+/**
+ * Full-screen story viewer — renders as a fixed overlay, not inside a Dialog.
+ * This avoids the duplicate close button issue (Dialog adds its own X button).
+ */
 function StoryViewer({ story, onClose }: { story: StoryGroup; onClose: () => void }) {
   const { markViewed } = useStories()
   const [idx, setIdx] = useState(0)
@@ -331,79 +328,116 @@ function StoryViewer({ story, onClose }: { story: StoryGroup; onClose: () => voi
     }
   }, [idx, current, markViewed])
 
+  // Auto-advance after 5 seconds
+  useEffect(() => {
+    if (!current) return
+    const timer = setTimeout(() => {
+      if (idx < story.stories.length - 1) {
+        setIdx(idx + 1)
+      } else {
+        onClose()
+      }
+    }, 5000)
+    return () => clearTimeout(timer)
+  }, [idx, current, story.stories.length, onClose])
+
   if (!current) return null
 
   return (
-    <div className="relative bg-black">
-      <div className="aspect-[9/16] max-h-[85vh] mx-auto relative">
-        {current.mediaType === 'image' && (
-          <img src={current.mediaUrl} alt={current.caption || ''} className="w-full h-full object-contain" />
-        )}
-        {current.mediaType === 'video' && (
-          <video src={current.mediaUrl} controls autoPlay className="w-full h-full object-contain" />
-        )}
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] bg-black flex items-center justify-center"
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full h-full max-w-md mx-auto flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Media */}
+        <div className="flex-1 relative flex items-center justify-center">
+          {current.mediaType === 'image' && (
+            <img
+              src={current.mediaUrl}
+              alt={current.caption || ''}
+              className="w-full h-full object-contain"
+            />
+          )}
+          {current.mediaType === 'video' && (
+            <video
+              src={current.mediaUrl}
+              controls
+              autoPlay
+              className="w-full h-full object-contain"
+            />
+          )}
+        </div>
 
-        {/* Top overlay */}
-        <div className="absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/60 to-transparent">
-          <div className="flex gap-1 mb-2">
-            {story.stories.map((_, i) => (
-              <div key={i} className="flex-1 h-0.5 bg-white/30 rounded overflow-hidden">
-                <motion.div
-                  className="h-full bg-white"
-                  initial={{ width: i < idx ? '100%' : '0%' }}
-                  animate={{ width: i === idx ? '100%' : i < idx ? '100%' : '0%' }}
-                  transition={{ duration: i === idx ? 5 : 0, ease: 'linear' }}
-                  onAnimationComplete={() => {
-                    if (i === idx && idx < story.stories.length - 1) {
-                      setIdx(idx + 1)
-                    }
-                  }}
-                />
-              </div>
-            ))}
-          </div>
-          <div className="flex items-center gap-2">
-            <Avatar className="w-8 h-8 border border-white/30">
-              <AvatarImage src={story.user.avatarUrl || undefined} />
-              <AvatarFallback>{story.user.displayName?.charAt(0) || '?'}</AvatarFallback>
-            </Avatar>
-            <div className="flex-1 min-w-0">
-              <div className="text-white text-sm font-medium truncate">{story.user.displayName}</div>
-              <div className="text-white/70 text-xs">
-                {formatDistanceToNow(new Date(current.createdAt), { addSuffix: true })}
-              </div>
+        {/* Progress bars */}
+        <div className="absolute top-0 left-0 right-0 flex gap-1 p-3 pt-safe">
+          {story.stories.map((_, i) => (
+            <div key={i} className="flex-1 h-0.5 bg-white/30 rounded-full overflow-hidden">
+              <div
+                className={cn(
+                  'h-full bg-white transition-all duration-500',
+                  i < idx ? 'w-full' : i === idx ? 'w-full' : 'w-0'
+                )}
+              />
             </div>
-            <button onClick={onClose} className="text-white p-1.5 hover:bg-white/10 rounded-full">
-              <X className="w-5 h-5" />
-            </button>
+          ))}
+        </div>
+
+        {/* Header: avatar + name + close */}
+        <div className="absolute top-6 left-0 right-0 flex items-center gap-2 p-3">
+          <Avatar className="w-8 h-8 border border-white/30">
+            <AvatarImage src={story.user.avatarUrl || undefined} />
+            <AvatarFallback>{story.user.displayName?.charAt(0) || '?'}</AvatarFallback>
+          </Avatar>
+          <div className="flex-1 min-w-0">
+            <div className="text-white text-sm font-medium truncate">{story.user.displayName}</div>
+            <div className="text-white/70 text-xs">
+              {formatDistanceToNow(new Date(current.createdAt), { addSuffix: true })}
+            </div>
           </div>
+          {/* Single close button — no Dialog duplicate */}
+          <button
+            onClick={onClose}
+            className="text-white p-2 hover:bg-white/10 rounded-full transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Caption */}
         {current.caption && (
-          <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/70 to-transparent">
+          <div className="absolute bottom-0 left-0 right-0 p-4 pb-safe bg-gradient-to-t from-black/70 to-transparent">
             <p className="text-white text-sm">{current.caption}</p>
           </div>
         )}
 
-        {/* Nav arrows */}
+        {/* Nav arrows — tap zones instead of buttons for cleaner UI */}
         {idx > 0 && (
           <button
             onClick={() => setIdx(idx - 1)}
-            className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/60 text-white p-1.5 rounded-full backdrop-blur-sm"
+            className="absolute left-0 top-0 bottom-0 w-1/3 flex items-center justify-start"
           >
-            <ChevronLeft className="w-4 h-4" />
+            <div className="bg-black/30 rounded-full p-1.5 ml-2 backdrop-blur-sm">
+              <ChevronLeft className="w-5 h-5 text-white" />
+            </div>
           </button>
         )}
         {idx < story.stories.length - 1 && (
           <button
             onClick={() => setIdx(idx + 1)}
-            className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/60 text-white p-1.5 rounded-full backdrop-blur-sm"
+            className="absolute right-0 top-0 bottom-0 w-1/3 flex items-center justify-end"
           >
-            <ChevronRight className="w-4 h-4" />
+            <div className="bg-black/30 rounded-full p-1.5 mr-2 backdrop-blur-sm">
+              <ChevronRight className="w-5 h-5 text-white" />
+            </div>
           </button>
         )}
       </div>
-    </div>
+    </motion.div>
   )
 }

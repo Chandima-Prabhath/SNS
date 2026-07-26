@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useSession } from 'next-auth/react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Card } from '@/components/ui/card'
@@ -26,11 +26,13 @@ import {
   X,
   Terminal,
   Hash,
+  Sparkles,
 } from 'lucide-react'
 import { signOut } from 'next-auth/react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
+import { generateAvatarCandidates } from '@/lib/avatar'
 import {
   Select,
   SelectContent,
@@ -205,26 +207,14 @@ function ProfileSection() {
 
   return (
     <Card className="p-6 space-y-5">
-      {/* Avatar */}
-      <div className="flex items-center gap-4">
-        <Avatar className="w-20 h-20">
-          <AvatarImage src={avatarUrl || undefined} />
-          <AvatarFallback className="text-2xl">{displayName?.charAt(0) || '?'}</AvatarFallback>
-        </Avatar>
-        <div>
-          <label className="cursor-pointer">
-            <span className="inline-flex items-center justify-center bg-primary text-primary-foreground px-3 py-1.5 rounded-lg text-sm hover:bg-primary/90">
-              {uploading ? 'Uploading...' : 'Change avatar'}
-            </span>
-            <input type="file" className="hidden" accept="image/*" onChange={handleAvatar} disabled={uploading} />
-          </label>
-          {avatarUrl && (
-            <Button variant="ghost" size="sm" className="ml-2" onClick={() => setAvatarUrl('')}>
-              Remove
-            </Button>
-          )}
-        </div>
-      </div>
+      {/* Avatar picker — generated avatars + upload option */}
+      <AvatarPicker
+        currentAvatarUrl={avatarUrl}
+        userId={me?.id || 'seed'}
+        onPick={(url) => { setAvatarUrl(url); toast.success('Avatar selected — click Save to apply') }}
+        onUpload={handleAvatar}
+        uploading={uploading}
+      />
 
       <div className="space-y-2">
         <Label htmlFor="displayName">Display name</Label>
@@ -851,6 +841,68 @@ function SystemSection() {
           </div>
         )}
       </Card>
+    </div>
+  )
+}
+
+/**
+ * Avatar picker — shows generated DiceBear avatars + upload option.
+ * Users can pick from 12 generated avatars or upload their own.
+ */
+function AvatarPicker({
+  currentAvatarUrl,
+  userId,
+  onPick,
+  onUpload,
+  uploading,
+}: {
+  currentAvatarUrl: string
+  userId: string
+  onPick: (url: string) => void
+  onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void
+  uploading: boolean
+}) {
+  const [showPicker, setShowPicker] = useState(false)
+  const candidates = useMemo(() => generateAvatarCandidates(userId), [userId])
+
+  return (
+    <div className="space-y-3">
+      <Label>Avatar</Label>
+      <div className="flex items-center gap-4">
+        <Avatar className="w-20 h-20">
+          <AvatarImage src={currentAvatarUrl || undefined} />
+          <AvatarFallback className="text-2xl">?</AvatarFallback>
+        </Avatar>
+        <div className="flex flex-col gap-2">
+          <Button size="sm" variant="outline" onClick={() => setShowPicker(!showPicker)}>
+            <Sparkles className="w-4 h-4 mr-1.5" />
+            {showPicker ? 'Hide' : 'Pick avatar'}
+          </Button>
+          <label className="cursor-pointer">
+            <span className="inline-flex items-center justify-center bg-secondary text-secondary-foreground px-3 py-1.5 rounded-lg text-sm hover:bg-secondary/80">
+              {uploading ? 'Uploading...' : 'Upload'}
+            </span>
+            <input type="file" className="hidden" accept="image/*" onChange={onUpload} disabled={uploading} />
+          </label>
+        </div>
+      </div>
+
+      {showPicker && (
+        <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 pt-2">
+          {candidates.map((c, i) => (
+            <button
+              key={i}
+              onClick={() => onPick(c.url)}
+              className={cn(
+                'rounded-xl overflow-hidden border-2 transition-all hover:scale-105',
+                currentAvatarUrl === c.url ? 'border-primary' : 'border-transparent'
+              )}
+            >
+              <img src={c.url} alt="" className="w-full aspect-square" />
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
