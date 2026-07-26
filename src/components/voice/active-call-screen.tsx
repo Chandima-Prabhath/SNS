@@ -137,9 +137,9 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
           </div>
         )}
 
-        {/* Bottom controls */}
+        {/* Bottom controls — Discord-style pill */}
         <div className="absolute bottom-0 left-0 right-0 z-10 p-6 pb-safe bg-gradient-to-t from-black/80 to-transparent">
-          <div className="flex items-center justify-center gap-4 max-w-md mx-auto">
+          <div className="flex items-center justify-center gap-3 max-w-md mx-auto bg-[#2b2d31]/80 backdrop-blur-xl rounded-2xl p-2.5">
             <VideoCallButton active={localMuted} onClick={toggleMute} icon={localMuted ? MicOff : Mic} label="Mute" variant={localMuted ? 'danger' : 'neutral'} />
             <VideoCallButton active={!videoEnabled} onClick={toggleVideo} icon={videoEnabled ? Video : VideoOff} label="Video" variant={!videoEnabled ? 'danger' : 'neutral'} />
             <VideoCallButton onClick={handleSwitchCamera} icon={SwitchCamera} label="Flip" variant="neutral" />
@@ -155,41 +155,44 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black flex flex-col items-center justify-between p-6 pt-safe pb-safe"
+      className="fixed inset-0 z-50 bg-[#1e1f22] flex flex-col items-center justify-between p-6 pt-safe pb-safe"
     >
-      {/* Top */}
-      <div className="w-full flex items-center justify-between text-white/60 text-sm pt-4">
+      {/* Top bar */}
+      <div className="w-full flex items-center justify-between text-white/50 text-sm pt-4">
         <div className="flex items-center gap-2">
           <ConnectionTypeBadge type={overallType} />
           {isGroup && <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" />{totalParticipants}</span>}
         </div>
         {status === 'connecting' && (
-          <motion.span animate={{ opacity: [1, 0.4, 1] }} transition={{ duration: 1.5, repeat: Infinity }} className="text-xs">
+          <motion.span animate={{ opacity: [1, 0.4, 1] }} transition={{ duration: 1.5, repeat: Infinity }} className="text-xs text-primary">
             Connecting...
           </motion.span>
+        )}
+        {status === 'disconnected' && (
+          <span className="text-xs text-yellow-400">Reconnecting...</span>
         )}
       </div>
 
       {/* Center: avatar + name + timer */}
-      <div className="flex flex-col items-center gap-4">
+      <div className="flex flex-col items-center gap-5">
         <div className="relative">
           {(status === 'connecting' || activeSpeaker) && (
             <>
-              <motion.div className="absolute inset-0 rounded-full bg-white/10" animate={{ scale: [1, 1.4, 1.4], opacity: [0.6, 0, 0] }} transition={{ duration: 2, repeat: Infinity, ease: 'easeOut' }} />
-              <motion.div className="absolute inset-0 rounded-full bg-white/5" animate={{ scale: [1, 1.3, 1.3], opacity: [0.5, 0, 0] }} transition={{ duration: 2, repeat: Infinity, ease: 'easeOut', delay: 0.5 }} />
+              <motion.div className="absolute inset-0 rounded-full bg-primary/20" animate={{ scale: [1, 1.4, 1.4], opacity: [0.6, 0, 0] }} transition={{ duration: 2, repeat: Infinity, ease: 'easeOut' }} />
+              <motion.div className="absolute inset-0 rounded-full bg-primary/10" animate={{ scale: [1, 1.3, 1.3], opacity: [0.5, 0, 0] }} transition={{ duration: 2, repeat: Infinity, ease: 'easeOut', delay: 0.5 }} />
             </>
           )}
-          <Avatar className="w-36 h-36 relative border-4 border-white/10">
+          <Avatar className="w-32 h-32 relative border-4 border-white/5">
             <AvatarImage src={callAvatarUrl} />
-            <AvatarFallback className="text-5xl bg-white/10 text-white">
+            <AvatarFallback className="text-5xl bg-[#2b2d31] text-white/80">
               {callName.charAt(0).toUpperCase()}
             </AvatarFallback>
           </Avatar>
         </div>
 
         <div className="text-center">
-          <h1 className="text-2xl font-semibold text-white">{callName}</h1>
-          <p className="text-white/60 text-sm mt-1 font-mono">
+          <h1 className="text-xl font-semibold text-white">{callName}</h1>
+          <p className="text-white/40 text-sm mt-1 font-mono">
             {status === 'connected' ? formatDuration(callDuration) : status}
           </p>
         </div>
@@ -217,9 +220,9 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
         )}
       </div>
 
-      {/* Controls */}
+      {/* Controls — Discord-style pill */}
       <div className="w-full max-w-sm mx-auto pb-6">
-        <div className="flex items-center justify-center gap-6">
+        <div className="flex items-center justify-center gap-4 bg-[#2b2d31] rounded-2xl p-3">
           <CallButton active={localMuted} onClick={toggleMute} icon={localMuted ? MicOff : Mic} label={localMuted ? 'Unmute' : 'Mute'} variant={localMuted ? 'danger' : 'neutral'} />
           <CallButton onClick={handleLeave} icon={PhoneOff} label={leaving ? 'Ending...' : 'End'} variant="end" large disabled={leaving} />
           <CallButton active={speakerOn} onClick={handleSpeaker} icon={speakerOn ? Volume2 : VolumeX} label="Speaker" variant="neutral" />

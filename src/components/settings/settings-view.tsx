@@ -59,12 +59,12 @@ export function SettingsView() {
   ]
 
   return (
-    <div className="h-full overflow-y-auto bg-background">
-      <div className="max-w-3xl mx-auto p-4 md:p-6">
-        <h1 className="text-2xl font-semibold tracking-tight mb-6">Settings</h1>
+    <div className="h-full overflow-hidden bg-background flex flex-col">
+      <div className="max-w-4xl w-full mx-auto p-4 md:p-6 flex-1 flex flex-col min-h-0">
+        <h1 className="text-2xl font-semibold tracking-tight mb-4 shrink-0">Settings</h1>
 
-        {/* Section tabs — horizontal scroll on mobile, list on desktop */}
-        <div className="flex lg:flex-col gap-1 overflow-x-auto lg:overflow-x-visible no-scrollbar lg:no-scrollbar mb-6 pb-2 lg:pb-0 border-b lg:border-0">
+        {/* Section tabs — clean pill buttons */}
+        <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-3 mb-4 border-b shrink-0">
           {sections.map((s) => {
             const Icon = s.icon
             const active = section === s.key
@@ -73,40 +73,40 @@ export function SettingsView() {
                 key={s.key}
                 onClick={() => setSection(s.key)}
                 className={cn(
-                  'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors whitespace-nowrap shrink-0',
-                  'lg:w-full lg:justify-between',
-                  active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50'
+                  'flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap shrink-0',
+                  active
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
                 )}
               >
-                <div className="flex items-center gap-3">
-                  <Icon className="w-4 h-4" />
-                  <span>{s.label}</span>
-                </div>
-                <ChevronRight className="w-4 h-4 hidden lg:block" />
+                <Icon className="w-4 h-4" />
+                <span>{s.label}</span>
               </button>
             )
           })}
         </div>
 
-        {/* Section content */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={section}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.15 }}
-          >
-            {section === 'profile' && <ProfileSection />}
-            {section === 'privacy' && <PrivacySection />}
-            {section === 'bots' && <BotsSection />}
-            {section === 'admin' && isAdmin && <AdminSection />}
-            {section === 'system' && <SystemSection />}
-          </motion.div>
-        </AnimatePresence>
+        {/* Section content — scrollable */}
+        <div className="flex-1 min-h-0 overflow-y-auto pb-4">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={section}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.15 }}
+            >
+              {section === 'profile' && <ProfileSection />}
+              {section === 'privacy' && <PrivacySection />}
+              {section === 'bots' && <BotsSection />}
+              {section === 'admin' && isAdmin && <AdminSection />}
+              {section === 'system' && <SystemSection />}
+            </motion.div>
+          </AnimatePresence>
+        </div>
 
-        {/* Sign out — always visible */}
-        <div className="mt-8 pt-6 border-t">
+        {/* Sign out — always visible at bottom */}
+        <div className="pt-4 border-t shrink-0">
           <Button
             variant="outline"
             onClick={() => signOut({ callbackUrl: '/' })}
