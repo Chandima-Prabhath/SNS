@@ -1,5 +1,5 @@
 /**
- * SNS Realtime — Socket.io server setup
+ * Adoo Realtime — Socket.io server setup
  *
  * Single-port architecture: this module exports a function that attaches a
  * Socket.io server to an existing Node.js httpServer. We use this from

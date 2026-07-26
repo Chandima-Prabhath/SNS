@@ -4,16 +4,13 @@ import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import type { Socket } from 'socket.io-client'
 import { getSocket, disconnectSocket } from '@/lib/socket'
-import { registerGlobalCallListeners, unlockAudio } from '@/lib/webrtc'
+import { getCallManager, unlockAudio } from '@/lib/call-manager'
 
 /**
  * Singleton socket connection bound to the current session.
  *
- * Also registers GLOBAL call listeners and a global audio unlock listener.
- * The audio unlock is critical: browsers block audio.play() until a user
- * gesture occurs. We listen for the FIRST click/touch/keypress on the page
- * and unlock audio immediately. This way, when a call later starts and
- * ontrack fires, the audio can play without being blocked.
+ * Also gives the socket to the CallManager singleton so it can register
+ * its global call listeners (incoming call, accept, reject, etc).
  */
 export function useSocket() {
   const { status } = useSession()
@@ -32,7 +29,12 @@ export function useSocket() {
         if (cancelled) return
         setSocket(s)
         setConnected(s.connected)
-        registerGlobalCallListeners(s)
+
+        // Give the socket to the CallManager — it registers global call
+        // listeners (call:incoming, call:cancel, call:reject, call:accept,
+        // call:ended) internally.
+        getCallManager().setSocket(s)
+
         const onConnect = () => setConnected(true)
         const onDisconnect = () => setConnected(false)
         s.on('connect', onConnect)
@@ -45,13 +47,10 @@ export function useSocket() {
     }
   }, [status])
 
-  // Global audio unlock: listen for the first user gesture and unlock audio.
-  // This ensures that when a call starts (even an incoming call from a socket
-  // event, which is NOT a user gesture), the remote audio can play.
+  // Global audio unlock on first user gesture
   useEffect(() => {
     const unlock = () => {
       unlockAudio()
-      // Remove listeners after first unlock — audio stays unlocked for page lifetime
       document.removeEventListener('click', unlock)
       document.removeEventListener('touchstart', unlock)
       document.removeEventListener('keydown', unlock)

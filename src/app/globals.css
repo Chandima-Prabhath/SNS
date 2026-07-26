@@ -53,45 +53,44 @@
 
 /* ─────────────────────────────────────────────────────────────────────────
  * LIGHT THEME
- * Clean, bright, with the signature Adoo green (#11cd68).
  * ──────────────────────────────────────────────────────────────────────── */
 :root {
   --radius: 0.75rem;
-  --background: oklch(0.99 0.002 150);
-  --foreground: oklch(0.17 0.005 250);
+  --background: oklch(0.98 0.002 250);
+  --foreground: oklch(0.18 0.005 250);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.17 0.005 250);
+  --card-foreground: oklch(0.18 0.005 250);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.17 0.005 250);
-  --primary: oklch(0.62 0.17 150);
+  --popover-foreground: oklch(0.18 0.005 250);
+  --primary: oklch(0.58 0.16 255);
   --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.96 0.003 250);
+  --secondary: oklch(0.95 0.003 250);
   --secondary-foreground: oklch(0.2 0.005 250);
-  --muted: oklch(0.96 0.003 250);
+  --muted: oklch(0.95 0.003 250);
   --muted-foreground: oklch(0.5 0.01 250);
-  --accent: oklch(0.94 0.03 150);
+  --accent: oklch(0.93 0.02 255);
   --accent-foreground: oklch(0.2 0.005 250);
   --destructive: oklch(0.58 0.22 25);
-  --border: oklch(0.92 0.003 250);
-  --input: oklch(0.92 0.003 250);
-  --ring: oklch(0.62 0.17 150);
-  --chart-1: oklch(0.62 0.17 150);
+  --border: oklch(0.91 0.003 250);
+  --input: oklch(0.91 0.003 250);
+  --ring: oklch(0.58 0.16 255);
+  --chart-1: oklch(0.58 0.16 255);
   --chart-2: oklch(0.6 0.12 200);
   --chart-3: oklch(0.55 0.15 264);
   --chart-4: oklch(0.7 0.18 75);
   --chart-5: oklch(0.6 0.22 16);
-  --sidebar: oklch(0.97 0.002 150);
-  --sidebar-foreground: oklch(0.17 0.005 250);
-  --sidebar-primary: oklch(0.62 0.17 150);
+  --sidebar: oklch(0.96 0.002 250);
+  --sidebar-foreground: oklch(0.18 0.005 250);
+  --sidebar-primary: oklch(0.58 0.16 255);
   --sidebar-primary-foreground: oklch(0.99 0 0);
-  --sidebar-accent: oklch(0.94 0.02 150);
+  --sidebar-accent: oklch(0.93 0.01 250);
   --sidebar-accent-foreground: oklch(0.2 0.005 250);
-  --sidebar-border: oklch(0.92 0.003 250);
-  --sidebar-ring: oklch(0.62 0.17 150);
-  --bubble-mine: oklch(0.62 0.17 150);
+  --sidebar-border: oklch(0.91 0.003 250);
+  --sidebar-ring: oklch(0.58 0.16 255);
+  --bubble-mine: oklch(0.58 0.16 255);
   --bubble-mine-foreground: oklch(0.99 0 0);
-  --bubble-other: oklch(0.96 0.003 250);
-  --bubble-other-foreground: oklch(0.17 0.005 250);
+  --bubble-other: oklch(0.95 0.003 250);
+  --bubble-other-foreground: oklch(0.18 0.005 250);
   --status-online: oklch(0.65 0.18 145);
   --status-idle: oklch(0.78 0.16 75);
   --status-dnd: oklch(0.6 0.22 25);
@@ -99,50 +98,71 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
- * DARK THEME (default)
- * Deep charcoal with subtle warmth, signature Adoo green accent.
- * Not pure black — has a slight blue-grey undertone for depth.
+ * DARK THEME (default) — Discord-inspired
+ * Layered surfaces, not pure black. Subtle blue-grey undertone.
+ * Glassmorphic overlays with restrained blur.
  * ──────────────────────────────────────────────────────────────────────── */
 .dark {
-  --background: oklch(0.13 0.004 250);
-  --foreground: oklch(0.96 0.003 250);
-  --card: oklch(0.17 0.004 250);
-  --card-foreground: oklch(0.96 0.003 250);
-  --popover: oklch(0.19 0.004 250);
-  --popover-foreground: oklch(0.96 0.003 250);
-  --primary: oklch(0.72 0.17 150);
-  --primary-foreground: oklch(0.13 0.004 250);
-  --secondary: oklch(0.22 0.004 250);
-  --secondary-foreground: oklch(0.96 0.003 250);
-  --muted: oklch(0.22 0.004 250);
-  --muted-foreground: oklch(0.60 0.008 250);
-  --accent: oklch(0.25 0.02 150);
-  --accent-foreground: oklch(0.96 0.003 250);
-  --destructive: oklch(0.62 0.20 25);
-  --border: oklch(1 0 0 / 6%);
-  --input: oklch(1 0 0 / 8%);
-  --ring: oklch(0.72 0.17 150);
-  --chart-1: oklch(0.72 0.17 150);
+  /* Main background — Discord #313338 equivalent, slightly cooler */
+  --background: oklch(0.21 0.005 255);
+  --foreground: oklch(0.93 0.003 250);
+
+  /* Elevated surface — Discord #2b2d31 equivalent */
+  --card: oklch(0.18 0.005 255);
+  --card-foreground: oklch(0.93 0.003 250);
+
+  /* Popover — slightly lighter than card for depth */
+  --popover: oklch(0.20 0.005 255);
+  --popover-foreground: oklch(0.93 0.003 250);
+
+  /* Primary — Discord blurple #5865F2 */
+  --primary: oklch(0.55 0.18 264);
+  --primary-foreground: oklch(0.98 0 0);
+
+  /* Secondary surface — Discord #404249 hover */
+  --secondary: oklch(0.25 0.005 255);
+  --secondary-foreground: oklch(0.93 0.003 250);
+
+  /* Muted — Discord #2b2d31 */
+  --muted: oklch(0.16 0.005 255);
+  --muted-foreground: oklch(0.58 0.01 250);
+
+  /* Accent — primary tint for active states */
+  --accent: oklch(0.27 0.02 264);
+  --accent-foreground: oklch(0.93 0.003 250);
+
+  --destructive: oklch(0.60 0.20 25);
+  --border: oklch(1 0 0 / 5%);
+  --input: oklch(1 0 0 / 7%);
+  --ring: oklch(0.55 0.18 264);
+
+  --chart-1: oklch(0.55 0.18 264);
   --chart-2: oklch(0.65 0.12 200);
   --chart-3: oklch(0.6 0.15 264);
   --chart-4: oklch(0.75 0.18 75);
   --chart-5: oklch(0.65 0.22 16);
-  --sidebar: oklch(0.15 0.004 250);
-  --sidebar-foreground: oklch(0.96 0.003 250);
-  --sidebar-primary: oklch(0.72 0.17 150);
-  --sidebar-primary-foreground: oklch(0.13 0.004 250);
-  --sidebar-accent: oklch(0.21 0.004 250);
-  --sidebar-accent-foreground: oklch(0.96 0.003 250);
-  --sidebar-border: oklch(1 0 0 / 6%);
-  --sidebar-ring: oklch(0.72 0.17 150);
-  --bubble-mine: oklch(0.55 0.16 150);
-  --bubble-mine-foreground: oklch(0.99 0 0);
-  --bubble-other: oklch(0.21 0.004 250);
-  --bubble-other-foreground: oklch(0.96 0.003 250);
-  --status-online: oklch(0.72 0.18 145);
-  --status-idle: oklch(0.82 0.16 75);
-  --status-dnd: oklch(0.65 0.22 25);
-  --status-offline: oklch(0.48 0.008 250);
+
+  /* Sidebar — Discord #1e1f22 darkest */
+  --sidebar: oklch(0.14 0.005 255);
+  --sidebar-foreground: oklch(0.93 0.003 250);
+  --sidebar-primary: oklch(0.55 0.18 264);
+  --sidebar-primary-foreground: oklch(0.98 0 0);
+  --sidebar-accent: oklch(0.20 0.005 255);
+  --sidebar-accent-foreground: oklch(0.93 0.003 250);
+  --sidebar-border: oklch(1 0 0 / 5%);
+  --sidebar-ring: oklch(0.55 0.18 264);
+
+  /* Chat bubbles */
+  --bubble-mine: oklch(0.50 0.16 264);
+  --bubble-mine-foreground: oklch(0.98 0 0);
+  --bubble-other: oklch(0.25 0.005 255);
+  --bubble-other-foreground: oklch(0.93 0.003 250);
+
+  /* Status dots */
+  --status-online: oklch(0.62 0.17 145);
+  --status-idle: oklch(0.75 0.15 75);
+  --status-dnd: oklch(0.62 0.20 25);
+  --status-offline: oklch(0.45 0.01 250);
 }
 
 @layer base {
@@ -151,6 +171,8 @@
   }
   html, body {
     @apply bg-background text-foreground;
+    /* Use dvh for dynamic viewport height — adjusts when keyboard opens */
+    height: 100%;
     overscroll-behavior-y: none;
     -webkit-tap-highlight-color: transparent;
   }
@@ -160,14 +182,18 @@
     text-rendering: optimizeLegibility;
     font-feature-settings: "cv01", "cv03", "cv04", "cv11";
   }
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
-    background: var(--muted-foreground);
-    border-radius: 3px;
-    opacity: 0.25;
+    background: oklch(0.35 0.005 250);
+    border-radius: 4px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
   }
-  ::-webkit-scrollbar-thumb:hover { opacity: 0.4; }
+  ::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.45 0.005 250);
+    background-clip: padding-box;
+  }
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 }
@@ -180,14 +206,15 @@
     scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
   }
+  /* Glassmorphic surface — Discord-style restrained blur */
   .glass {
-    background: var(--popover);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    background: oklch(0.18 0.005 255 / 0.85);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
   }
-  .glass-dark {
-    background: oklch(0.13 0.004 250 / 0.85);
-    backdrop-filter: blur(24px) saturate(180%);
-    -webkit-backdrop-filter: blur(24px) saturate(180%);
+  .glass-light {
+    background: oklch(0.20 0.005 255 / 0.70);
+    backdrop-filter: blur(12px) saturate(160%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
   }
 }

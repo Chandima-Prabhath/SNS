@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * SNS Call Manager — Singleton
+ * Adoo Call Manager — Singleton
  *
  * This is a module-scoped singleton (NOT React state). One instance exists
  * for the entire app lifetime. This avoids the "multiple useVoiceCall instances"
@@ -161,6 +161,8 @@ export class CallManager {
     this.socket.on('call:ended', (payload: { callId: string; reason: string }) => {
       console.log('[call] call ended by server:', payload.reason)
       this.endCallCleanup()
+      // Play ended sound
+      import('./call-sounds').then(m => m.CallSounds.playEnded()).catch(() => {})
       this.callbacks?.onCallEnded(payload.reason)
     })
   }
@@ -399,6 +401,8 @@ export class CallManager {
     }
 
     this.endCallCleanup()
+    // Play ended sound
+    import('./call-sounds').then(m => m.CallSounds.playEnded()).catch(() => {})
     this.callbacks?.onCallEnded('user_ended')
   }
 
@@ -407,6 +411,9 @@ export class CallManager {
    */
   private endCallCleanup() {
     console.log('[call] running cleanup')
+
+    // Stop any playing call sounds
+    import('./call-sounds').then(m => m.CallSounds.stop()).catch(() => {})
 
     // Close all peer connections
     for (const [peerId, peer] of this.peers) {
@@ -628,7 +635,11 @@ export class CallManager {
       const state = pc.iceConnectionState
       console.log(`[call] ICE state (${username}): ${state}`)
       if (state === 'connected' || state === 'completed') {
-        if (this.status !== 'connected') this.setStatus('connected')
+        if (this.status !== 'connected') {
+          this.setStatus('connected')
+          // Play connected sound
+          import('./call-sounds').then(m => { m.CallSounds.stop(); m.CallSounds.playConnected() }).catch(() => {})
+        }
         if (peer.failedTimer) { clearTimeout(peer.failedTimer); peer.failedTimer = undefined }
         setTimeout(() => this.checkConnectionType(peerId), 2000)
       } else if (state === 'failed') {

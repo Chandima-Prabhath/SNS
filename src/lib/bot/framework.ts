@@ -1,5 +1,5 @@
 /**
- * SNS Bot Framework — Telegram-inspired, fully extensible
+ * Adoo Bot Framework — Telegram-inspired, fully extensible
  *
  * Architecture:
  *   Transport adapter (REST in our case) → normalize → middleware → handler registry

@@ -2,21 +2,15 @@
 
 import { useEffect } from 'react'
 import { getCallManager, unlockAudio } from '@/lib/call-manager'
+import { CallSounds } from '@/lib/call-sounds'
 import { useCallStore } from '@/stores/useCallStore'
 import { useSocket } from '@/hooks/useSocket'
 
 /**
  * CallController — mounted ONCE at the app root.
  *
- * This is the single source of truth between the CallManager singleton and
- * the Zustand call store. It:
- *   1. Gives the manager the socket connection
- *   2. Sets up callbacks that update the store
- *   3. Fetches ICE servers
- *   4. Registers the global audio unlock listener
- *
- * Components below read from the store (via useCall hook) and call the
- * manager directly (via getCallManager()). There's only ONE manager instance.
+ * Wires the CallManager singleton to the Zustand store, fetches ICE servers,
+ * and registers global audio unlock + call event listeners.
  */
 export function CallController({ children }: { children: React.ReactNode }) {
   const { socket, connected } = useSocket()
@@ -66,6 +60,7 @@ export function CallController({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const unlock = () => {
       unlockAudio()
+      CallSounds.unlock()
       document.removeEventListener('click', unlock)
       document.removeEventListener('touchstart', unlock)
       document.removeEventListener('keydown', unlock)
@@ -77,6 +72,24 @@ export function CallController({ children }: { children: React.ReactNode }) {
       document.removeEventListener('click', unlock)
       document.removeEventListener('touchstart', unlock)
       document.removeEventListener('keydown', unlock)
+    }
+  }, [])
+
+  // Listen for call accept/reject to stop ringback on the caller's side
+  useEffect(() => {
+    const onAccepted = () => {
+      console.log('[CallController] call accepted — stopping ringback')
+      CallSounds.stop()
+    }
+    const onRejected = () => {
+      console.log('[CallController] call rejected — stopping ringback')
+      CallSounds.stop()
+    }
+    window.addEventListener('sns:call-accepted', onAccepted)
+    window.addEventListener('sns:call-rejected', onRejected)
+    return () => {
+      window.removeEventListener('sns:call-accepted', onAccepted)
+      window.removeEventListener('sns:call-rejected', onRejected)
     }
   }, [])
 

@@ -11,6 +11,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import { useCall } from '@/hooks/useCall'
 import { unlockAudio } from '@/lib/call-manager'
+import { CallSounds } from '@/lib/call-sounds'
 
 interface ChatHeaderProps {
   channel: any
@@ -47,8 +48,9 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
 
       // Unlock audio on this user gesture
       unlockAudio()
+      CallSounds.unlock()
 
-      // For DM calls, ring the partner
+      // For DM calls, ring the partner and play ringback tone
       if (partner && session?.user) {
         const myName = (session.user as any).displayName || (session.user as any).username || 'Someone'
         const { getSocket } = await import('@/lib/socket')
@@ -62,18 +64,15 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
             displayName: myName,
           },
           channelId: channel.id,
-          video, // tell the receiver this is a video call
+          video,
         })
+        // Play ringback tone (caller hears this while waiting)
+        CallSounds.startRingback()
       }
 
       setView('voice')
-      if (partner) {
-        toast.info(`Ringing ${partner.displayName}...`)
-      } else {
-        toast.success(video ? 'Started video call' : 'Joined voice channel')
-      }
     } catch {
-      toast.error('Failed to start call')
+      toast.error('Could not start call')
     } finally {
       setCallPending(false)
     }

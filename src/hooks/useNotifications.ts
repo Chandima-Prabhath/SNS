@@ -56,18 +56,14 @@ export function useNotifications() {
         // Only show a toast if the user is NOT currently viewing this channel
         const isViewingThisChat = viewRef.current === 'chats' && activeChannelRef.current === channelId
         if (!isViewingThisChat) {
-          // Show toast
-          const isBot = senderType === 'bot'
-          toast(
-            isBot ? `🤖 ${senderName}` : senderName || 'New message',
-            {
-              description: body?.slice(0, 100) + (body?.length > 100 ? '...' : ''),
-              duration: 4000,
-            }
-          )
+          // Show toast — clean, no emoji prefix
+          toast(senderName || 'New message', {
+            description: body?.slice(0, 100) + (body?.length > 100 ? '...' : ''),
+            duration: 4000,
+          })
 
-          // Play notification sound (subtle, can be muted)
-          playNotificationSound()
+          // Play subtle message sound
+          import('@/lib/call-sounds').then(m => m.CallSounds.playMessage()).catch(() => {})
         }
       }
     }
@@ -77,35 +73,4 @@ export function useNotifications() {
       socket.off('notify', onNotify)
     }
   }, [socket, connected, qc])
-}
-
-/**
- * Subtle notification sound — a short sine-wave "blip" generated via Web Audio API.
- * No asset file needed; works offline; respects browser autoplay rules because
- * it's triggered by a user-gesture-adjacent socket event.
- */
-let audioCtx: AudioContext | null = null
-function playNotificationSound() {
-  try {
-    if (!audioCtx) {
-      const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext
-      if (!AudioContextClass) return
-      audioCtx = new AudioContextClass()
-    }
-    if (audioCtx.state === 'suspended') audioCtx.resume()
-
-    const osc = audioCtx.createOscillator()
-    const gain = audioCtx.createGain()
-    osc.connect(gain)
-    gain.connect(audioCtx.destination)
-    osc.frequency.setValueAtTime(880, audioCtx.currentTime) // A5
-    osc.frequency.exponentialRampToValueAtTime(660, audioCtx.currentTime + 0.08) // E5
-    gain.gain.setValueAtTime(0.0001, audioCtx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.06, audioCtx.currentTime + 0.01)
-    gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.18)
-    osc.start(audioCtx.currentTime)
-    osc.stop(audioCtx.currentTime + 0.2)
-  } catch (e) {
-    // Audio not available — silent fail
-  }
 }
