@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "bun run server.ts 2>&1 | tee dev.log",
-    "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/ && cp -r src .next/standalone/ && cp server.ts .next/standalone/ && cp package.json .next/standalone/ && cp -r prisma .next/standalone/ && cd .next/standalone && bunx prisma generate && cd ../..",
-    "start": "NODE_ENV=production bun .next/standalone/server.ts 2>&1 | tee server.log",
+    "build": "next build",
+    "start": "NODE_ENV=production bun run server.ts",
     "lint": "eslint .",
     "postinstall": "prisma generate",
     "db:push": "prisma db push --accept-data-loss",
