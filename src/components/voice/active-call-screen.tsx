@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useCall } from '@/hooks/useCall'
 import { useAppStore } from '@/stores/useAppStore'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Mic, MicOff, PhoneOff, Volume2, VolumeX, Users, Wifi, Cloud, Shield, Video, VideoOff, SwitchCamera } from 'lucide-react'
+import { Mic, MicOff, PhoneOff, Volume2, VolumeX, Users, Wifi, Cloud, Shield, Video, VideoOff, SwitchCamera, Monitor, MonitorOff } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -18,7 +18,7 @@ interface ActiveCallScreenProps {
 }
 
 export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall, onLeave }: ActiveCallScreenProps) {
-  const { status, localMuted, videoEnabled, localStream, participants, toggleMute, toggleVideo, switchCamera, endCall } = useCall()
+  const { status, localMuted, videoEnabled, localStream, participants, toggleMute, toggleVideo, switchCamera, startScreenShare, stopScreenShare, isScreenSharing, endCall } = useCall()
   const [callDuration, setCallDuration] = useState(0)
   const [connectionTypes, setConnectionTypes] = useState<Record<string, 'p2p' | 'turn' | 'unknown'>>({})
   const [audioLevels, setAudioLevels] = useState<Record<string, number>>({})
@@ -77,6 +77,14 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
 
   const handleSwitchCamera = async () => {
     if (!await switchCamera()) toast.error('Could not switch camera')
+  }
+
+  const handleScreenShare = async () => {
+    if (isScreenSharing) {
+      await stopScreenShare()
+    } else {
+      if (!await startScreenShare()) toast.error('Could not start screen share')
+    }
   }
 
   const connTypeValues = Object.values(connectionTypes)
@@ -142,6 +150,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
           <div className="flex items-center justify-center gap-3 max-w-md mx-auto bg-[#2b2d31]/80 backdrop-blur-xl rounded-2xl p-2.5">
             <VideoCallButton active={localMuted} onClick={toggleMute} icon={localMuted ? MicOff : Mic} label="Mute" variant={localMuted ? 'danger' : 'neutral'} />
             <VideoCallButton active={!videoEnabled} onClick={toggleVideo} icon={videoEnabled ? Video : VideoOff} label="Video" variant={!videoEnabled ? 'danger' : 'neutral'} />
+            <VideoCallButton active={isScreenSharing} onClick={handleScreenShare} icon={isScreenSharing ? MonitorOff : Monitor} label="Share" variant={isScreenSharing ? 'danger' : 'neutral'} />
             <VideoCallButton onClick={handleSwitchCamera} icon={SwitchCamera} label="Flip" variant="neutral" />
             <VideoCallButton active={speakerOn} onClick={handleSpeaker} icon={speakerOn ? Volume2 : VolumeX} label="Speaker" variant="neutral" />
             <VideoCallButton onClick={handleLeave} icon={PhoneOff} label={leaving ? '...' : 'End'} variant="end" large disabled={leaving} />

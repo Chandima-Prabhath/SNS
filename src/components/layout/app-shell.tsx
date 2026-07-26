@@ -13,6 +13,7 @@ import { FirefoxBanner } from '@/components/voice/firefox-banner'
 import { useAppStore } from '@/stores/useAppStore'
 import { useSocket } from '@/hooks/useSocket'
 import { useNotifications } from '@/hooks/useNotifications'
+import { usePermissionManager } from '@/hooks/usePermissionManager'
 import { Toaster } from '@/components/ui/sonner'
 import { Loader2 } from 'lucide-react'
 
@@ -22,6 +23,7 @@ export function AppShell() {
 
   useSocket()
   useNotifications()
+  usePermissionManager()
 
   if (status === 'loading') {
     return (

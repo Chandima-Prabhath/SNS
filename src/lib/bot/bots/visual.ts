@@ -5,7 +5,7 @@
  * and executes it using the executeBotFlow engine.
  */
 import type { BotModule, BotContext } from '../framework'
-import { executeBotFlow, type BotFlow } from './flow-types'
+import { executeBotFlow, type BotFlow } from '../flow-types'
 
 export const visualBot: BotModule = {
   name: 'visual',

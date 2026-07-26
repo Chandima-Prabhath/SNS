@@ -3,15 +3,12 @@
  *
  * Responsibilities:
  *   - Cache app shell for offline use
- *   - Handle push notifications (incoming calls, messages)
+ *   - Handle push notifications (incoming calls, messages) — works in background
  *   - Notification click → focus/open the app
- *
- * Note: Notification.action buttons (Answer/Decline) are NOT supported on
- * Chrome Android — they only work on desktop. On mobile, tapping the
- * notification opens the app, which shows the IncomingCallOverlay.
+ *   - Background sync (future)
  */
 
-const CACHE_NAME = 'adoo-v1'
+const CACHE_NAME = 'adoo-v2'
 const APP_SHELL = [
   '/',
   '/manifest.json',
@@ -26,7 +23,7 @@ self.addEventListener('install', (event) => {
   self.skipWaiting()
 })
 
-// Activate — clean old caches
+// Activate — clean old caches + claim clients
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -36,12 +33,12 @@ self.addEventListener('activate', (event) => {
   self.clients.claim()
 })
 
-// Fetch — network-first for navigations, cache-first for assets
+// Fetch — network-first for navigations, cache-first for static assets
 self.addEventListener('fetch', (event) => {
   const req = event.request
   if (req.method !== 'GET') return
 
-  // Navigations → network-first (always get fresh HTML)
+  // Navigations → network-first
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req)
@@ -56,13 +53,15 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Static assets → cache-first
-  if (req.url.includes('/_next/') || req.url.includes('/uploads/')) {
+  if (req.url.includes('/_next/') || req.url.includes('/uploads/') || req.url.includes('/rnnoise')) {
     event.respondWith(
       caches.match(req).then((cached) => {
         if (cached) return cached
         return fetch(req).then((res) => {
-          const copy = res.clone()
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy))
+          if (res.ok) {
+            const copy = res.clone()
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy))
+          }
           return res
         })
       })
@@ -71,7 +70,7 @@ self.addEventListener('fetch', (event) => {
   }
 })
 
-// Push — show notification
+// Push — background notifications (works even when app is closed)
 self.addEventListener('push', (event) => {
   let payload = {}
   try {
@@ -80,29 +79,41 @@ self.addEventListener('push', (event) => {
     payload = { title: 'Adoo', body: event.data?.text() || 'New notification' }
   }
 
-  const { type, title, body, callId, from } = payload
+  const { type, title, body, callId, from, channelId } = payload
 
-  let options = {
+  let options: NotificationOptions = {
     body: body || '',
     icon: '/icon.svg',
     badge: '/icon.svg',
-    tag: callId || type || 'adoo-notification',
+    tag: type || 'adoo-notification',
     renotify: true,
-    data: { callId, type, url: '/' },
+    data: { callId, type, channelId, url: '/' },
   }
 
-  // Call-style notification — high priority
+  // Call-style notification — high priority, stays until user interacts
   if (type === 'call') {
     options = {
       ...options,
       tag: `call-${callId}`,
-      requireInteraction: true, // stays until user interacts
+      requireInteraction: true,
       silent: false,
       vibrate: [200, 100, 200, 100, 200, 100, 200],
       actions: [
         { action: 'accept', title: 'Accept' },
         { action: 'decline', title: 'Decline' },
       ],
+      data: { callId, type, channelId, from, url: '/' },
+    }
+  }
+
+  // Message notification — auto-dismiss after 4s
+  if (type === 'message') {
+    options = {
+      ...options,
+      tag: `msg-${channelId}`,
+      requireInteraction: false,
+      silent: false,
+      vibrate: [100],
     }
   }
 
@@ -111,16 +122,12 @@ self.addEventListener('push', (event) => {
   )
 })
 
-// Notification click
+// Notification click — focus or open the app
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
 
   const { action, notification } = event
   const data = notification.data || {}
-
-  if (action === 'decline' && data.callId) {
-    // TODO: send decline via postMessage to the app
-  }
 
   // Focus or open the app
   event.waitUntil(
@@ -128,7 +135,8 @@ self.addEventListener('notificationclick', (event) => {
       // Focus existing tab
       for (const client of clients) {
         if ('focus' in client) {
-          client.postMessage({ type: 'notification_click', ...data, action })
+          // Send message to the app about the notification click
+          client.postMessage({ type: 'notification_click', action, ...data })
           return client.focus()
         }
       }
@@ -138,4 +146,13 @@ self.addEventListener('notificationclick', (event) => {
       }
     })
   )
+})
+
+// Message from the app (e.g., to close a call notification)
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'close-notification') {
+    self.registration.getNotifications({ tag: event.data.tag }).then((notifications) => {
+      notifications.forEach((n) => n.close())
+    })
+  }
 })

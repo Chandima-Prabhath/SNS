@@ -37,6 +37,16 @@ export function useCall() {
     return getCallManager().switchCamera()
   }, [])
 
+  const startScreenShare = useCallback(async () => {
+    return getCallManager().startScreenShare()
+  }, [])
+
+  const stopScreenShare = useCallback(async () => {
+    await getCallManager().stopScreenShare()
+  }, [])
+
+  const isScreenSharing = getCallManager().isScreenSharing()
+
   const endCall = useCallback(async () => {
     await getCallManager().endCall()
   }, [])
@@ -57,6 +67,9 @@ export function useCall() {
     toggleMute,
     toggleVideo,
     switchCamera,
+    startScreenShare,
+    stopScreenShare,
+    isScreenSharing,
     endCall,
     unlockAudio,
   }

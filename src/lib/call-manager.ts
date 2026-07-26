@@ -391,6 +391,87 @@ export class CallManager {
     }
   }
 
+  // Screen sharing state
+  private screenStream: MediaStream | null = null
+  private isSharingScreen = false
+  private originalVideoTrack: MediaStreamTrack | null = null
+
+  /**
+   * Start screen sharing — replaces the video track with the screen capture.
+   */
+  async startScreenShare(): Promise<boolean> {
+    try {
+      const videoTrack = this.localStream?.getVideoTracks()[0]
+      if (!videoTrack) return false
+
+      this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: { ideal: 15, max: 30 } },
+        audio: false,
+      })
+
+      const screenTrack = this.screenStream.getVideoTracks()[0]
+      this.originalVideoTrack = videoTrack
+
+      // Replace the track in all peer connections
+      for (const peer of this.peers.values()) {
+        if (peer.videoSender) {
+          await peer.videoSender.replaceTrack(screenTrack)
+        }
+      }
+
+      // Update the local stream
+      this.localStream!.removeTrack(videoTrack)
+      this.localStream!.addTrack(screenTrack)
+
+      // Listen for the user stopping screen share via browser UI
+      screenTrack.onended = () => {
+        this.stopScreenShare()
+      }
+
+      this.isSharingScreen = true
+      this.callbacks?.onVideoToggle(true) // trigger UI update
+      console.log('[call] screen share started')
+      return true
+    } catch (e) {
+      console.error('[call] screen share failed:', e)
+      return false
+    }
+  }
+
+  /**
+   * Stop screen sharing — restores the original camera track.
+   */
+  async stopScreenShare(): Promise<void> {
+    if (!this.isSharingScreen || !this.originalVideoTrack) return
+
+    const screenTrack = this.screenStream?.getVideoTracks()[0]
+    if (screenTrack) {
+      screenTrack.stop()
+    }
+
+    // Restore the original camera track
+    for (const peer of this.peers.values()) {
+      if (peer.videoSender) {
+        await peer.videoSender.replaceTrack(this.originalVideoTrack)
+      }
+    }
+
+    // Update the local stream
+    const currentTrack = this.localStream?.getVideoTracks()[0]
+    if (currentTrack) {
+      this.localStream!.removeTrack(currentTrack)
+    }
+    this.localStream!.addTrack(this.originalVideoTrack)
+
+    this.screenStream = null
+    this.isSharingScreen = false
+    this.originalVideoTrack = null
+    this.callbacks?.onVideoToggle(true) // trigger UI update
+    console.log('[call] screen share stopped')
+  }
+
+  isScreenSharing() { return this.isSharingScreen }
+
   /**
    * End the call — full cleanup.
    * Called when the user clicks End OR when the server says the call ended.
@@ -425,6 +506,14 @@ export class CallManager {
 
     // Stop any playing call sounds
     import('./call-sounds').then(m => m.CallSounds.stop()).catch(() => {})
+
+    // Stop screen share if active
+    if (this.screenStream) {
+      this.screenStream.getTracks().forEach((t) => t.stop())
+      this.screenStream = null
+      this.isSharingScreen = false
+      this.originalVideoTrack = null
+    }
 
     // Close all peer connections
     for (const [peerId, peer] of this.peers) {

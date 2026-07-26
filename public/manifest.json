@@ -1,16 +1,16 @@
 {
   "id": "/",
-  "name": "Adoo",
+  "name": "Adoo — Friends Social",
   "short_name": "Adoo",
-  "description": "A private social space for you and your friends.",
+  "description": "A private social space for you and your friends. Chat, call, and share moments together.",
   "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
-  "background_color": "#1a1b26",
+  "background_color": "#0b0b0f",
   "theme_color": "#5865F2",
-  "orientation": "portrait-primary",
-  "categories": ["social", "communication"],
+  "orientation": "any",
+  "categories": ["social", "communication", "productivity"],
   "lang": "en",
   "dir": "auto",
   "icons": [
@@ -23,18 +23,21 @@
   ],
   "shortcuts": [
     {
-      "name": "Chats",
+      "name": "Open Chats",
       "short_name": "Chats",
+      "description": "View your conversations",
       "url": "/?view=chats&source=shortcut"
     },
     {
-      "name": "Calls",
+      "name": "Make a Call",
       "short_name": "Calls",
+      "description": "View voice channels and call history",
       "url": "/?view=voice&source=shortcut"
     },
     {
-      "name": "Status",
+      "name": "View Status",
       "short_name": "Status",
+      "description": "Share and view ephemeral moments",
       "url": "/?view=status&source=shortcut"
     }
   ],
@@ -44,5 +47,6 @@
   "handle_links": "preferred",
   "edge_side_panel": {
     "preferred_width": 400
-  }
+  },
+  "prefer_related_applications": false
 }
