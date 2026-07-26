@@ -223,6 +223,8 @@ export class CallManager {
     } catch {}
 
     // Get audio + video in a SINGLE getUserMedia call
+    // Use simple constraints for maximum cross-browser compatibility.
+    // Firefox Android is picky about facingMode + resolution combinations.
     const constraints: MediaStreamConstraints = {
       audio: {
         echoCancellation: true,
@@ -231,7 +233,7 @@ export class CallManager {
         noiseSuppression: !this.enableRnnoise,
       } as MediaTrackConstraints,
       video: this.isVideoCall
-        ? { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24, max: 30 }, facingMode: 'user' }
+        ? { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 20 } }
         : false,
     }
 
@@ -367,8 +369,9 @@ export class CallManager {
       const currentFacing = settings.facingMode || 'user'
       const newFacing = currentFacing === 'user' ? 'environment' : 'user'
 
+      // Use facingMode without 'exact' for better cross-browser support
       const newStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24, max: 30 }, facingMode: { exact: newFacing } },
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 20 }, facingMode: newFacing },
         audio: false,
       })
 

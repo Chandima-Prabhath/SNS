@@ -52,8 +52,8 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // Static assets → cache-first
-  if (req.url.includes('/_next/') || req.url.includes('/uploads/') || req.url.includes('/rnnoise')) {
+  // Static assets → cache-first (but NOT uploads or API routes)
+  if (req.url.includes('/_next/') || req.url.includes('/rnnoise')) {
     event.respondWith(
       caches.match(req).then((cached) => {
         if (cached) return cached
@@ -68,6 +68,9 @@ self.addEventListener('fetch', (event) => {
     )
     return
   }
+
+  // Everything else (API routes, uploads, etc.) → always go to network
+  // Don't cache — these are dynamic
 })
 
 // Push — background notifications (works even when app is closed)
@@ -81,7 +84,7 @@ self.addEventListener('push', (event) => {
 
   const { type, title, body, callId, from, channelId } = payload
 
-  let options: NotificationOptions = {
+  let options = {
     body: body || '',
     icon: '/icon.svg',
     badge: '/icon.svg',

@@ -150,7 +150,10 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
           <div className="flex items-center justify-center gap-3 max-w-md mx-auto bg-[#2b2d31]/80 backdrop-blur-xl rounded-2xl p-2.5">
             <VideoCallButton active={localMuted} onClick={toggleMute} icon={localMuted ? MicOff : Mic} label="Mute" variant={localMuted ? 'danger' : 'neutral'} />
             <VideoCallButton active={!videoEnabled} onClick={toggleVideo} icon={videoEnabled ? Video : VideoOff} label="Video" variant={!videoEnabled ? 'danger' : 'neutral'} />
-            <VideoCallButton active={isScreenSharing} onClick={handleScreenShare} icon={isScreenSharing ? MonitorOff : Monitor} label="Share" variant={isScreenSharing ? 'danger' : 'neutral'} />
+            {/* Screen share — desktop only (getDisplayMedia not available on mobile) */}
+            {typeof navigator !== 'undefined' && navigator.mediaDevices && 'getDisplayMedia' in navigator.mediaDevices && (
+              <VideoCallButton active={isScreenSharing} onClick={handleScreenShare} icon={isScreenSharing ? MonitorOff : Monitor} label="Share" variant={isScreenSharing ? 'danger' : 'neutral'} />
+            )}
             <VideoCallButton onClick={handleSwitchCamera} icon={SwitchCamera} label="Flip" variant="neutral" />
             <VideoCallButton active={speakerOn} onClick={handleSpeaker} icon={speakerOn ? Volume2 : VolumeX} label="Speaker" variant="neutral" />
             <VideoCallButton onClick={handleLeave} icon={PhoneOff} label={leaving ? '...' : 'End'} variant="end" large disabled={leaving} />
