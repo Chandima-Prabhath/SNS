@@ -1,28 +1,48 @@
 {
-  "background_color": "#ffffff",
-  "description": "A private social space for you and your friends.",
-  "dir": "ltr",
-  "display": "standalone",
+  "id": "/",
   "name": "Adoo",
-  "orientation": "portrait",
-  "scope": "/",
   "short_name": "Adoo",
-  "start_url": "/",
-  "theme_color": "#11cd68",
+  "description": "A private social space for you and your friends.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "background_color": "#1a1b26",
+  "theme_color": "#5865F2",
+  "orientation": "portrait-primary",
+  "categories": ["social", "communication"],
+  "lang": "en",
+  "dir": "auto",
   "icons": [
     {
-      "src": "https://sns.cloud.1911915.xyz/icon.svg?icon.8cebd935.svg",
-      "type": "image/svg+xml",
+      "src": "/icon.svg",
       "sizes": "any",
-      "isSquare": false,
-      "isPng": false,
-      "isWebp": false,
-      "isJpg": false,
-      "width": 0,
-      "is512x512": false,
-      "is256x256": false,
-      "is192x192": false
+      "type": "image/svg+xml",
+      "purpose": "any"
     }
   ],
-  "id": "1911915"
+  "shortcuts": [
+    {
+      "name": "Chats",
+      "short_name": "Chats",
+      "url": "/?view=chats&source=shortcut"
+    },
+    {
+      "name": "Calls",
+      "short_name": "Calls",
+      "url": "/?view=voice&source=shortcut"
+    },
+    {
+      "name": "Status",
+      "short_name": "Status",
+      "url": "/?view=status&source=shortcut"
+    }
+  ],
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
+  "handle_links": "preferred",
+  "edge_side_panel": {
+    "preferred_width": 400
+  }
 }

@@ -20,7 +20,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
-import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles } from 'lucide-react'
+import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
@@ -145,6 +145,7 @@ export function ChatList() {
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold tracking-tight">Chats</h1>
           <div className="flex gap-1">
+            <JoinGroupButton />
             <NewDmButton />
             <CreateGroupButton />
           </div>
@@ -362,6 +363,62 @@ function EmptyChatList({ hasUsers }: { hasUsers: boolean }) {
         </div>
       )}
     </div>
+  )
+}
+
+function JoinGroupButton() {
+  const [open, setOpen] = useState(false)
+  const [code, setCode] = useState('')
+  const qc = useQueryClient()
+
+  const join = useMutation({
+    mutationFn: async () => {
+      const res = await fetch('/api/groups', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inviteCode: code.trim() }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || 'Invalid invite code')
+      }
+      return res.json()
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['channels'] })
+      toast.success('Joined group')
+      setOpen(false)
+      setCode('')
+    },
+    onError: (e: any) => toast.error(e.message),
+  })
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-9 w-9" title="Join group">
+          <LogIn className="w-5 h-5" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Join a group</DialogTitle>
+          <DialogDescription>Enter the invite code your friend shared with you.</DialogDescription>
+        </DialogHeader>
+        <Input
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder="Paste invite code..."
+          autoCapitalize="none"
+        />
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={() => join.mutate()} disabled={!code.trim() || join.isPending}>
+            {join.isPending ? 'Joining...' : 'Join'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

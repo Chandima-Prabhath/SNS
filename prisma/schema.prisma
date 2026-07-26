@@ -189,6 +189,10 @@ model Bot {
   // identifier of the bot module implemented in src/lib/bot/bots/*
   module        String   @default("echo")
 
+  // Visual bot builder flow (JSON: { nodes: [], edges: [] })
+  // When module is "visual", the execution engine interprets this flow
+  flow          String?
+
   // how the bot is invoked
   enabled       Boolean  @default(true)
   privacyMode   Boolean  @default(true) // only respond to /commands and direct mentions
