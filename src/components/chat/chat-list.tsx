@@ -345,16 +345,22 @@ function DiscoverPeople({ users, existingDmPartnerIds }: { users: any[]; existin
 
 function EmptyChatList({ hasUsers }: { hasUsers: boolean }) {
   return (
-    <div className="text-center py-16 px-4">
-      <div className="w-16 h-16 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
-        <MessageCircle className="w-7 h-7 text-primary" />
+    <div className="text-center py-20 px-6">
+      <div className="w-20 h-20 mx-auto rounded-3xl bg-primary/10 flex items-center justify-center mb-4 ring-1 ring-primary/15">
+        <MessageCircle className="w-9 h-9 text-primary" strokeWidth={1.5} />
       </div>
-      <h3 className="font-medium text-base">No chats yet</h3>
-      <p className="text-sm text-muted-foreground mt-1 max-w-xs mx-auto">
+      <h3 className="font-semibold text-lg">Welcome to Adoo</h3>
+      <p className="text-sm text-muted-foreground mt-1.5 max-w-xs mx-auto leading-relaxed">
         {hasUsers
-          ? 'Tap "Discover people" below to start a DM with someone, or use the + button to create a group.'
-          : 'Invite your friends to join! Share your invite code so they can sign up.'}
+          ? 'No conversations yet. Tap someone below to start chatting, or create a group with the + button.'
+          : 'You\'re the first one here! Invite your friends — tap the + button and share the invite code.'}
       </p>
+      {!hasUsers && (
+        <div className="mt-4 inline-flex items-center gap-2 text-xs text-primary bg-primary/10 px-3 py-1.5 rounded-full">
+          <MessageCircle className="w-3.5 h-3.5" />
+          Share invite code from any channel
+        </div>
+      )}
     </div>
   )
 }

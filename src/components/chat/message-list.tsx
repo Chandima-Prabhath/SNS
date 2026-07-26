@@ -69,12 +69,12 @@ export function MessageList({ channelId }: MessageListProps) {
           {isLoading && <LoadingState />}
 
           {!isLoading && messages.length === 0 && (
-            <div className="text-center py-16 px-4">
-              <div className="w-14 h-14 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
-                <Reply className="w-6 h-6 text-primary" />
+            <div className="text-center py-20 px-4">
+              <div className="w-16 h-16 mx-auto rounded-3xl bg-primary/10 flex items-center justify-center mb-3 ring-1 ring-primary/15">
+                <Reply className="w-7 h-7 text-primary" strokeWidth={1.5} />
               </div>
-              <p className="text-base font-medium">No messages yet</p>
-              <p className="text-sm text-muted-foreground mt-1">Say hello 👋</p>
+              <p className="text-base font-semibold">No messages yet</p>
+              <p className="text-sm text-muted-foreground mt-1">Be the first to say hello</p>
             </div>
           )}
 

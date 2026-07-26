@@ -59,12 +59,12 @@ export function ChatView() {
         ) : (
           <div className="hidden lg:flex flex-1 items-center justify-center bg-background">
             <div className="text-center max-w-sm px-6">
-              <div className="w-20 h-20 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
-                <MessageCircle className="w-9 h-9 text-primary" />
+              <div className="w-24 h-24 mx-auto rounded-3xl bg-primary/10 flex items-center justify-center mb-5 ring-1 ring-primary/15">
+                <MessageCircle className="w-11 h-11 text-primary" strokeWidth={1.5} />
               </div>
-              <h2 className="text-xl font-semibold mb-1">Your messages</h2>
-              <p className="text-sm text-muted-foreground">
-                Pick a chat from the list, or start a new DM with the + button.
+              <h2 className="text-xl font-semibold mb-1.5">Your messages</h2>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Select a conversation from the list, or start a new one by tapping the + button.
               </p>
             </div>
           </div>

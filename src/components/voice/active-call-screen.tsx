@@ -65,28 +65,18 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
   const handleLeave = async () => {
     if (leaving) return
     setLeaving(true)
-    try {
-      await endCall()
-    } catch (e) {
-      console.error('[call] error leaving:', e)
-    } finally {
-      setLeaving(false)
-      onLeave()
-    }
+    try { await endCall() } catch (e) { console.error('[call] error leaving:', e) }
+    finally { setLeaving(false); onLeave() }
   }
 
   const handleSpeaker = async () => {
     const newSpeakerOn = !speakerOn
     setSpeakerOn(newSpeakerOn)
-    const audioEls = document.querySelectorAll('audio')
-    for (const el of audioEls) {
-      (el as HTMLAudioElement).volume = newSpeakerOn ? 1.0 : 0.0
-    }
+    document.querySelectorAll('audio').forEach(el => { (el as HTMLAudioElement).volume = newSpeakerOn ? 1.0 : 0.0 })
   }
 
   const handleSwitchCamera = async () => {
-    const success = await switchCamera()
-    if (!success) toast.error('Could not switch camera')
+    if (!await switchCamera()) toast.error('Could not switch camera')
   }
 
   const connTypeValues = Object.values(connectionTypes)
@@ -100,25 +90,26 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
   const totalParticipants = participantList.length + 1
   const activeSpeaker = participantList.find((p) => (audioLevels[p.peerId] || 0) > 0.1)
 
+  // ─── Video call layout ───
   if (isVideoCall) {
     return (
       <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         className="fixed inset-0 z-50 bg-black flex flex-col"
       >
+        {/* Top bar */}
         <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between text-white/80 text-sm p-4 pt-safe bg-gradient-to-b from-black/60 to-transparent">
           <div className="flex items-center gap-2">
             <ConnectionTypeBadge type={overallType} />
             {isGroup && <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" />{totalParticipants}</span>}
           </div>
-          <span className="text-white/60 text-xs">
+          <span className="text-white/60 text-xs font-mono">
             {status === 'connected' ? formatDuration(callDuration) : status}
           </span>
         </div>
 
-        <div className="flex-1 relative">
+        {/* Remote video — fills the screen, object-contain prevents cropping */}
+        <div className="flex-1 min-h-0 relative bg-black flex items-center justify-center">
           {participantList.length > 0 ? (
             <RemoteVideoGrid participants={participantList} />
           ) : (
@@ -135,18 +126,18 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
           )}
         </div>
 
+        {/* Local video PiP — top right, selfie-cropped */}
         {videoEnabled && (
-          <div className="absolute top-16 right-4 w-32 h-48 md:w-40 md:h-56 rounded-2xl overflow-hidden border-2 border-white/20 bg-zinc-900 shadow-xl z-10">
+          <div className="absolute top-16 right-4 w-28 h-40 md:w-36 md:h-52 rounded-2xl overflow-hidden border-2 border-white/20 bg-zinc-900 shadow-2xl z-10">
             <video
               ref={localVideoRef}
-              autoPlay
-              playsInline
-              muted
+              autoPlay playsInline muted
               className="w-full h-full object-cover scale-x-[-1]"
             />
           </div>
         )}
 
+        {/* Bottom controls */}
         <div className="absolute bottom-0 left-0 right-0 z-10 p-6 pb-safe bg-gradient-to-t from-black/80 to-transparent">
           <div className="flex items-center justify-center gap-4 max-w-md mx-auto">
             <VideoCallButton active={localMuted} onClick={toggleMute} icon={localMuted ? MicOff : Mic} label="Mute" variant={localMuted ? 'danger' : 'neutral'} />
@@ -160,13 +151,13 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
     )
   }
 
+  // ─── Voice call layout ───
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black flex flex-col items-center justify-between p-6 pt-safe pb-safe"
     >
+      {/* Top */}
       <div className="w-full flex items-center justify-between text-white/60 text-sm pt-4">
         <div className="flex items-center gap-2">
           <ConnectionTypeBadge type={overallType} />
@@ -179,6 +170,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
         )}
       </div>
 
+      {/* Center: avatar + name + timer */}
       <div className="flex flex-col items-center gap-4">
         <div className="relative">
           {(status === 'connecting' || activeSpeaker) && (
@@ -197,7 +189,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
 
         <div className="text-center">
           <h1 className="text-2xl font-semibold text-white">{callName}</h1>
-          <p className="text-white/60 text-sm mt-1">
+          <p className="text-white/60 text-sm mt-1 font-mono">
             {status === 'connected' ? formatDuration(callDuration) : status}
           </p>
         </div>
@@ -225,6 +217,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
         )}
       </div>
 
+      {/* Controls */}
       <div className="w-full max-w-sm mx-auto pb-6">
         <div className="flex items-center justify-center gap-6">
           <CallButton active={localMuted} onClick={toggleMute} icon={localMuted ? MicOff : Mic} label={localMuted ? 'Unmute' : 'Mute'} variant={localMuted ? 'danger' : 'neutral'} />
@@ -236,6 +229,11 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
   )
 }
 
+/**
+ * Remote video grid — fills the screen with remote participant videos.
+ * Uses object-contain to prevent cropping on desktop.
+ * Videos are centered with max dimensions to fit any aspect ratio.
+ */
 function RemoteVideoGrid({ participants }: { participants: any[] }) {
   const videoRefs = useRef<Map<string, HTMLVideoElement>>(new Map())
 
@@ -252,29 +250,27 @@ function RemoteVideoGrid({ participants }: { participants: any[] }) {
   if (participants.length === 1) {
     const p = participants[0]
     return (
-      <div className="w-full h-full flex items-center justify-center bg-black">
-        <video
-          key={p.peerId}
-          ref={(el) => { if (el) videoRefs.current.set(p.peerId, el) }}
-          autoPlay
-          playsInline
-          className="w-full h-full object-contain"
-        />
-      </div>
+      <video
+        key={p.peerId}
+        ref={(el) => { if (el) videoRefs.current.set(p.peerId, el) }}
+        autoPlay
+        playsInline
+        className="max-w-full max-h-full w-full h-full object-contain"
+      />
     )
   }
 
   return (
-    <div className={cn('grid h-full', participants.length === 2 ? 'grid-rows-2' : 'grid-cols-2 grid-rows-2')}>
+    <div className={cn('w-full h-full grid', participants.length === 2 ? 'grid-rows-2' : 'grid-cols-2 grid-rows-2')}>
       {participants.slice(0, 4).map((p) => (
-        <div key={p.peerId} className="relative bg-zinc-900 flex items-center justify-center">
+        <div key={p.peerId} className="relative bg-zinc-900 flex items-center justify-center overflow-hidden">
           <video
             ref={(el) => { if (el) videoRefs.current.set(p.peerId, el) }}
             autoPlay
             playsInline
-            className="w-full h-full object-contain"
+            className="max-w-full max-h-full w-full h-full object-contain"
           />
-          <div className="absolute bottom-2 left-2 text-white text-xs font-medium bg-black/50 px-2 py-1 rounded">
+          <div className="absolute bottom-2 left-2 text-white text-xs font-medium bg-black/60 px-2 py-1 rounded-md backdrop-blur-sm">
             {p.username}
           </div>
         </div>

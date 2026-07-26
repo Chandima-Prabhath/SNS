@@ -111,10 +111,13 @@ export function VoiceView() {
             Voice Channels
           </h2>
           {voiceChannels.length === 0 ? (
-            <Card className="p-8 text-center border-dashed">
-              <Volume2 className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
-              <p className="text-sm text-muted-foreground">
-                No voice channels yet. Ask an admin to create one in a group.
+            <Card className="p-10 text-center border-dashed">
+              <div className="w-16 h-16 mx-auto rounded-3xl bg-primary/10 flex items-center justify-center mb-3 ring-1 ring-primary/15">
+                <Volume2 className="w-8 h-8 text-primary" strokeWidth={1.5} />
+              </div>
+              <p className="font-medium text-base">No voice channels</p>
+              <p className="text-sm text-muted-foreground mt-1 max-w-xs mx-auto">
+                Go to Settings → Admin to create a voice channel in your group.
               </p>
             </Card>
           ) : (

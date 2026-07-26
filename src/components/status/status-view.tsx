@@ -73,9 +73,14 @@ export function StatusView() {
               ))}
             </div>
           ) : otherStories.length === 0 ? (
-            <Card className="p-8 text-center border-dashed">
-              <Camera className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
-              <p className="text-sm text-muted-foreground">No updates from friends right now.</p>
+            <Card className="p-10 text-center border-dashed">
+              <div className="w-16 h-16 mx-auto rounded-3xl bg-primary/10 flex items-center justify-center mb-3 ring-1 ring-primary/15">
+                <Camera className="w-8 h-8 text-primary" strokeWidth={1.5} />
+              </div>
+              <p className="font-medium text-base">No updates yet</p>
+              <p className="text-sm text-muted-foreground mt-1 max-w-xs mx-auto">
+                When your friends post a status, it'll show up here.
+              </p>
             </Card>
           ) : (
             <div className="space-y-1">
