@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SNS — Friends Social",
+  title: "Adoo — Friends Social",
   description: "A private social space for you and your friends.",
 };
 
