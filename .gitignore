@@ -66,3 +66,4 @@ server.log
 
 # Realtime service logs (generated at runtime)
 *.realtime.log
+prisma/db/custom.db
