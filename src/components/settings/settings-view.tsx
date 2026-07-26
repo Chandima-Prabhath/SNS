@@ -60,7 +60,7 @@ export function SettingsView() {
 
   return (
     <div className="h-full overflow-hidden bg-background flex flex-col">
-      <div className="max-w-4xl w-full mx-auto p-4 md:p-6 flex-1 flex flex-col min-h-0">
+      <div className="max-w-4xl w-full mx-auto p-4 md:p-6 flex-1 flex flex-col min-h-0 lg:pb-0 pb-20">
         <h1 className="text-2xl font-semibold tracking-tight mb-4 shrink-0">Settings</h1>
 
         {/* Section tabs — clean pill buttons */}

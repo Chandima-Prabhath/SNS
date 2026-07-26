@@ -596,6 +596,9 @@ export class CallManager {
           this.capSenderBitrate(sender, 1_000_000)
         }
       }
+      // Prefer VP8 video codec — Firefox Android doesn't support H.264 reliably.
+      // Must be called AFTER tracks are added (transceivers are created by addTrack).
+      this.preferVp8(pc)
     }
 
     pc.ontrack = (event) => {
@@ -661,6 +664,29 @@ export class CallManager {
           }, 2000)
         }
       }
+    }
+  }
+
+  /**
+   * Prefer VP8 video codec for cross-browser compatibility.
+   * Firefox Android doesn't support H.264 reliably — VP8 is the only
+   * universally supported WebRTC video codec (RFC 7742).
+   */
+  private preferVp8(pc: RTCPeerConnection) {
+    try {
+      const transceivers = pc.getTransceivers()
+      for (const t of transceivers) {
+        if (t.receiver && 'track' in t.receiver && t.receiver.track?.kind === 'video') {
+          const codecs = RTCRtpReceiver.getCapabilities('video')?.codecs || []
+          const vp8 = codecs.filter((c) => c.mimeType === 'video/VP8')
+          const rest = codecs.filter((c) => c.mimeType !== 'video/VP8' && c.mimeType !== 'video/rtx' && c.mimeType !== 'video/red' && c.mimeType !== 'video/ulpfec')
+          if (vp8.length > 0) {
+            t.setCodecPreferences([...vp8, ...rest])
+          }
+        }
+      }
+    } catch {
+      // setCodecPreferences not supported on older browsers — ignore
     }
   }
 

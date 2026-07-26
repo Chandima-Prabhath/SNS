@@ -125,6 +125,11 @@ export async function dispatchBotUpdate(params: {
     config = {}
   }
 
+  // Pass the flow to visual bots
+  if (bot.module === 'visual' && bot.flow) {
+    config._flow = bot.flow
+  }
+
   // Helper: post a message as the bot
   const reply = async (text: string, keyboard?: BotKeyboard) => {
     await db.message.create({

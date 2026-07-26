@@ -155,18 +155,24 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 bg-[#1e1f22] flex flex-col items-center justify-between p-6 pt-safe pb-safe"
+      className="fixed inset-0 z-50 bg-[#0b0b0f] flex flex-col"
     >
+      {/* Subtle gradient backdrop */}
+      <div className="absolute inset-0 opacity-30" style={{
+        background: 'radial-gradient(50% 50% at 50% 30%, oklch(0.55 0.18 264 / 0.12), transparent 70%)'
+      }} />
+
       {/* Top bar */}
-      <div className="w-full flex items-center justify-between text-white/50 text-sm pt-4">
-        <div className="flex items-center gap-2">
+      <div className="relative w-full flex items-center justify-between px-6 pt-8 pt-safe">
+        <div className="flex items-center gap-2 text-white/40 text-xs">
           <ConnectionTypeBadge type={overallType} />
           {isGroup && <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" />{totalParticipants}</span>}
         </div>
         {status === 'connecting' && (
-          <motion.span animate={{ opacity: [1, 0.4, 1] }} transition={{ duration: 1.5, repeat: Infinity }} className="text-xs text-primary">
-            Connecting...
-          </motion.span>
+          <div className="flex items-center gap-2 text-white/50 text-xs">
+            <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+            Connecting
+          </div>
         )}
         {status === 'disconnected' && (
           <span className="text-xs text-yellow-400">Reconnecting...</span>
@@ -174,29 +180,45 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
       </div>
 
       {/* Center: avatar + name + timer */}
-      <div className="flex flex-col items-center gap-5">
+      <div className="relative flex-1 flex flex-col items-center justify-center gap-6">
         <div className="relative">
-          {(status === 'connecting' || activeSpeaker) && (
+          {/* Pulsing rings */}
+          {status === 'connected' && (
+            <motion.div
+              className="absolute inset-0 rounded-full"
+              style={{ boxShadow: '0 0 60px oklch(0.55 0.18 264 / 0.3)' }}
+              animate={{ scale: [1, 1.05, 1] }}
+              transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+            />
+          )}
+          {status === 'connecting' && (
             <>
-              <motion.div className="absolute inset-0 rounded-full bg-primary/20" animate={{ scale: [1, 1.4, 1.4], opacity: [0.6, 0, 0] }} transition={{ duration: 2, repeat: Infinity, ease: 'easeOut' }} />
-              <motion.div className="absolute inset-0 rounded-full bg-primary/10" animate={{ scale: [1, 1.3, 1.3], opacity: [0.5, 0, 0] }} transition={{ duration: 2, repeat: Infinity, ease: 'easeOut', delay: 0.5 }} />
+              <motion.div className="absolute inset-0 rounded-full border-2 border-primary/30" animate={{ scale: [1, 1.5], opacity: [0.6, 0] }} transition={{ duration: 1.5, repeat: Infinity, ease: 'easeOut' }} />
+              <motion.div className="absolute inset-0 rounded-full border-2 border-primary/20" animate={{ scale: [1, 1.5], opacity: [0.4, 0] }} transition={{ duration: 1.5, repeat: Infinity, ease: 'easeOut', delay: 0.5 }} />
             </>
           )}
-          <Avatar className="w-32 h-32 relative border-4 border-white/5">
+          <Avatar className="w-36 h-36 relative">
             <AvatarImage src={callAvatarUrl} />
-            <AvatarFallback className="text-5xl bg-[#2b2d31] text-white/80">
+            <AvatarFallback className="text-5xl bg-gradient-to-br from-primary/30 to-primary/5 text-white border border-white/5">
               {callName.charAt(0).toUpperCase()}
             </AvatarFallback>
           </Avatar>
+          {/* Active speaker indicator */}
+          {status === 'connected' && activeSpeaker && (
+            <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-green-500 border-2 border-[#0b0b0f] flex items-center justify-center">
+              <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+            </div>
+          )}
         </div>
 
         <div className="text-center">
-          <h1 className="text-xl font-semibold text-white">{callName}</h1>
-          <p className="text-white/40 text-sm mt-1 font-mono">
-            {status === 'connected' ? formatDuration(callDuration) : status}
+          <h1 className="text-2xl font-semibold text-white tracking-tight">{callName}</h1>
+          <p className="text-white/30 text-sm mt-1.5 font-mono tabular-nums">
+            {status === 'connected' ? formatDuration(callDuration) : ''}
           </p>
         </div>
 
+        {/* Group participants */}
         {isGroup && participantList.length > 0 && (
           <div className="flex gap-2 mt-2">
             {participantList.slice(0, 6).map((p) => {
@@ -205,11 +227,11 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
               return (
                 <div
                   key={p.peerId}
-                  className={cn('relative rounded-full transition-all', isActive && 'ring-2 ring-green-400 ring-offset-2 ring-offset-zinc-950')}
-                  style={{ transform: isActive ? `scale(${1 + level * 0.2})` : 'scale(1)' }}
+                  className={cn('relative rounded-full transition-all', isActive && 'ring-2 ring-green-400')}
+                  style={{ transform: isActive ? `scale(${1 + level * 0.15})` : 'scale(1)' }}
                 >
-                  <Avatar className="w-10 h-10">
-                    <AvatarFallback className="text-sm bg-white/10 text-white">
+                  <Avatar className="w-10 h-10 border-2 border-white/5">
+                    <AvatarFallback className="text-sm bg-white/5 text-white/70">
                       {p.username.charAt(0).toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
@@ -220,12 +242,14 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
         )}
       </div>
 
-      {/* Controls — Discord-style pill */}
-      <div className="w-full max-w-sm mx-auto pb-6">
-        <div className="flex items-center justify-center gap-4 bg-[#2b2d31] rounded-2xl p-3">
-          <CallButton active={localMuted} onClick={toggleMute} icon={localMuted ? MicOff : Mic} label={localMuted ? 'Unmute' : 'Mute'} variant={localMuted ? 'danger' : 'neutral'} />
-          <CallButton onClick={handleLeave} icon={PhoneOff} label={leaving ? 'Ending...' : 'End'} variant="end" large disabled={leaving} />
-          <CallButton active={speakerOn} onClick={handleSpeaker} icon={speakerOn ? Volume2 : VolumeX} label="Speaker" variant="neutral" />
+      {/* Bottom controls — floating glass pill */}
+      <div className="relative px-6 pb-10 pb-safe">
+        <div className="max-w-sm mx-auto">
+          <div className="flex items-center justify-center gap-3 bg-white/5 backdrop-blur-2xl rounded-[28px] p-3 border border-white/5 shadow-2xl">
+            <CallButton active={localMuted} onClick={toggleMute} icon={localMuted ? MicOff : Mic} label="" variant={localMuted ? 'danger' : 'neutral'} />
+            <CallButton onClick={handleLeave} icon={PhoneOff} label="" variant="end" large disabled={leaving} />
+            <CallButton active={speakerOn} onClick={handleSpeaker} icon={speakerOn ? Volume2 : VolumeX} label="" variant="neutral" />
+          </div>
         </div>
       </div>
     </motion.div>
@@ -308,17 +332,14 @@ function CallButton({ active, onClick, icon: Icon, label, variant, large, disabl
   const size = large ? 'w-16 h-16' : 'w-14 h-14'
   const iconSize = large ? 'w-7 h-7' : 'w-6 h-6'
   const styles = {
-    neutral: active ? 'bg-white text-zinc-900' : 'bg-white/10 text-white hover:bg-white/20',
+    neutral: active ? 'bg-white text-black' : 'bg-white/10 text-white hover:bg-white/15',
     danger: 'bg-red-500 text-white hover:bg-red-600',
     end: 'bg-red-500 text-white hover:bg-red-600',
   }[variant]
   return (
-    <div className="flex flex-col items-center gap-1.5">
-      <button onClick={onClick} disabled={disabled} className={cn('rounded-full flex items-center justify-center transition-all active:scale-95 disabled:opacity-50', size, styles)}>
-        <Icon className={iconSize} />
-      </button>
-      <span className="text-xs text-white/60">{label}</span>
-    </div>
+    <button onClick={onClick} disabled={disabled} className={cn('rounded-full flex items-center justify-center transition-all active:scale-90 disabled:opacity-50', size, styles)}>
+      <Icon className={iconSize} />
+    </button>
   )
 }
 

@@ -14,12 +14,14 @@ import { echoBot } from './bots/echo'
 import { helpBot } from './bots/help'
 import { pollBot } from './bots/poll'
 import { reminderBot } from './bots/remind'
+import { visualBot } from './bots/visual'
 
 // Register all bundled bots. Order matters only for /help display.
 registerBotModule(echoBot)
 registerBotModule(helpBot)
 registerBotModule(pollBot)
 registerBotModule(reminderBot)
+registerBotModule(visualBot)
 
 export { dispatchBotUpdate, listBotModules, getBotModule } from './framework'
 export type { BotModule, BotContext, BotCommand } from './framework'
