@@ -301,11 +301,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       dmGroupId?: string
       video?: boolean
     }) => {
-      // Find all sockets owned by targetUserId
-      const targetPresence = presence.get(payload.targetUserId)
-
-      // Always send a push notification (works even if user is offline or backgrounded)
-      // This is the KEY mechanism for waking up a backgrounded app.
+      // Send push notification immediately (works even if app is closed)
       import('./push').then(m => {
         m.sendPushNotification(payload.targetUserId, {
           type: 'call',
@@ -317,25 +313,56 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
         })
       }).catch(() => {})
 
-      if (!targetPresence) {
-        // Target appears offline (no active sockets).
-        // DON'T reject immediately — the push notification will wake their app.
-        // If they have no push subscription either, the call will time out
-        // naturally after 30 seconds (caller can cancel).
-        // Give them 30 seconds to respond to the push notification.
-        console.log(`[call] target ${payload.targetUserId} appears offline — sent push, waiting 30s`)
-        return
+      // RETRY: keep sending call:incoming every 5 seconds for up to 1 minute.
+      // This handles the case where the app is closed — the push notification
+      // wakes it, the socket reconnects, and the next retry delivers the event.
+      const incomingPayload = {
+        callId: payload.callId,
+        from: payload.from,
+        channelId: payload.channelId,
+        dmGroupId: payload.dmGroupId,
+        video: payload.video ?? false,
       }
-      // Target has active sockets — send the incoming call event
-      for (const sid of targetPresence.socketIds) {
-        io.to(sid).emit('call:incoming', {
-          callId: payload.callId,
-          from: payload.from,
-          channelId: payload.channelId,
-          dmGroupId: payload.dmGroupId,
-          video: payload.video ?? false,
-        })
+
+      // Send immediately
+      const sendIncoming = () => {
+        const target = presence.get(payload.targetUserId)
+        if (target) {
+          for (const sid of target.socketIds) {
+            io.to(sid).emit('call:incoming', incomingPayload)
+          }
+        }
       }
+      sendIncoming()
+
+      // Retry every 5s for 60s (12 attempts)
+      let attempts = 0
+      const retryInterval = setInterval(() => {
+        attempts++
+        if (attempts >= 12) {
+          clearInterval(retryInterval)
+          return
+        }
+        // Check if the call is still active
+        // (the caller might have cancelled)
+        const target = presence.get(payload.targetUserId)
+        if (target) {
+          // Check if any socket has acknowledged by joining the call room
+          const callRoom = io.sockets.adapter.rooms.get(`call:${payload.callId}`)
+          if (callRoom && callRoom.size > 0) {
+            // Someone joined the call — stop retrying
+            clearInterval(retryInterval)
+            return
+          }
+          sendIncoming()
+          console.log(`[call] retry ${attempts}/12 sending call:incoming to ${payload.targetUserId}`)
+        }
+      }, 5000)
+
+      // Clean up interval when caller disconnects
+      socket.on('disconnect', () => {
+        clearInterval(retryInterval)
+      })
     })
 
     socket.on('call:accept', (payload: { callId: string; byUserId: string }) => {

@@ -40,16 +40,17 @@ export function StatusView() {
           <p className="text-sm text-muted-foreground">Share moments that disappear in 24h</p>
         </div>
 
-        {/* My status */}
+        {/* My status — always show upload option + existing statuses */}
         <section>
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">
             My Status
           </h2>
-          {myStories && myStories.stories.length > 0 ? (
-            <MyStatusCard stories={myStories} onDelete={remove} />
-          ) : (
+          <div className="space-y-3">
             <UploadStoryCard />
-          )}
+            {myStories && myStories.stories.length > 0 && (
+              <MyStatusCard stories={myStories} onDelete={remove} />
+            )}
+          </div>
         </section>
 
         {/* Recent updates */}
