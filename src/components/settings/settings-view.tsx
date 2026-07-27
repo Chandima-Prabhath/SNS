@@ -33,6 +33,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { generateAvatarCandidates } from '@/lib/avatar'
+import { BotBuilderEditor } from '@/components/bots/bot-builder-editor'
 import {
   Select,
   SelectContent,
@@ -348,33 +349,63 @@ function PrivacyRow({ title, desc, checked, onChange }: { title: string; desc: s
 // ─── Bots ─────────────────────────────────────────────────────────────────
 
 function BotsSection() {
+  const [editingBotId, setEditingBotId] = useState<string | null>(null)
+  const [editingBotFlow, setEditingBotFlow] = useState<any>(null)
+
+  if (editingBotId) {
+    return (
+      <div className="h-[calc(100vh-200px)]">
+        <BotBuilderEditor
+          initialFlow={editingBotFlow}
+          onSave={(flow) => {
+            // Save the flow to the bot
+            fetch(`/api/bots/${editingBotId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ flow }),
+            }).then(() => {
+              toast.success('Bot flow saved')
+              setEditingBotId(null)
+            }).catch(() => toast.error('Failed to save flow'))
+          }}
+        />
+        <div className="flex justify-center p-2">
+          <Button variant="ghost" onClick={() => setEditingBotId(null)}>← Back to bots</Button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
-      <BotsList />
+      <BotsList onEditBot={(bot) => {
+        setEditingBotId(bot.id)
+        try {
+          setEditingBotFlow(bot.flow ? JSON.parse(bot.flow) : undefined)
+        } catch {
+          setEditingBotFlow(undefined)
+        }
+      }} />
       <BotModules />
     </div>
   )
 }
 
-function BotsList() {
+function BotsList({ onEditBot }: { onEditBot: (bot: any) => void }) {
   const { bots, isLoading, create, update, remove } = useBots()
   const [createOpen, setCreateOpen] = useState(false)
   const [name, setName] = useState('')
   const [username, setUsername] = useState('')
   const [description, setDescription] = useState('')
-  const [module, setModule] = useState('echo')
-
-  const { modules } = useBots()
 
   const handleCreate = async () => {
     try {
-      await create({ name, username, description, module })
-      toast.success('Bot created! Add it to a channel from the Admin section.')
+      await create({ name, username, description, module: 'visual' })
+      toast.success('Bot created! Edit it to design your flow.')
       setCreateOpen(false)
       setName('')
       setUsername('')
       setDescription('')
-      setModule('echo')
     } catch (e: any) {
       toast.error(e.message)
     }
@@ -385,7 +416,7 @@ function BotsList() {
       <div className="flex items-center justify-between mb-3">
         <h2 className="font-semibold text-sm">My Bots ({bots.length})</h2>
         <Button size="sm" onClick={() => setCreateOpen(!createOpen)}>
-          <Plus className="w-4 h-4 mr-1" /> New
+          <Plus className="w-4 h-4 mr-1" /> New Bot
         </Button>
       </div>
 
@@ -403,19 +434,9 @@ function BotsList() {
             <Label>Description</Label>
             <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="Runs polls in any channel" />
           </div>
-          <div className="space-y-2">
-            <Label>Module</Label>
-            <Select value={module} onValueChange={setModule}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {modules.map((m) => (
-                  <SelectItem key={m.name} value={m.name}>
-                    {m.name} — {m.description}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <p className="text-xs text-muted-foreground">
+            Bots are created with the visual flow editor. After creating, click "Edit Flow" to design your bot's behavior.
+          </p>
           <div className="flex gap-2">
             <Button size="sm" onClick={handleCreate} disabled={!name.trim() || !username.trim()}>Create</Button>
             <Button size="sm" variant="ghost" onClick={() => setCreateOpen(false)}>Cancel</Button>
@@ -426,13 +447,19 @@ function BotsList() {
       {isLoading ? (
         <div className="text-center py-6 text-sm text-muted-foreground">Loading...</div>
       ) : bots.length === 0 ? (
-        <div className="text-center py-6 text-sm text-muted-foreground">
-          No bots yet. Create one to automate tasks in your channels.
+        <div className="text-center py-10">
+          <div className="w-16 h-16 mx-auto rounded-3xl bg-primary/10 flex items-center justify-center mb-3 ring-1 ring-primary/15">
+            <Bot className="w-8 h-8 text-primary" strokeWidth={1.5} />
+          </div>
+          <p className="font-medium text-base">No bots yet</p>
+          <p className="text-sm text-muted-foreground mt-1 max-w-xs mx-auto">
+            Create a bot and design its behavior visually with the flow editor.
+          </p>
         </div>
       ) : (
         <div className="space-y-2">
           {bots.map((bot: any) => (
-            <div key={bot.id} className="flex items-center gap-3 p-2 rounded-lg border">
+            <div key={bot.id} className="flex items-center gap-3 p-3 rounded-lg border">
               <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
                 <Bot className="w-4 h-4 text-primary" />
               </div>
@@ -444,6 +471,13 @@ function BotsList() {
                   {bot.module} · {bot.enabled ? 'enabled' : 'disabled'}
                 </div>
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onEditBot(bot)}
+              >
+                Edit Flow
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"

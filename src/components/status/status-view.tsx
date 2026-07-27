@@ -236,12 +236,15 @@ function MyStatusCard({
   stories: StoryGroup
   onDelete: (storyId: string) => Promise<any>
 }) {
+  const [viewerOpen, setViewerOpen] = useState(false)
+
   return (
-    <Card className="p-3">
-      <div className="space-y-2">
-        {stories.stories.map((s) => (
-          <div key={s.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-accent/50">
-            {s.mediaType === 'image' ? (
+    <>
+      <Card className="p-3">
+        <div className="space-y-2">
+          {stories.stories.map((s) => (
+            <div key={s.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-accent/50 cursor-pointer" onClick={() => setViewerOpen(true)}>
+              {s.mediaType === 'image' ? (
               <img src={s.mediaUrl} alt="" className="w-12 h-12 rounded-lg object-cover" />
             ) : (
               <video src={s.mediaUrl} className="w-12 h-12 rounded-lg object-cover" />
@@ -270,6 +273,14 @@ function MyStatusCard({
         ))}
       </div>
     </Card>
+
+      {/* Owner can view their own stories */}
+      <AnimatePresence>
+        {viewerOpen && (
+          <StoryViewer story={stories} onClose={() => setViewerOpen(false)} />
+        )}
+      </AnimatePresence>
+    </>
   )
 }
 
