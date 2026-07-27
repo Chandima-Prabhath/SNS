@@ -28,7 +28,13 @@ export async function GET() {
         select: { id: true, username: true, displayName: true },
       },
       channel: {
-        select: { id: true, name: true, group: { select: { name: true, isDm: true, partner: true } } },
+        select: {
+          id: true,
+          name: true,
+          group: {
+            select: { name: true, isDm: true },
+          },
+        },
       },
     },
     orderBy: { startedAt: 'desc' },

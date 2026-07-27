@@ -41,16 +41,33 @@ export function IncomingCallOverlay() {
     }
     const onCancelled = (e: Event) => {
       const detail = (e as CustomEvent).detail as { callId: string }
-      if (incoming?.callId === detail.callId) {
-        CallSounds.stop()
+      // Always stop the ring sound and close the overlay on cancel
+      CallSounds.stop()
+      if (incoming?.callId === detail.callId || !detail.callId) {
+        setIncoming(null)
+      } else {
+        // Even if callId doesn't match, close anyway — likely a race
         setIncoming(null)
       }
     }
+    // Also handle call:reject and call:ended (in case the caller hangs up)
+    const onRejected = () => {
+      CallSounds.stop()
+      setIncoming(null)
+    }
+    const onEnded = () => {
+      CallSounds.stop()
+      setIncoming(null)
+    }
     window.addEventListener('sns:incoming-call', onIncoming as EventListener)
     window.addEventListener('sns:call-cancelled', onCancelled as EventListener)
+    window.addEventListener('sns:call-rejected', onRejected as EventListener)
+    window.addEventListener('sns:call-ended', onEnded as EventListener)
     return () => {
       window.removeEventListener('sns:incoming-call', onIncoming as EventListener)
       window.removeEventListener('sns:call-cancelled', onCancelled as EventListener)
+      window.removeEventListener('sns:call-rejected', onRejected as EventListener)
+      window.removeEventListener('sns:call-ended', onEnded as EventListener)
     }
   }, [incoming?.callId])
 

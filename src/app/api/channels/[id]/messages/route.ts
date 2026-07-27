@@ -162,10 +162,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     select: { userId: true },
   })
 
+  const recipientIds = memberIds.map((m) => m.userId).filter((id) => id !== userId)
+
+  // Send push notifications to all recipients (for background notifications)
+  try {
+    const { sendPushNotification } = await import('@/lib/push')
+    for (const recipientId of recipientIds) {
+      await sendPushNotification(recipientId, {
+        type: 'message',
+        title: message.sender?.displayName || 'New message',
+        body: message.body.slice(0, 100),
+        channelId,
+      })
+    }
+  } catch (e) {
+    // Push notification failed — don't block the message
+    console.error('[push] failed to send:', e)
+  }
+
   return NextResponse.json({
     message,
     botReplies,
-    recipientIds: memberIds.map((m) => m.userId).filter((id) => id !== userId),
+    recipientIds,
   })
 }
 

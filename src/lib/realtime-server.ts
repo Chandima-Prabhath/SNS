@@ -303,6 +303,19 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
     }) => {
       // Find all sockets owned by targetUserId
       const targetPresence = presence.get(payload.targetUserId)
+
+      // Always send a push notification (works even if user is offline or backgrounded)
+      import('./push').then(m => {
+        m.sendPushNotification(payload.targetUserId, {
+          type: 'call',
+          title: payload.from.displayName,
+          body: `Incoming ${payload.video ? 'video' : 'voice'} call`,
+          callId: payload.callId,
+          channelId: payload.channelId,
+          from: payload.from,
+        })
+      }).catch(() => {})
+
       if (!targetPresence) {
         // Target is offline — notify caller via a 'reject' with reason 'offline'
         socket.emit('call:reject', { callId: payload.callId, byUserId: payload.targetUserId, reason: 'offline' })
