@@ -10,15 +10,14 @@ import { useSocket } from '@/hooks/useSocket'
  * CallController — mounted ONCE at the app root.
  *
  * Wires the CallManager singleton to the Zustand store, fetches ICE servers,
- * and registers global audio unlock + call event listeners.
+ * registers global audio unlock, and checks for pending calls on load/reconnect.
  */
 export function CallController({ children }: { children: React.ReactNode }) {
   const { socket, connected } = useSocket()
 
+  // Wire manager callbacks to store + give it the socket
   useEffect(() => {
     const manager = getCallManager()
-
-    // Wire the manager's callbacks to the store
     manager.setCallbacks({
       onStatusChange: (status) => useCallStore.getState().setStatus(status),
       onLocalStream: (stream) => useCallStore.getState().setLocalStream(stream),
@@ -39,8 +38,6 @@ export function CallController({ children }: { children: React.ReactNode }) {
         useCallStore.getState().reset()
       },
     })
-
-    // Give the manager the socket
     if (socket) {
       manager.setSocket(socket)
     }
@@ -50,13 +47,11 @@ export function CallController({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     fetch('/api/calls/ice-servers')
       .then((r) => r.json())
-      .then((data) => {
-        getCallManager().setIceServers(data.iceServers || [])
-      })
+      .then((data) => { getCallManager().setIceServers(data.iceServers || []) })
       .catch(() => {})
   }, [])
 
-  // Global audio unlock on first user gesture
+  // Global audio unlock
   useEffect(() => {
     const unlock = () => {
       unlockAudio()
@@ -75,16 +70,10 @@ export function CallController({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  // Listen for call accept/reject to stop ringback on the caller's side
+  // Call accept/reject listeners — stop ringback
   useEffect(() => {
-    const onAccepted = () => {
-      console.log('[CallController] call accepted — stopping ringback')
-      CallSounds.stop()
-    }
-    const onRejected = () => {
-      console.log('[CallController] call rejected — stopping ringback')
-      CallSounds.stop()
-    }
+    const onAccepted = () => { CallSounds.stop() }
+    const onRejected = () => { CallSounds.stop() }
     window.addEventListener('sns:call-accepted', onAccepted)
     window.addEventListener('sns:call-rejected', onRejected)
     return () => {
@@ -93,7 +82,46 @@ export function CallController({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  // Listen for service worker notification clicks — navigate to the correct view
+  // CRITICAL: Check for pending calls on load and on socket reconnect.
+  // This handles the case where the app was closed, a call notification arrived,
+  // and the user opens the app — the call:incoming socket event was missed.
+  useEffect(() => {
+    if (!connected) return
+
+    // Check for pending calls
+    fetch('/api/calls/pending')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.calls && data.calls.length > 0) {
+          const call = data.calls[0]
+          console.log('[CallController] found pending call:', call.id)
+
+          // Only show the incoming call overlay if we're not already in a call
+          const currentStatus = useCallStore.getState().status
+          if (currentStatus === 'idle') {
+            // Dispatch the incoming call event — same as if the socket delivered it
+            const payload = {
+              callId: call.id,
+              from: {
+                userId: call.starter.id,
+                username: call.starter.username,
+                displayName: call.starter.displayName,
+              },
+              channelId: call.channel?.id,
+              video: false, // We don't track video in the call record — assume voice
+            }
+            window.dispatchEvent(new CustomEvent('sns:incoming-call', { detail: payload }))
+
+            // Play the incoming ring sound
+            CallSounds.unlock()
+            CallSounds.startIncoming()
+          }
+        }
+      })
+      .catch(() => {})
+  }, [connected])
+
+  // SW notification click listener
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const data = event.data
@@ -101,16 +129,7 @@ export function CallController({ children }: { children: React.ReactNode }) {
 
       console.log('[CallController] notification click:', data)
 
-      const store = useCallStore.getState()
-
-      if (data.action === 'accept' && data.callId) {
-        // Call accepted from notification — switch to voice view
-        // The incoming call overlay will handle the actual accept
-        // (the call:incoming event should have already fired)
-      }
-
       if (data.action === 'decline' && data.callId) {
-        // Call declined from notification — reject the call
         import('@/lib/socket').then(({ getSocket }) => {
           getSocket().then(socket => {
             socket.emit('call:reject', { callId: data.callId, byUserId: data.from?.userId })
@@ -118,26 +137,15 @@ export function CallController({ children }: { children: React.ReactNode }) {
         })
       }
 
-      // Navigate to the correct view based on notification type
-      if (data.type === 'message' && data.channelId) {
-        // Open the chat with this channel
-        useCallStore.getState() // just to access the store
-        // We need to use the app store — import dynamically
-        import('@/stores/useAppStore').then(({ useAppStore }) => {
+      // Navigate based on notification type
+      import('@/stores/useAppStore').then(({ useAppStore }) => {
+        if (data.type === 'message' && data.channelId) {
           useAppStore.getState().setView('chats')
           useAppStore.getState().setActiveChannel(data.channelId)
-        })
-      } else if (data.type === 'call') {
-        // Switch to voice view
-        import('@/stores/useAppStore').then(({ useAppStore }) => {
+        } else if (data.type === 'call') {
           useAppStore.getState().setView('voice')
-        })
-      } else if (data.type === 'story') {
-        // Switch to status view
-        import('@/stores/useAppStore').then(({ useAppStore }) => {
-          useAppStore.getState().setView('status')
-        })
-      }
+        }
+      })
     }
 
     navigator.serviceWorker?.addEventListener('message', onMessage)

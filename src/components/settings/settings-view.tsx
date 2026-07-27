@@ -459,44 +459,32 @@ function BotsList({ onEditBot }: { onEditBot: (bot: any) => void }) {
       ) : (
         <div className="space-y-2">
           {bots.map((bot: any) => (
-            <div key={bot.id} className="flex items-center gap-3 p-3 rounded-lg border">
-              <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
-                <Bot className="w-4 h-4 text-primary" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="font-medium text-sm truncate">
-                  {bot.name} <span className="text-xs text-muted-foreground">@{bot.username}</span>
+            <div key={bot.id} className="p-3 rounded-lg border space-y-2">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
+                  <Bot className="w-4 h-4 text-primary" />
                 </div>
-                <div className="text-xs text-muted-foreground truncate">
-                  {bot.module} · {bot.enabled ? 'enabled' : 'disabled'}
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm truncate">
+                    {bot.name} <span className="text-xs text-muted-foreground">@{bot.username}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground truncate">
+                    {bot.module} · {bot.enabled ? 'enabled' : 'disabled'}
+                  </div>
                 </div>
+                <Button variant="outline" size="sm" onClick={() => onEditBot(bot)}>
+                  Edit Flow
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => update({ id: bot.id, data: { enabled: !bot.enabled } })}>
+                  {bot.enabled ? 'Disable' : 'Enable'}
+                </Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-red-500"
+                  onClick={() => { if (confirm(`Delete bot @${bot.username}?`)) { remove(bot.id).then(() => toast.success('Deleted')) } }}>
+                  <Trash2 className="w-4 h-4" />
+                </Button>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onEditBot(bot)}
-              >
-                Edit Flow
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => update({ id: bot.id, data: { enabled: !bot.enabled } })}
-              >
-                {bot.enabled ? 'Disable' : 'Enable'}
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-muted-foreground hover:text-red-500"
-                onClick={() => {
-                  if (confirm(`Delete bot @${bot.username}?`)) {
-                    remove(bot.id).then(() => toast.success('Deleted'))
-                  }
-                }}
-              >
-                <Trash2 className="w-4 h-4" />
-              </Button>
+              {/* Add to channel */}
+              <AddBotToChannel botId={bot.id} />
             </div>
           ))}
         </div>
@@ -937,6 +925,56 @@ function AvatarPicker({
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * AddBotToChannel — dropdown to add a bot to any text channel the user is a member of.
+ */
+function AddBotToChannel({ botId }: { botId: string }) {
+  const { data: groups } = useQuery({
+    queryKey: ['channels'],
+    queryFn: async () => {
+      const res = await fetch('/api/channels')
+      const data = await res.json()
+      return data.groups as any[]
+    },
+  })
+  const allTextChannels = groups?.flatMap((g: any) =>
+    g.channels.filter((c: any) => c.type === 'text').map((c: any) => ({ ...c, groupName: g.name }))
+  ) || []
+
+  const handleAdd = async (channelId: string) => {
+    try {
+      const res = await fetch('/api/admin/bots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ botId, channelId }),
+      })
+      if (res.ok) toast.success('Bot added to channel')
+      else toast.error('Failed to add bot')
+    } catch {
+      toast.error('Failed to add bot')
+    }
+  }
+
+  if (allTextChannels.length === 0) return null
+
+  return (
+    <div className="flex items-center gap-2 pl-12">
+      <Select onValueChange={handleAdd}>
+        <SelectTrigger className="h-7 text-xs w-48">
+          <SelectValue placeholder="+ Add to channel..." />
+        </SelectTrigger>
+        <SelectContent>
+          {allTextChannels.map((ch: any) => (
+            <SelectItem key={ch.id} value={ch.id}>
+              {ch.groupName} / {ch.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   )
 }

@@ -1,8 +1,8 @@
 /**
  * Visual Bot Module — executes bot flows created by the visual builder.
  *
- * When a bot has module="visual", this module loads the flow from Bot.flow
- * and executes it using the executeBotFlow engine.
+ * The flow is stored in Bot.flow (JSON string) and passed via config._flow
+ * by the framework dispatcher.
  */
 import type { BotModule, BotContext } from '../framework'
 import { executeBotFlow, type BotFlow } from '../flow-types'
@@ -10,39 +10,33 @@ import { executeBotFlow, type BotFlow } from '../flow-types'
 export const visualBot: BotModule = {
   name: 'visual',
   description: 'Executes a visual flow-chart bot definition.',
-  commands: [], // commands are defined by the trigger node in the flow
+  commands: [],
   onMessage: async (ctx: BotContext) => {
-    // Load the flow from the bot's config
+    console.log('[visual bot] onMessage called, bot:', ctx.bot.name)
+
+    // Load the flow — it's passed via config._flow by the framework
     let flow: BotFlow | null = null
-    try {
-      // The flow is stored in Bot.flow (passed via ctx.bot.config)
-      const flowStr = (ctx.bot.config as any)?._flow
-      if (flowStr) {
-        flow = typeof flowStr === 'string' ? JSON.parse(flowStr) : flowStr
+    const flowData = (ctx.bot.config as any)?._flow
+    if (flowData) {
+      try {
+        flow = typeof flowData === 'string' ? JSON.parse(flowData) : flowData
+      } catch (e) {
+        console.error('[visual bot] failed to parse flow:', e)
+        return
       }
-    } catch {
+    }
+
+    if (!flow) {
+      console.log('[visual bot] no flow found for bot', ctx.bot.name)
       return
     }
 
-    if (!flow) return
-
-    // Check if the message matches the trigger
-    const trigger = flow.nodes.find((n) => n.type === 'trigger')
-    if (!trigger) return
-
-    // Only respond if privacy mode is off, or if it's a command/mention
-    const messageBody = ctx.message.body
-    const isCommand = messageBody.startsWith('/')
-    const isMention = messageBody.includes(`@${ctx.bot.username}`)
-
-    if (trigger.data.triggerType === 'command' && trigger.data.command) {
-      const cmd = trigger.data.command.replace(/^\//, '')
-      if (!ctx.command || ctx.command !== cmd) return
-    } else if (trigger.data.triggerType === 'mention') {
-      if (!isMention) return
-    } else if (trigger.data.triggerType === 'message') {
-      // Respond to any message — but only if privacy mode is off
+    if (!flow.nodes || flow.nodes.length === 0) {
+      console.log('[visual bot] flow has no nodes')
+      return
     }
+
+    console.log('[visual bot] executing flow with', flow.nodes.length, 'nodes')
 
     // Execute the flow
     const result = await executeBotFlow(flow, {
@@ -55,6 +49,8 @@ export const visualBot: BotModule = {
       command: ctx.command,
       variables: {},
     })
+
+    console.log('[visual bot] execution result:', result.messages.length, 'messages')
 
     // Send all messages from the flow execution
     for (const msg of result.messages) {

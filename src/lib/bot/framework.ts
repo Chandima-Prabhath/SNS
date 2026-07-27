@@ -220,8 +220,11 @@ export async function dispatchBotUpdate(params: {
     }
 
     // Non-command message
-    if (mod.onMessage && (!bot.privacyMode || ctx.isMention)) {
-      await mod.onMessage(ctx)
+    // Visual bots ALWAYS get onMessage — the trigger node handles filtering
+    if (mod.onMessage) {
+      if (bot.module === 'visual' || !bot.privacyMode || ctx.isMention) {
+        await mod.onMessage(ctx)
+      }
     }
   }
 
