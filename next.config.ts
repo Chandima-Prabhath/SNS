@@ -10,8 +10,11 @@ const nextConfig: NextConfig = {
   // for serverless deployments where you want a minimal bundle.
   allowedDevOrigins: [
     "sns.1911915.xyz",
-    "http://sns.1911915.xyz",
     "https://sns.1911915.xyz",
+    "adoo.cloud.1911915.xyz",
+    "https://adoo.cloud.1911915.xyz",
+    "sns.cloud.1911915.xyz",
+    "https://sns.cloud.1911915.xyz",
   ],
 };
 

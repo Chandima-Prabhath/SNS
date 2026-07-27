@@ -58,11 +58,16 @@ async function registerPushSubscription() {
     // Get VAPID public key from server
     const response = await fetch('/api/push/vapid-public-key')
     if (!response.ok) {
-      console.log('[permissions] VAPID not configured on server')
+      console.log('[permissions] VAPID endpoint failed')
       return
     }
-    const { publicKey } = await response.json()
-    if (!publicKey) return
+    const data = await response.json()
+    if (!data.publicKey) {
+      console.log('[permissions] VAPID not configured on server — push notifications disabled')
+      console.log('[permissions] To enable: generate keys with "npx web-push generate-vapid-keys" and add VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY to .env')
+      return
+    }
+    const { publicKey } = data
 
     // Convert VAPID key to Uint8Array
     const convertedKey = urlBase64ToUint8Array(publicKey)
