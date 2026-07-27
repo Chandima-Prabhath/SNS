@@ -1,39 +1,20 @@
 /**
  * Adoo Service Worker
- *
- * Responsibilities:
- *   - Cache app shell for offline use
- *   - Handle push notifications (incoming calls, messages) — works in background
- *   - Notification click → focus/open the app
- *   - Background sync (future)
  */
 
-const CACHE_NAME = 'adoo-v2'
-const APP_SHELL = [
-  '/',
-  '/manifest.json',
-  '/icon.svg',
-]
+const CACHE_NAME = 'adoo-v3'
+const APP_SHELL = ['/', '/manifest.json', '/icon.svg']
 
-// Install — cache app shell
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).catch(() => {})
-  )
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).catch(() => {}))
   self.skipWaiting()
 })
 
-// Activate — clean old caches + claim clients
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    )
-  )
+  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))))
   self.clients.claim()
 })
 
-// Fetch — network-first for navigations, cache-first for static assets
 self.addEventListener('fetch', (event) => {
   const req = event.request
   if (req.method !== 'GET') return
@@ -41,18 +22,16 @@ self.addEventListener('fetch', (event) => {
   // Navigations → network-first
   if (req.mode === 'navigate') {
     event.respondWith(
-      fetch(req)
-        .then((res) => {
-          const copy = res.clone()
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy))
-          return res
-        })
-        .catch(() => caches.match(req).then((r) => r || caches.match('/')))
+      fetch(req).then((res) => {
+        const copy = res.clone()
+        caches.open(CACHE_NAME).then((cache) => cache.put(req, copy))
+        return res
+      }).catch(() => caches.match(req).then((r) => r || caches.match('/')))
     )
     return
   }
 
-  // Static assets → cache-first (but NOT uploads or API routes)
+  // Static assets → cache-first (but NOT uploads or API)
   if (req.url.includes('/_next/') || req.url.includes('/rnnoise')) {
     event.respondWith(
       caches.match(req).then((cached) => {
@@ -69,11 +48,27 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // Everything else (API routes, uploads, etc.) → always go to network
-  // Don't cache — these are dynamic
+  // Uploaded images → cache-first with 404 protection
+  // Cache successful responses but NEVER cache 404s
+  if (req.url.includes('/uploads/')) {
+    event.respondWith(
+      caches.match(req).then((cached) => {
+        if (cached) return cached
+        return fetch(req).then((res) => {
+          // Only cache successful responses
+          if (res.ok) {
+            const copy = res.clone()
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy))
+          }
+          return res
+        })
+      })
+    )
+    return
+  }
 })
 
-// Push — background notifications (works even when app is closed)
+// Push — background notifications
 self.addEventListener('push', (event) => {
   let payload = {}
   try {
@@ -82,7 +77,7 @@ self.addEventListener('push', (event) => {
     payload = { title: 'Adoo', body: event.data?.text() || 'New notification' }
   }
 
-  const { type, title, body, callId, from, channelId } = payload
+  const { type, title, body, callId, channelId, from } = payload
 
   let options = {
     body: body || '',
@@ -90,10 +85,9 @@ self.addEventListener('push', (event) => {
     badge: '/icon.svg',
     tag: type || 'adoo-notification',
     renotify: true,
-    data: { callId, type, channelId, url: '/' },
+    data: { callId, type, channelId, from, url: '/' },
   }
 
-  // Call-style notification — high priority, stays until user interacts
   if (type === 'call') {
     options = {
       ...options,
@@ -105,53 +99,53 @@ self.addEventListener('push', (event) => {
         { action: 'accept', title: 'Accept' },
         { action: 'decline', title: 'Decline' },
       ],
-      data: { callId, type, channelId, from, url: '/' },
+      // Build a deep-link URL so the app opens to the right place
+      data: { callId, type, channelId, from, url: `/?view=voice&callId=${callId}` },
     }
   }
 
-  // Message notification — auto-dismiss after 4s
   if (type === 'message') {
     options = {
       ...options,
       tag: `msg-${channelId}`,
       requireInteraction: false,
-      silent: false,
       vibrate: [100],
+      // Deep-link to the specific chat
+      data: { callId, type, channelId, from, url: `/?view=chats&channel=${channelId}` },
     }
   }
 
-  event.waitUntil(
-    self.registration.showNotification(title || 'Adoo', options)
-  )
+  event.waitUntil(self.registration.showNotification(title || 'Adoo', options))
 })
 
-// Notification click — focus or open the app
+// Notification click — open app with deep-link URL
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-
   const { action, notification } = event
   const data = notification.data || {}
+  const targetUrl = data.url || '/'
 
-  // Focus or open the app
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-      // Focus existing tab
+      // Focus existing tab and navigate
       for (const client of clients) {
         if ('focus' in client) {
-          // Send message to the app about the notification click
           client.postMessage({ type: 'notification_click', action, ...data })
+          // Navigate the existing client to the target URL
+          if ('navigate' in client) {
+            client.navigate(targetUrl)
+          }
           return client.focus()
         }
       }
-      // Open new tab
+      // Open new tab with the deep-link URL
       if (self.clients.openWindow) {
-        return self.clients.openWindow(data.url || '/')
+        return self.clients.openWindow(targetUrl)
       }
     })
   )
 })
 
-// Message from the app (e.g., to close a call notification)
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'close-notification') {
     self.registration.getNotifications({ tag: event.data.tag }).then((notifications) => {

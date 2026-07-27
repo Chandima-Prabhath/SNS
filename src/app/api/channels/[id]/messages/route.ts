@@ -131,6 +131,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         }
       }
     }
+
+    // Also dispatch visual bots on EVERY message — the trigger node
+    // inside the flow decides whether to respond
+    try {
+      const { dispatchBotUpdate } = await import('@/lib/bot')
+      const allBots = await db.bot.findMany({ where: { enabled: true, module: 'visual' } })
+      for (const bot of allBots) {
+        const isMember = await db.channelMember.findFirst({
+          where: { channelId, userId: bot.id },
+        })
+        if (!isMember) continue
+        await dispatchBotUpdate({
+          botId: bot.id,
+          channelId,
+          senderId: userId,
+          senderName: session.user.username || session.user.email || 'user',
+          messageId: message.id,
+          body: text,
+          replyToId,
+          isMention: false,
+        })
+      }
+    } catch (e) {
+      console.error('[bot dispatch] visual bot error', e)
+    }
   } catch (e) {
     console.error('[bot dispatch] error', e)
   }

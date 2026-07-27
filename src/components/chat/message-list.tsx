@@ -39,6 +39,20 @@ export function MessageList({ channelId }: MessageListProps) {
     }
   }, [messages, myId, markRead])
 
+  // Scroll to bottom when messages first load (e.g., opening a chat)
+  useEffect(() => {
+    if (messages.length > 0 && !lastMessageIdRef.current) {
+      const el = scrollRef.current
+      if (el) {
+        // Use setTimeout to ensure DOM has rendered
+        setTimeout(() => {
+          el.scrollTop = el.scrollHeight
+        }, 50)
+      }
+      lastMessageIdRef.current = messages[messages.length - 1].id
+    }
+  }, [messages])
+
   // Group consecutive messages by same sender within 5 min
   const grouped = useMemo(() => {
     const groups: ChannelMessage[][] = []

@@ -141,7 +141,7 @@ export function useChannel(channelId: string | null) {
     }
   }, [socket, channelId, qc])
 
-  // Fetch messages
+  // Fetch messages — cached for 5 min to avoid refetching on every tab switch
   const { data, isLoading, error } = useQuery({
     queryKey: ['messages', channelId],
     queryFn: async () => {
@@ -152,6 +152,7 @@ export function useChannel(channelId: string | null) {
       return data.messages as ChannelMessage[]
     },
     enabled: !!channelId,
+    staleTime: 5 * 60 * 1000, // 5 min — don't refetch on every mount
   })
 
   // Send message
