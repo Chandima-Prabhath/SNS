@@ -45,7 +45,7 @@ export function AppShell() {
   return (
     <CallController>
       <FirefoxBanner />
-      <div className="h-screen flex bg-background overflow-hidden">
+      <div className="h-dvh flex bg-background overflow-hidden">
         <DesktopSidebar />
         <div className="flex-1 flex flex-col min-w-0">
           <main className="flex-1 min-h-0 overflow-hidden">

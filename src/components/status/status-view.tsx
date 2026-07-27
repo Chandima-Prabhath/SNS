@@ -332,6 +332,7 @@ function StoryRow({ story }: { story: StoryGroup }) {
 function StoryViewer({ story, onClose }: { story: StoryGroup; onClose: () => void }) {
   const { markViewed } = useStories()
   const [idx, setIdx] = useState(0)
+  const [progress, setProgress] = useState(0) // 0..1 for the current segment
   const current = story.stories[idx]
 
   useEffect(() => {
@@ -340,17 +341,32 @@ function StoryViewer({ story, onClose }: { story: StoryGroup; onClose: () => voi
     }
   }, [idx, current, markViewed])
 
-  // Auto-advance after 5 seconds
+  // Reset progress to 0 whenever the current story changes, then animate to 1
+  // over the 5s duration. Using requestAnimationFrame gives a smooth fill
+  // instead of the previous "instantly full" jump.
   useEffect(() => {
     if (!current) return
-    const timer = setTimeout(() => {
-      if (idx < story.stories.length - 1) {
-        setIdx(idx + 1)
+    setProgress(0)
+    const duration = 5000
+    const start = performance.now()
+    let raf = 0
+    const tick = (now: number) => {
+      const elapsed = now - start
+      const p = Math.min(1, elapsed / duration)
+      setProgress(p)
+      if (p < 1) {
+        raf = requestAnimationFrame(tick)
       } else {
-        onClose()
+        // Advance to the next story or close.
+        if (idx < story.stories.length - 1) {
+          setIdx(idx + 1)
+        } else {
+          onClose()
+        }
       }
-    }, 5000)
-    return () => clearTimeout(timer)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
   }, [idx, current, story.stories.length, onClose])
 
   if (!current) return null
@@ -388,16 +404,25 @@ function StoryViewer({ story, onClose }: { story: StoryGroup; onClose: () => voi
 
         {/* Progress bars */}
         <div className="absolute top-0 left-0 right-0 flex gap-1 p-3 pt-safe">
-          {story.stories.map((_, i) => (
-            <div key={i} className="flex-1 h-0.5 bg-white/30 rounded-full overflow-hidden">
-              <div
-                className={cn(
-                  'h-full bg-white transition-all duration-500',
-                  i < idx ? 'w-full' : i === idx ? 'w-full' : 'w-0'
-                )}
-              />
-            </div>
-          ))}
+          {story.stories.map((_, i) => {
+            // Past stories = full. Current story = animated 0..100%. Future stories = 0.
+            const widthPct =
+              i < idx ? 100 :
+              i === idx ? progress * 100 :
+              0
+            return (
+              <div key={i} className="flex-1 h-0.5 bg-white/30 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-white"
+                  style={{
+                    width: `${widthPct}%`,
+                    // No CSS transition — the rAF loop already animates smoothly.
+                    // A transition here would fight with the rAF updates and look laggy.
+                  }}
+                />
+              </div>
+            )
+          })}
         </div>
 
         {/* Header: avatar + name + close */}

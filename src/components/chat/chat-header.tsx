@@ -160,7 +160,7 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
             onClick={() => handleStartCall(true)}
             disabled={callPending}
           >
-            <Video className="w-4 h-4" />
+            {callPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Video className="w-4 h-4" />}
           </Button>
         )}
         <Button

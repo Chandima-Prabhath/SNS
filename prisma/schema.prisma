@@ -41,6 +41,7 @@ model User {
 
   // relations
   ownedGroups     Group[]          @relation("GroupOwner")
+  groupMemberships GroupMember[]   @relation("GroupMembers")
   memberships     ChannelMember[]
   messages        Message[]        @relation("MessageSender")
   ownedBots       Bot[]
@@ -86,6 +87,21 @@ model Group {
   updatedAt   DateTime @updatedAt
 
   channels    Channel[]
+  members     GroupMember[]
+}
+
+model GroupMember {
+  id        String   @id @default(cuid())
+  groupId   String
+  userId    String
+  role      String   @default("member") // owner | admin | member
+  joinedAt  DateTime @default(now())
+
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User     @relation("GroupMembers", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId])
 }
 
 model Channel {
@@ -94,7 +110,7 @@ model Channel {
   group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
   name        String
   topic       String?
-  type        String   @default("text") // text | voice
+  type        String   @default("text") // text | voice | video
   order       Int      @default(0)
   createdAt   DateTime @default(now())
 

@@ -201,14 +201,36 @@ export async function executeBotFlow(
   let steps = 0
   let currentNode: FlowNode | undefined
 
+  // ── Helpers (declared early so the resume block can use them) ─────────
+  const edgesFrom = (nodeId: string, handle?: string | null) =>
+    flow.edges.filter((e) => {
+      if (e.source !== nodeId) return false
+      if (handle === undefined) return true
+      if (handle === null) return !e.sourceHandle
+      return e.sourceHandle === handle
+    })
+
+  const followEdge = (nodeId: string, handle?: string | null): FlowNode | undefined => {
+    const edges = edgesFrom(nodeId, handle)
+    if (edges.length === 0) return undefined
+    return flow.nodes.find((n) => n.id === edges[0].target)
+  }
+
   // ── Resolve starting node ─────────────────────────────────────────────
   if (resume) {
-    currentNode = flow.nodes.find((n) => n.id === resume.nodeId)
-    if (!currentNode) {
+    const inputNode = flow.nodes.find((n) => n.id === resume.nodeId)
+    if (!inputNode) {
       return { sentCount: 0, paused: false, variables: ctx.variables, error: 'resume target not found' }
     }
     // Assign the awaited reply to the variable BEFORE walking past the input node.
     ctx.variables[resume.inputVariable] = resume.inputText
+    // Skip past the input node — start from the NEXT node, not the input node itself.
+    // Otherwise the engine would re-enter the input case and re-send the prompt.
+    currentNode = followEdge(inputNode.id, null)
+    if (!currentNode) {
+      // No outgoing edge from the input node — flow ends here.
+      return { sentCount, paused: false, variables: ctx.variables }
+    }
   } else {
     const trigger = flow.nodes.find((n) => n.type === 'trigger')
     if (!trigger) {
@@ -229,21 +251,6 @@ export async function executeBotFlow(
     // any_message: always proceeds
 
     currentNode = trigger
-  }
-
-  // ── Helpers ───────────────────────────────────────────────────────────
-  const edgesFrom = (nodeId: string, handle?: string | null) =>
-    flow.edges.filter((e) => {
-      if (e.source !== nodeId) return false
-      if (handle === undefined) return true
-      if (handle === null) return !e.sourceHandle
-      return e.sourceHandle === handle
-    })
-
-  const followEdge = (nodeId: string, handle?: string | null): FlowNode | undefined => {
-    const edges = edgesFrom(nodeId, handle)
-    if (edges.length === 0) return undefined
-    return flow.nodes.find((n) => n.id === edges[0].target)
   }
 
   // ── Walk the graph ────────────────────────────────────────────────────

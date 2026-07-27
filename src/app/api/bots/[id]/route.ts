@@ -33,6 +33,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
   }
 
+  // If the flow is being updated, clear all paused conversation sessions for
+  // this bot — otherwise stale `pausedAt` state would cause the bot to treat
+  // the next message as a reply to a node that no longer exists in the flow.
+  if ('flow' in body) {
+    await db.conversationSession.deleteMany({ where: { botId: id } }).catch(() => {})
+  }
+
   const updated = await db.bot.update({ where: { id }, data })
   return NextResponse.json({ bot: updated })
 }

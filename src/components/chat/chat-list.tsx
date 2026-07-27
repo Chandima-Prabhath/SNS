@@ -20,7 +20,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
-import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn } from 'lucide-react'
+import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn, UserX } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
@@ -196,9 +196,18 @@ export function ChatList() {
               <div className="space-y-0.5">
                 {filteredChats.map((row) => {
                   const active = row.channel.id === activeChannelId
+                  // A DM partner may have been deleted — detect and show a
+                  // graceful "Deleted User" label instead of @user fallback.
+                  const partnerDeleted = !row.isGroup && !row.partner
                   const presenceInfo = row.partner ? presence[row.partner.id] : null
                   const presenceStatus = presenceInfo?.status || 'offline'
                   const unreadCount = unreadData?.unread?.[row.channel.id] || 0
+                  const displayName = row.isGroup
+                    ? row.channel.name
+                    : row.partner?.displayName || 'Deleted User'
+                  const handleText = row.isGroup
+                    ? row.groupName
+                    : row.partner ? `@${row.partner.username}` : 'account no longer exists'
                   return (
                     <button
                       key={row.channel.id}
@@ -212,6 +221,12 @@ export function ChatList() {
                       {row.isGroup ? (
                         <div className="relative w-12 h-12 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
                           <Hash className="w-5 h-5 text-primary" />
+                        </div>
+                      ) : partnerDeleted ? (
+                        <div className="relative shrink-0">
+                          <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center text-muted-foreground">
+                            <UserX className="w-5 h-5" />
+                          </div>
                         </div>
                       ) : (
                         <div className="relative shrink-0">
@@ -239,10 +254,11 @@ export function ChatList() {
                           <span
                             className={cn(
                               'truncate text-[15px]',
-                              unreadCount > 0 ? 'font-semibold text-foreground' : 'font-medium'
+                              unreadCount > 0 ? 'font-semibold text-foreground' : 'font-medium',
+                              partnerDeleted && 'text-muted-foreground italic'
                             )}
                           >
-                            {row.isGroup ? row.channel.name : row.partner?.displayName || row.channel.name}
+                            {displayName}
                           </span>
                           {unreadCount > 0 && !active && (
                             <span className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
@@ -253,10 +269,11 @@ export function ChatList() {
                         <div
                           className={cn(
                             'text-xs truncate',
-                            unreadCount > 0 ? 'text-foreground/80 font-medium' : 'text-muted-foreground'
+                            unreadCount > 0 ? 'text-foreground/80 font-medium' : 'text-muted-foreground',
+                            partnerDeleted && 'italic'
                           )}
                         >
-                          {row.isGroup ? row.groupName : `@${row.partner?.username || 'user'}`}
+                          {handleText}
                         </div>
                       </div>
                     </button>

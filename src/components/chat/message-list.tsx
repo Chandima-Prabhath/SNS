@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useMemo } from 'react'
 import { useChannel, type ChannelMessage } from '@/hooks/useChannel'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot } from 'lucide-react'
+import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot, UserX } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { format, isToday, isYesterday } from 'date-fns'
 import { useAppStore } from '@/stores/useAppStore'
@@ -22,34 +22,68 @@ export function MessageList({ channelId }: MessageListProps) {
   const myId = (session?.user as any)?.id
   const scrollRef = useRef<HTMLDivElement>(null)
   const lastMessageIdRef = useRef<string | null>(null)
+  const isAtBottomRef = useRef(true)
 
-  // Auto-scroll on new messages (only if user is near bottom)
+  // Reset scroll state when switching channels — otherwise the auto-scroll
+  // logic thinks we already saw the last message and skips the initial scroll.
+  useEffect(() => {
+    lastMessageIdRef.current = null
+    isAtBottomRef.current = true
+    // Jump to bottom immediately on channel switch (no smooth scroll for the
+    // initial load — instant feels more responsive).
+    requestAnimationFrame(() => {
+      const el = scrollRef.current
+      if (el) el.scrollTop = el.scrollHeight
+    })
+  }, [channelId])
+
+  // Track whether the user is at the bottom of the scroll container.
+  // We use a ref so the scroll handler doesn't trigger re-renders.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onScroll = () => {
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+      isAtBottomRef.current = distanceFromBottom < 80
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [])
+
+  // Auto-scroll on new messages — smooth if user is at bottom, otherwise
+  // leave them where they are (don't yank them down while reading history).
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
     const lastMsg = messages[messages.length - 1]
     if (!lastMsg) return
     if (lastMessageIdRef.current !== lastMsg.id) {
-      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200
-      if (nearBottom || lastMsg.senderId === myId) {
-        el.scrollTop = el.scrollHeight
+      const isMine = lastMsg.senderId === myId
+      // Always scroll if: it's my own message, OR I'm already at the bottom.
+      if (isMine || isAtBottomRef.current) {
+        // Use 'auto' for instant jump on initial load / channel switch,
+        // smooth for subsequent new messages.
+        const behavior = lastMessageIdRef.current === null ? 'auto' : 'smooth'
+        el.scrollTo({ top: el.scrollHeight, behavior })
       }
       lastMessageIdRef.current = lastMsg.id
       markRead(lastMsg.id)
     }
   }, [messages, myId, markRead])
 
-  // Scroll to bottom when messages first load (e.g., opening a chat)
+  // Initial scroll-to-bottom when messages first load for a channel.
   useEffect(() => {
     if (messages.length > 0 && !lastMessageIdRef.current) {
       const el = scrollRef.current
       if (el) {
-        // Use setTimeout to ensure DOM has rendered
-        setTimeout(() => {
-          el.scrollTop = el.scrollHeight
-        }, 50)
+        // Wait two frames so images/avatars have a chance to lay out.
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (el) el.scrollTop = el.scrollHeight
+            lastMessageIdRef.current = messages[messages.length - 1].id
+          })
+        })
       }
-      lastMessageIdRef.current = messages[messages.length - 1].id
     }
   }, [messages])
 
@@ -96,10 +130,11 @@ export function MessageList({ channelId }: MessageListProps) {
             const first = group[0]
             const isMine = first.senderId === myId && first.senderType === 'user'
             const isBot = first.senderType === 'bot'
+            const senderDeleted = first.senderType === 'user' && !first.sender
             const senderName =
               first.senderType === 'bot'
                 ? first.sender?.displayName || 'Bot'
-                : first.sender?.displayName || 'Unknown'
+                : first.sender?.displayName || (senderDeleted ? 'Deleted User' : 'Unknown')
             const dayLabel = formatDay(first.createdAt)
             const prevGroup = gi > 0 ? grouped[gi - 1] : null
             const showDayDivider = !prevGroup || formatDay(prevGroup[0].createdAt) !== dayLabel
@@ -117,6 +152,7 @@ export function MessageList({ channelId }: MessageListProps) {
                   group={group}
                   isMine={isMine}
                   isBot={isBot}
+                  senderDeleted={senderDeleted}
                   senderName={senderName}
                   avatarUrl={first.sender?.avatarUrl || null}
                   myId={myId}
@@ -181,6 +217,7 @@ interface MessageGroupProps {
   group: ChannelMessage[]
   isMine: boolean
   isBot: boolean
+  senderDeleted?: boolean
   senderName: string
   avatarUrl: string | null
   myId?: string
@@ -190,7 +227,7 @@ interface MessageGroupProps {
 }
 
 function MessageGroup(props: MessageGroupProps) {
-  const { group, isMine, isBot, senderName, avatarUrl } = props
+  const { group, isMine, isBot, senderDeleted, senderName, avatarUrl } = props
   const [editingId, setEditingId] = useState<string | null>(null)
   const replyTo = useAppStore((s) => s.replyTo)
   const setReplyTo = useAppStore((s) => s.setReplyTo)
@@ -201,6 +238,10 @@ function MessageGroup(props: MessageGroupProps) {
       <div className="w-8 shrink-0 pt-0.5">
         {isMine ? (
           <div className="w-8" />
+        ) : senderDeleted ? (
+          <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+            <UserX className="w-4 h-4 text-muted-foreground" />
+          </div>
         ) : (
           <Avatar className="w-8 h-8">
             <AvatarImage src={avatarUrl || undefined} />
@@ -214,7 +255,12 @@ function MessageGroup(props: MessageGroupProps) {
       <div className="flex-1 min-w-0 space-y-0.5">
         {/* Sender name + time — only on first message of group */}
         <div className="flex items-baseline gap-2 mb-0.5">
-          <span className={cn('text-[13px] font-semibold', isBot && 'text-primary', isMine && 'text-foreground')}>
+          <span className={cn(
+            'text-[13px] font-semibold',
+            isBot && 'text-primary',
+            isMine && 'text-foreground',
+            senderDeleted && 'text-muted-foreground italic'
+          )}>
             {isMine ? 'You' : senderName}
             {isBot && <span className="ml-1 text-[10px] uppercase font-bold text-primary/70">BOT</span>}
           </span>

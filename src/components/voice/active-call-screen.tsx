@@ -163,104 +163,177 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
     )
   }
 
-  // ─── Voice call layout ───
+  // ─── Voice call layout — premium phone-call style ───
   return (
     <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 bg-[#0b0b0f] flex flex-col"
+      initial={{ opacity: 0, scale: 1.02 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      transition={{ duration: 0.3, ease: 'easeOut' }}
+      className="fixed inset-0 z-50 flex flex-col overflow-hidden"
     >
-      {/* Subtle gradient backdrop */}
-      <div className="absolute inset-0 opacity-30" style={{
-        background: 'radial-gradient(50% 50% at 50% 30%, oklch(0.55 0.18 264 / 0.12), transparent 70%)'
-      }} />
+      {/* Animated gradient backdrop — deep navy with primary glow */}
+      <div className="absolute inset-0 bg-[oklch(0.13_0.008_264)]" />
+      <div
+        className="absolute inset-0 opacity-60"
+        style={{
+          background:
+            'radial-gradient(60% 40% at 50% 25%, oklch(0.62 0.20 264 / 0.18), transparent 70%)',
+        }}
+      />
+      <div
+        className="absolute inset-0 opacity-40"
+        style={{
+          background:
+            'radial-gradient(50% 30% at 80% 80%, oklch(0.55 0.14 200 / 0.12), transparent 70%)',
+        }}
+      />
 
-      {/* Top bar */}
+      {/* Top bar — connection info + status */}
       <div className="relative w-full flex items-center justify-between px-6 pt-8 pt-safe">
-        <div className="flex items-center gap-2 text-white/40 text-xs">
+        <div className="flex items-center gap-2 text-white/50 text-xs">
           <ConnectionTypeBadge type={overallType} />
-          {isGroup && <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" />{totalParticipants}</span>}
+          {isGroup && (
+            <span className="flex items-center gap-1">
+              <Users className="w-3.5 h-3.5" />
+              {totalParticipants}
+            </span>
+          )}
         </div>
         {status === 'connecting' && (
-          <div className="flex items-center gap-2 text-white/50 text-xs">
+          <div className="flex items-center gap-2 text-white/60 text-xs font-medium">
             <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-            Connecting
+            Calling…
           </div>
         )}
         {status === 'disconnected' && (
-          <span className="text-xs text-yellow-400">Reconnecting...</span>
+          <span className="text-xs text-yellow-400 font-medium">Reconnecting…</span>
+        )}
+        {status === 'connected' && (
+          <span className="text-xs text-white/40 font-medium uppercase tracking-wider">
+            Voice Call
+          </span>
         )}
       </div>
 
-      {/* Center: avatar + name + timer */}
-      <div className="relative flex-1 flex flex-col items-center justify-center gap-6">
+      {/* Center: avatar + name + timer + waveform */}
+      <div className="relative flex-1 flex flex-col items-center justify-center gap-8">
+        {/* Avatar with animated rings */}
         <div className="relative">
-          {/* Pulsing rings */}
+          {/* Outer glow ring — always present when connected */}
           {status === 'connected' && (
             <motion.div
               className="absolute inset-0 rounded-full"
-              style={{ boxShadow: '0 0 60px oklch(0.55 0.18 264 / 0.3)' }}
-              animate={{ scale: [1, 1.05, 1] }}
+              style={{ boxShadow: '0 0 80px oklch(0.62 0.20 264 / 0.35)' }}
+              animate={{ scale: [1, 1.04, 1], opacity: [0.6, 1, 0.6] }}
               transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
             />
           )}
+          {/* Expanding rings while connecting */}
           {status === 'connecting' && (
             <>
-              <motion.div className="absolute inset-0 rounded-full border-2 border-primary/30" animate={{ scale: [1, 1.5], opacity: [0.6, 0] }} transition={{ duration: 1.5, repeat: Infinity, ease: 'easeOut' }} />
-              <motion.div className="absolute inset-0 rounded-full border-2 border-primary/20" animate={{ scale: [1, 1.5], opacity: [0.4, 0] }} transition={{ duration: 1.5, repeat: Infinity, ease: 'easeOut', delay: 0.5 }} />
+              <motion.div
+                className="absolute inset-0 rounded-full border-2 border-primary/40"
+                animate={{ scale: [1, 1.6], opacity: [0.7, 0] }}
+                transition={{ duration: 1.8, repeat: Infinity, ease: 'easeOut' }}
+              />
+              <motion.div
+                className="absolute inset-0 rounded-full border-2 border-primary/30"
+                animate={{ scale: [1, 1.6], opacity: [0.5, 0] }}
+                transition={{ duration: 1.8, repeat: Infinity, ease: 'easeOut', delay: 0.6 }}
+              />
+              <motion.div
+                className="absolute inset-0 rounded-full border-2 border-primary/20"
+                animate={{ scale: [1, 1.6], opacity: [0.3, 0] }}
+                transition={{ duration: 1.8, repeat: Infinity, ease: 'easeOut', delay: 1.2 }}
+              />
             </>
           )}
-          <Avatar className="w-36 h-36 relative">
+          <Avatar className="w-40 h-40 relative ring-4 ring-white/5">
             <AvatarImage src={callAvatarUrl} />
-            <AvatarFallback className="text-5xl bg-gradient-to-br from-primary/30 to-primary/5 text-white border border-white/5">
+            <AvatarFallback className="text-6xl bg-gradient-to-br from-primary/40 via-primary/20 to-transparent text-white border border-white/10 font-light">
               {callName.charAt(0).toUpperCase()}
             </AvatarFallback>
           </Avatar>
-          {/* Active speaker indicator */}
+          {/* Active speaker pulse */}
           {status === 'connected' && activeSpeaker && (
-            <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-green-500 border-2 border-[#0b0b0f] flex items-center justify-center">
-              <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+            <div className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-green-500 border-2 border-[oklch(0.13_0.008_264)] flex items-center justify-center pulse-glow">
+              <div className="w-2.5 h-2.5 rounded-full bg-white" />
             </div>
           )}
         </div>
 
-        <div className="text-center">
-          <h1 className="text-2xl font-semibold text-white tracking-tight">{callName}</h1>
-          <p className="text-white/30 text-sm mt-1.5 font-mono tabular-nums">
-            {status === 'connected' ? formatDuration(callDuration) : ''}
+        {/* Name + duration */}
+        <div className="text-center space-y-2">
+          <h1 className="text-3xl font-semibold text-white tracking-tight">{callName}</h1>
+          <p className="text-white/40 text-base font-mono tabular-nums tracking-wider">
+            {status === 'connected' ? formatDuration(callDuration) : status === 'connecting' ? '' : ''}
           </p>
         </div>
 
-        {/* Group participants */}
+        {/* Audio waveform — animated bars showing audio activity */}
+        {status === 'connected' && (
+          <AudioWaveform active={!!activeSpeaker} levels={audioLevels} participants={participantList} />
+        )}
+
+        {/* Group participants — small avatar row */}
         {isGroup && participantList.length > 0 && (
-          <div className="flex gap-2 mt-2">
+          <div className="flex gap-2.5 mt-2">
             {participantList.slice(0, 6).map((p) => {
               const level = audioLevels[p.peerId] || 0
               const isActive = level > 0.1
               return (
                 <div
                   key={p.peerId}
-                  className={cn('relative rounded-full transition-all', isActive && 'ring-2 ring-green-400')}
+                  className={cn(
+                    'relative rounded-full transition-all duration-200',
+                    isActive && 'ring-2 ring-green-400'
+                  )}
                   style={{ transform: isActive ? `scale(${1 + level * 0.15})` : 'scale(1)' }}
                 >
-                  <Avatar className="w-10 h-10 border-2 border-white/5">
-                    <AvatarFallback className="text-sm bg-white/5 text-white/70">
+                  <Avatar className="w-11 h-11 border-2 border-white/10">
+                    <AvatarFallback className="text-sm bg-white/8 text-white/80">
                       {p.username.charAt(0).toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
                 </div>
               )
             })}
+            {participantList.length > 6 && (
+              <div className="w-11 h-11 rounded-full bg-white/8 border-2 border-white/10 flex items-center justify-center text-white/60 text-xs font-medium">
+                +{participantList.length - 6}
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* Bottom controls — floating glass pill */}
+      {/* Bottom controls — refined glass pill */}
       <div className="relative px-6 pb-10 pb-safe">
         <div className="max-w-sm mx-auto">
-          <div className="flex items-center justify-center gap-3 bg-white/5 backdrop-blur-2xl rounded-[28px] p-3 border border-white/5 shadow-2xl">
-            <CallButton active={localMuted} onClick={toggleMute} icon={localMuted ? MicOff : Mic} label="" variant={localMuted ? 'danger' : 'neutral'} />
-            <CallButton onClick={handleLeave} icon={PhoneOff} label="" variant="end" large disabled={leaving} />
-            <CallButton active={speakerOn} onClick={handleSpeaker} icon={speakerOn ? Volume2 : VolumeX} label="" variant="neutral" />
+          <div className="flex items-center justify-center gap-4 glass-dark rounded-[28px] p-3.5 shadow-2xl">
+            <CallButton
+              active={localMuted}
+              onClick={toggleMute}
+              icon={localMuted ? MicOff : Mic}
+              label=""
+              variant={localMuted ? 'danger' : 'neutral'}
+            />
+            <CallButton
+              onClick={handleLeave}
+              icon={PhoneOff}
+              label=""
+              variant="end"
+              large
+              disabled={leaving}
+            />
+            <CallButton
+              active={speakerOn}
+              onClick={handleSpeaker}
+              icon={speakerOn ? Volume2 : VolumeX}
+              label=""
+              variant="neutral"
+            />
           </div>
         </div>
       </div>
@@ -369,6 +442,48 @@ function VideoCallButton({ active, onClick, icon: Icon, label, variant, large, d
         <Icon className={iconSize} />
       </button>
       <span className="text-[10px] text-white/60">{label}</span>
+    </div>
+  )
+}
+
+/**
+ * Audio waveform — a row of vertical bars that animate based on the active
+ * speaker's audio level. Purely decorative; gives the voice call screen a
+ * premium, "live audio" feel.
+ */
+function AudioWaveform({
+  active,
+  levels,
+  participants,
+}: {
+  active: boolean
+  levels: Record<string, number>
+  participants: any[]
+}) {
+  // Find the dominant audio level across all participants
+  const maxLevel = participants.reduce((max, p) => {
+    const l = levels[p.peerId] || 0
+    return Math.max(max, l)
+  }, 0)
+
+  const bars = 28
+  return (
+    <div className="flex items-center justify-center gap-1 h-8 max-w-xs">
+      {Array.from({ length: bars }).map((_, i) => {
+        // Each bar gets a phase offset so they dance independently
+        const phase = (i / bars) * Math.PI * 2
+        const wave = active ? (0.3 + Math.sin(phase + Date.now() / 200) * 0.4 + maxLevel * 0.6) : 0.15
+        const height = Math.max(4, Math.min(32, wave * 32))
+        return (
+          <motion.div
+            key={i}
+            className="w-1 rounded-full bg-gradient-to-t from-primary/40 to-primary"
+            animate={{ height }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+            style={{ height: `${height}px` }}
+          />
+        )
+      })}
     </div>
   )
 }

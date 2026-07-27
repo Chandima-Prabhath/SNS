@@ -222,6 +222,7 @@ interface BotBuilderEditorProps {
 
 export function BotBuilderEditor({ initialFlow, onSave }: BotBuilderEditorProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
 
   // ── Initial nodes/edges ──────────────────────────────────────────────
   // FIX: previously the .map() overwrote data.type with ReactFlow's type
@@ -312,6 +313,32 @@ export function BotBuilderEditor({ initialFlow, onSave }: BotBuilderEditorProps)
     setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId))
     setSelectedNodeId(null)
   }
+
+  // Disconnect an edge — used by the edge context menu and the Delete key.
+  const deleteEdge = (edgeId: string) => {
+    setEdges((eds) => eds.filter((e) => e.id !== edgeId))
+    setSelectedEdgeId(null)
+  }
+
+  // Keyboard shortcuts: Delete/Backspace deletes the selected node or edge.
+  // ReactFlow's built-in `deleteKeyCode` only handles nodes, so we wire up
+  // edges manually here.
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+      // Don't intercept if the user is typing in an input/textarea
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+      if (selectedNodeId) {
+        e.preventDefault()
+        deleteNode(selectedNodeId)
+      } else if (selectedEdgeId) {
+        e.preventDefault()
+        deleteEdge(selectedEdgeId)
+      }
+    },
+    [selectedNodeId, selectedEdgeId] // eslint-disable-line react-hooks/exhaustive-deps
+  )
 
   const clearAll = () => {
     if (!confirm('Clear the entire flow? This cannot be undone.')) return
@@ -423,12 +450,31 @@ export function BotBuilderEditor({ initialFlow, onSave }: BotBuilderEditorProps)
           <span className="text-xs text-white/40">
             {nodes.length} node{nodes.length !== 1 ? 's' : ''} · {edges.length} edge{edges.length !== 1 ? 's' : ''}
           </span>
-          {warnings.length > 0 && (
+          {selectedEdgeId && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-red-400 hover:text-red-300"
+              onClick={() => deleteEdge(selectedEdgeId)}
+            >
+              <Trash2 className="w-3 h-3 mr-1" /> Disconnect
+            </Button>
+          )}
+          {selectedNodeId && (
+            <span className="text-xs text-white/40">
+              Node selected — press <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-[10px]">Del</kbd> to remove
+            </span>
+          )}
+          {!selectedNodeId && !selectedEdgeId && warnings.length > 0 && (
             <div className="flex items-center gap-1.5 text-xs text-amber-400">
               <AlertTriangle className="w-3.5 h-3.5" />
               <span>{warnings.length} warning{warnings.length !== 1 ? 's' : ''}</span>
             </div>
           )}
+          <div className="flex-1" />
+          <span className="text-[10px] text-white/30">
+            Click an edge to select · <kbd className="px-1 py-0.5 bg-white/10 rounded">Del</kbd> to delete
+          </span>
         </div>
 
         {/* Warnings strip */}
@@ -446,12 +492,30 @@ export function BotBuilderEditor({ initialFlow, onSave }: BotBuilderEditorProps)
         <div className="flex-1 relative">
           <ReactFlow
             nodes={nodes}
-            edges={edges}
+            edges={edges.map((e) => ({
+              ...e,
+              selected: e.id === selectedEdgeId,
+              style: {
+                stroke: e.id === selectedEdgeId ? '#EF4444' : '#5865F2',
+                strokeWidth: e.id === selectedEdgeId ? 3 : 2,
+              },
+            }))}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onNodeClick={(_, node) => setSelectedNodeId(node.id)}
-            onPaneClick={() => setSelectedNodeId(null)}
+            onNodeClick={(_, node) => {
+              setSelectedNodeId(node.id)
+              setSelectedEdgeId(null)
+            }}
+            onEdgeClick={(_, edge) => {
+              setSelectedEdgeId(edge.id)
+              setSelectedNodeId(null)
+            }}
+            onPaneClick={() => {
+              setSelectedNodeId(null)
+              setSelectedEdgeId(null)
+            }}
+            onKeyDown={onKeyDown}
             nodeTypes={nodeTypes}
             fitView
             className="bg-[#1e1f22]"

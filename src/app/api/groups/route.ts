@@ -27,6 +27,10 @@ export async function POST(req: Request) {
           order: i,
         })),
       },
+      // Owner is automatically a GroupMember with role 'owner'
+      members: {
+        create: { userId, role: 'owner' },
+      },
     },
     include: { channels: true },
   })
@@ -68,6 +72,11 @@ export async function PATCH(req: Request) {
     include: { channels: true },
   })
   if (!group) return NextResponse.json({ error: 'invalid invite code' }, { status: 404 })
+
+  // Add the user as a GroupMember (role: member)
+  await db.groupMember
+    .create({ data: { groupId: group.id, userId, role: 'member' } })
+    .catch(() => {}) // already a member — ignore
 
   for (const ch of group.channels) {
     if (ch.type === 'text') {
