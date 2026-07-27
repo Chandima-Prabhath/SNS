@@ -305,6 +305,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       const targetPresence = presence.get(payload.targetUserId)
 
       // Always send a push notification (works even if user is offline or backgrounded)
+      // This is the KEY mechanism for waking up a backgrounded app.
       import('./push').then(m => {
         m.sendPushNotification(payload.targetUserId, {
           type: 'call',
@@ -317,10 +318,15 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       }).catch(() => {})
 
       if (!targetPresence) {
-        // Target is offline — notify caller via a 'reject' with reason 'offline'
-        socket.emit('call:reject', { callId: payload.callId, byUserId: payload.targetUserId, reason: 'offline' })
+        // Target appears offline (no active sockets).
+        // DON'T reject immediately — the push notification will wake their app.
+        // If they have no push subscription either, the call will time out
+        // naturally after 30 seconds (caller can cancel).
+        // Give them 30 seconds to respond to the push notification.
+        console.log(`[call] target ${payload.targetUserId} appears offline — sent push, waiting 30s`)
         return
       }
+      // Target has active sockets — send the incoming call event
       for (const sid of targetPresence.socketIds) {
         io.to(sid).emit('call:incoming', {
           callId: payload.callId,

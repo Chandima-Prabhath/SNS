@@ -93,5 +93,58 @@ export function CallController({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  // Listen for service worker notification clicks — navigate to the correct view
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data
+      if (!data || data.type !== 'notification_click') return
+
+      console.log('[CallController] notification click:', data)
+
+      const store = useCallStore.getState()
+
+      if (data.action === 'accept' && data.callId) {
+        // Call accepted from notification — switch to voice view
+        // The incoming call overlay will handle the actual accept
+        // (the call:incoming event should have already fired)
+      }
+
+      if (data.action === 'decline' && data.callId) {
+        // Call declined from notification — reject the call
+        import('@/lib/socket').then(({ getSocket }) => {
+          getSocket().then(socket => {
+            socket.emit('call:reject', { callId: data.callId, byUserId: data.from?.userId })
+          })
+        })
+      }
+
+      // Navigate to the correct view based on notification type
+      if (data.type === 'message' && data.channelId) {
+        // Open the chat with this channel
+        useCallStore.getState() // just to access the store
+        // We need to use the app store — import dynamically
+        import('@/stores/useAppStore').then(({ useAppStore }) => {
+          useAppStore.getState().setView('chats')
+          useAppStore.getState().setActiveChannel(data.channelId)
+        })
+      } else if (data.type === 'call') {
+        // Switch to voice view
+        import('@/stores/useAppStore').then(({ useAppStore }) => {
+          useAppStore.getState().setView('voice')
+        })
+      } else if (data.type === 'story') {
+        // Switch to status view
+        import('@/stores/useAppStore').then(({ useAppStore }) => {
+          useAppStore.getState().setView('status')
+        })
+      }
+    }
+
+    navigator.serviceWorker?.addEventListener('message', onMessage)
+    return () => {
+      navigator.serviceWorker?.removeEventListener('message', onMessage)
+    }
+  }, [])
+
   return <>{children}</>
 }
