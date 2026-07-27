@@ -74,87 +74,83 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     },
   })
 
-  // Bot dispatch — check if message is a command or mentions a bot
+  // Bot dispatch
+  // ─────────────────────────────────────────────────────────────────────
+  // Strategy: collect the set of (botId, isMention) pairs to dispatch to,
+  // dedupe by botId, then fire each dispatch once. This eliminates the
+  // previous double-dispatch bug where visual bots would receive the same
+  // message twice (once from the command/mention path, once from the
+  // unconditional visual-bot path).
   try {
     const { dispatchBotUpdate } = await import('@/lib/bot')
-    const commandMatch = text.match(/^\/(\w+)(@\w+)?/)
-    if (commandMatch) {
-      const targetBotUsername = commandMatch[2]?.replace('@', '')
-      // Find bots that are members of this channel
-      const botMembers = await db.channelMember.findMany({
-        where: { channel: { id: channelId } },
-        include: {},
-      })
-      // Bots are stored in Bot table; check by username
-      const allBots = await db.bot.findMany({ where: { enabled: true } })
-      for (const bot of allBots) {
-        const isMember = await db.channelMember.findFirst({
-          where: { channelId, userId: bot.id },
-        })
-        if (!isMember) continue
-        const isTarget = !targetBotUsername || targetBotUsername === bot.username
-        if (!isTarget) continue
-        // Dispatch
-        await dispatchBotUpdate({
-          botId: bot.id,
-          channelId,
-          senderId: userId,
-          senderName: session.user.username || session.user.email || 'user',
-          messageId: message.id,
-          body: text,
-          replyToId,
-          isMention: false,
-        })
-      }
-    } else {
-      // Check for @mentions of bot usernames
-      const mentionMatches = Array.from(text.matchAll(/@(\w+)/g))
-      if (mentionMatches.length > 0) {
-        const mentioned = new Set(mentionMatches.map((m) => m[1]))
-        const allBots = await db.bot.findMany({ where: { enabled: true } })
-        for (const bot of allBots) {
-          if (!mentioned.has(bot.username)) continue
-          const isMember = await db.channelMember.findFirst({
-            where: { channelId, userId: bot.id },
-          })
-          if (!isMember) continue
-          await dispatchBotUpdate({
-            botId: bot.id,
-            channelId,
-            senderId: userId,
-            senderName: session.user.username || session.user.email || 'user',
-            messageId: message.id,
-            body: text,
-            replyToId,
-            isMention: true,
-          })
+
+    // All enabled bots that are members of this channel
+    const channelBotMembers = await db.channelMember.findMany({
+      where: { channelId },
+      select: { userId: true },
+    })
+    const memberBotIds = new Set(channelBotMembers.map((m) => m.userId))
+    const allBots = await db.bot.findMany({ where: { enabled: true } })
+    const bots = allBots.filter((b) => memberBotIds.has(b.id))
+
+    // Parse the message
+    const commandMatch = text.match(/^\/(\w+)(?:@(\w+))?/)
+    const mentionMatches: string[] = []
+    for (const m of text.matchAll(/@(\w+)/g)) {
+      if (m[1]) mentionMatches.push(m[1])
+    }
+    const mentionedSet = new Set(mentionMatches)
+
+    // For each bot, decide if it should be dispatched and with what isMention flag.
+    // Use a Map<botId, isMention> so each bot is dispatched at most once.
+    const dispatches = new Map<string, boolean>()
+
+    for (const bot of bots) {
+      let isMention = false
+      let shouldDispatch = false
+
+      if (commandMatch) {
+        const [, , targetBotUsername] = commandMatch
+        // /cmd@botusername → only the named bot
+        if (targetBotUsername) {
+          if (targetBotUsername === bot.username) {
+            shouldDispatch = true
+          }
+        } else {
+          // /cmd (no @target) → dispatch to all bots in the channel
+          // (the bot module / flow trigger decides whether to respond)
+          shouldDispatch = true
         }
+      } else if (mentionedSet.has(bot.username)) {
+        // @botusername mention
+        shouldDispatch = true
+        isMention = true
+      } else if (bot.module === 'visual') {
+        // Visual bots get every message — the trigger node decides
+        shouldDispatch = true
+      }
+
+      if (shouldDispatch) {
+        // If we already plan to dispatch as mention, keep that flag set
+        dispatches.set(bot.id, dispatches.get(bot.id) || isMention)
       }
     }
 
-    // Also dispatch visual bots on EVERY message — the trigger node
-    // inside the flow decides whether to respond
-    try {
-      const { dispatchBotUpdate } = await import('@/lib/bot')
-      const allBots = await db.bot.findMany({ where: { enabled: true, module: 'visual' } })
-      for (const bot of allBots) {
-        const isMember = await db.channelMember.findFirst({
-          where: { channelId, userId: bot.id },
-        })
-        if (!isMember) continue
+    for (const [botId, isMention] of dispatches) {
+      try {
         await dispatchBotUpdate({
-          botId: bot.id,
+          botId,
           channelId,
           senderId: userId,
           senderName: session.user.username || session.user.email || 'user',
           messageId: message.id,
           body: text,
           replyToId,
-          isMention: false,
+          isMention,
         })
+      } catch (e) {
+        console.error(`[bot dispatch] bot ${botId} failed:`, e)
       }
-    } catch (e) {
-      console.error('[bot dispatch] visual bot error', e)
     }
   } catch (e) {
     console.error('[bot dispatch] error', e)
