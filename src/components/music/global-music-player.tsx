@@ -622,7 +622,7 @@ function PlayerBar({
 
   return (
     <>
-      {/* ─── Collapsed: Floating Mini-Player (FAB) ─── */}
+      {/* ─── Collapsed: Draggable Floating Mini-Player (FAB) ─── */}
       <AnimatePresence>
         {!expanded && (
           <motion.div
@@ -630,13 +630,21 @@ function PlayerBar({
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-            className="fixed bottom-20 lg:bottom-6 right-4 z-30"
+            // Draggable: user can move the FAB anywhere on screen.
+            // dragMomentum=false so it stays where dropped (no sliding).
+            // z-[60] so it's above the chat view (z-40) and below dialogs (z-50).
+            drag
+            dragMomentum={false}
+            dragElastic={0}
+            whileDrag={{ scale: 1.1, cursor: 'grabbing' }}
+            className="fixed bottom-20 lg:bottom-6 right-4 z-[60] cursor-grab touch-none"
           >
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 pointer-events-auto">
               {/* Play/pause button — floating circle */}
               <button
                 onClick={onTogglePlay}
-                className="relative w-14 h-14 rounded-full gradient-primary shadow-glow hover:scale-105 transition-transform flex items-center justify-center shrink-0"
+                onPointerDown={(e) => e.stopPropagation()}
+                className="relative w-14 h-14 rounded-full gradient-primary shadow-glow hover:scale-105 transition-transform flex items-center justify-center shrink-0 touch-none"
                 aria-label={isPlaying ? 'Pause' : 'Play'}
               >
                 {currentTrack.thumbnail ? (
@@ -660,7 +668,8 @@ function PlayerBar({
               {/* Expand button — chevron up */}
               <button
                 onClick={() => setExpanded(true)}
-                className="w-10 h-10 rounded-full glass-dark flex items-center justify-center text-foreground hover:scale-105 transition-transform shrink-0"
+                onPointerDown={(e) => e.stopPropagation()}
+                className="w-10 h-10 rounded-full glass-dark flex items-center justify-center text-foreground hover:scale-105 transition-transform shrink-0 touch-none"
                 aria-label="Expand player"
               >
                 <ChevronUp className="w-4 h-4" />
@@ -678,7 +687,7 @@ function PlayerBar({
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 120, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className="fixed bottom-16 lg:bottom-4 left-4 right-4 lg:left-1/2 lg:-translate-x-1/2 lg:right-auto lg:w-[640px] z-30 bg-popover/95 backdrop-blur-2xl border border-border/50 rounded-2xl shadow-2xl overflow-hidden"
+            className="fixed bottom-16 lg:bottom-4 left-4 right-4 lg:left-1/2 lg:-translate-x-1/2 lg:right-auto lg:w-[640px] z-[60] bg-popover/95 backdrop-blur-2xl border border-border/50 rounded-2xl shadow-2xl overflow-hidden"
           >
             {/* Mobile layout */}
             <div className="lg:hidden px-3 py-3 flex items-center gap-3">

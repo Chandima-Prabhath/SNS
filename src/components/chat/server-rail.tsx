@@ -203,13 +203,16 @@ function MobileServerRail() {
     <AnimatePresence>
       {open && (
         <>
-          {/* Backdrop — lower z-index so dialogs appear above it */}
+          {/* Backdrop — onClick closes the drawer. We use pointer-events-none
+              during exit so it doesn't intercept clicks from dialogs that
+              opened on top. */}
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            initial={{ opacity: 0, pointerEvents: 'auto' as const }}
+            animate={{ opacity: 1, pointerEvents: 'auto' as const }}
+            exit={{ opacity: 0, pointerEvents: 'none' as const }}
             onClick={() => setOpen(false)}
             className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
+            style={{ pointerEvents: open ? 'auto' : 'none' }}
           />
           {/* Drawer */}
           <motion.div
@@ -218,6 +221,7 @@ function MobileServerRail() {
             exit={{ x: -300 }}
             transition={{ type: 'spring', stiffness: 350, damping: 35 }}
             className="md:hidden fixed left-0 top-0 bottom-0 z-50 w-20 flex flex-col items-center gap-1.5 py-4 bg-sidebar border-r border-sidebar-border/50 glass-dark"
+            style={{ pointerEvents: open ? 'auto' : 'none' }}
           >
             {/* Top section: DMs + servers */}
             <div className="flex flex-col items-center gap-1.5">
