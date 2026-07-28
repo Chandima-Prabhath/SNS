@@ -103,3 +103,48 @@ Stage Summary:
 - Engine is logical: trigger → walk graph → pause on input → resume on next message → clear state on completion
 - Build passes cleanly (`next build` succeeds, all 5 bot modules load)
 - Production 500 errors on /api/bots still need `bun run db:push` on the prod database (Bot.flow column likely missing)
+
+---
+Task ID: ui-bugs-and-discord-groups
+Agent: Super Z (main)
+Task: Fix multiple UI bugs (input node re-asking question, status progress bar, auto-scroll, call button spinner, edge disconnection, deleted user display) and add Discord-like groups with channel types (text/voice/video), admin roles, and group settings. Also modernize the theme and redesign voice/video caller UIs.
+
+Work Log:
+- Fixed input node resume bug: engine was re-entering the input case on resume and re-sending the prompt. Now skips past the input node and starts from the next node. Also moved helper functions above the resume block to fix a TDZ error.
+- Added session clearing when a bot flow is saved (deleteMany on ConversationSession) to prevent stale paused state from interfering with new flows.
+- Fixed chat auto-scroll: added channelId-keyed useEffect to reset lastMessageIdRef on channel switch, added isAtBottomRef tracking via scroll listener, used smooth scroll for new messages and instant for initial load.
+- Fixed status progress bar: replaced instant "w-full" jump with requestAnimationFrame loop that animates from 0% to 100% over 5 seconds, syncing with the auto-advance timer.
+- Fixed call button spinner: both voice and video buttons now show the Loader2 spinner when callPending is true (previously only voice did).
+- Added edge disconnection in bot builder: edges are clickable, turn red when selected, can be deleted via Delete key or a "Disconnect" button in the toolbar.
+- Added "Deleted User" handling in chat-list and message-list: deleted DM partners show a UserX icon, italic muted text, and "account no longer exists" instead of @user fallback.
+- Modernized the dark theme: deeper navy-black base (oklch 0.16), more vibrant primary (oklch 0.62 0.20 264), added glass-dark/glass-light utilities, gradient-surface, glow-primary, inner-highlight, border-gradient, shimmer, pulse-glow, and press-scale utilities.
+- Fixed h-screen → h-dvh on app-shell for proper mobile viewport.
+- Redesigned voice call screen: animated gradient backdrop, larger avatar with ring, expanding connecting rings, audio waveform visualization, refined glass pill controls.
+- Reworked Calls tab: grid layout for voice/video channels, active call banner at top, ongoing calls section, call history with proper incoming/outgoing/missed icons and duration.
+- Added GroupMember model to Prisma schema with role field (owner/admin/member).
+- Added 'video' channel type to Channel model.
+- New API endpoints:
+  * GET /api/groups/[id]/members — list members with roles
+  * PATCH /api/groups/[id]/members — promote/demote (owner only)
+  * DELETE /api/groups/[id]/members — kick member (owner/admin)
+  * POST /api/groups/[id]/channels — create text/voice/video channels (owner/admin)
+  * PATCH /api/channels/[id] — rename/edit channel (owner/admin)
+  * DELETE /api/channels/[id] — delete channel (owner/admin)
+- Redesigned channel-list with distinct icons per channel type, voice/video channels jump to Calls tab, group header with Crown/Shield icons for owner/admin, group settings dialog with Channels and Members tabs.
+- Created backfill script to add GroupMember rows for existing groups (ran successfully, backfilled 5 rows across 2 groups).
+- Build passes cleanly with all new routes registered.
+
+Stage Summary:
+- All 10 user-reported issues fixed:
+  1. Input node now correctly waits for reply and resumes
+  2. Trigger matching fixed (command trigger no longer fires on @mention)
+  3. Chat auto-scrolls to bottom smoothly on channel switch and new messages
+  4. Status progress bar animates from 0% to 100% over 5 seconds
+  5. Both call buttons show spinner when starting a call
+  6. Edges in bot builder can be clicked and deleted (Disconnect button + Delete key)
+  7. Deleted accounts show "Deleted User" with UserX icon
+  8. Discord-like groups with text/voice/video channels, admin roles, settings dialog
+  9. Calls tab shows joined channels, ongoing calls, and history properly
+  10. Voice and video caller UIs are now distinct and modern
+- Theme upgraded to modern futuristic with glassmorphism, gradients, and glow effects
+- All changes pushed to GitHub (commit 96458c4)
