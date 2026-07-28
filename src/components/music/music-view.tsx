@@ -132,11 +132,19 @@ export function MusicView() {
     setIsPlaying(true)
     setPosition(0)
 
-    if (activeRoomId) {
-      fetch(`/api/music/rooms/${activeRoomId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'track', videoId: track.videoId }),
+    // If in a room, broadcast the track change to all members via Socket.io
+    if (activeRoomId && socket) {
+      socket.emit('music:sync', {
+        roomId: activeRoomId,
+        state: 'playing',
+        position: 0,
+        videoId: track.videoId,
+        trackInfo: {
+          title: track.title,
+          artist: track.artist,
+          thumbnail: track.thumbnail,
+          durationSeconds: track.durationSeconds,
+        },
       })
     }
 
@@ -161,7 +169,7 @@ export function MusicView() {
         }
       }
     }
-  }, [activeRoomId, volume, currentTrack])
+  }, [activeRoomId, volume, currentTrack, socket])
 
   // Play next track from queue or autoplay
   const playNext = useCallback(async () => {
@@ -207,9 +215,25 @@ export function MusicView() {
     if (isPlaying) {
       audioRef.current.pause()
       setIsPlaying(false)
+      // Broadcast pause to room
+      if (activeRoomId && socket) {
+        socket.emit('music:sync', {
+          roomId: activeRoomId,
+          state: 'paused',
+          position: audioRef.current.currentTime,
+        })
+      }
     } else {
       audioRef.current.play()
       setIsPlaying(true)
+      // Broadcast play to room
+      if (activeRoomId && socket) {
+        socket.emit('music:sync', {
+          roomId: activeRoomId,
+          state: 'playing',
+          position: audioRef.current.currentTime,
+        })
+      }
     }
   }
 
@@ -219,6 +243,14 @@ export function MusicView() {
     if (audioRef.current) {
       audioRef.current.currentTime = newPos
       setPosition(newPos)
+      // Broadcast seek to room
+      if (activeRoomId && socket) {
+        socket.emit('music:sync', {
+          roomId: activeRoomId,
+          state: isPlaying ? 'playing' : 'paused',
+          position: newPos,
+        })
+      }
     }
   }
 
@@ -250,6 +282,79 @@ export function MusicView() {
       audio.removeEventListener('error', onError)
     }
   }, [currentTrack, playNext])
+
+  // Real-time sync: listen for room sync events from the host.
+  // This is the CORE of sync play — when the host plays/pauses/seeks/changes
+  // track, the event arrives instantly via Socket.io (not DB polling).
+  useEffect(() => {
+    if (!socket || !activeRoomId) return
+
+    // Join the music room's socket channel
+    socket.emit('music:join', activeRoomId)
+
+    const onSync = (data: {
+      roomId: string
+      state: string
+      position: number
+      videoId?: string
+      trackInfo?: Track
+      serverTimestamp: number
+    }) => {
+      if (data.roomId !== activeRoomId) return
+
+      // Calculate network delay and adjust position
+      const networkDelay = (Date.now() - data.serverTimestamp) / 1000
+      const adjustedPosition = data.position + (data.state === 'playing' ? networkDelay : 0)
+
+      // Track changed — load the new track
+      if (data.videoId && (!currentTrack || currentTrack.videoId !== data.videoId)) {
+        const track: Track = data.trackInfo || {
+          videoId: data.videoId,
+          title: 'Now Playing',
+          artist: '',
+          thumbnail: null,
+          durationSeconds: null,
+        }
+        setCurrentTrack(track)
+        setTimeout(() => {
+          if (audioRef.current) {
+            audioRef.current.src = `/api/music/stream/${data.videoId}`
+            audioRef.current.currentTime = adjustedPosition
+            if (data.state === 'playing') {
+              audioRef.current.play().catch(() => {})
+              setIsPlaying(true)
+            } else {
+              setIsPlaying(false)
+            }
+          }
+        }, 100)
+      } else if (audioRef.current && currentTrack) {
+        // Same track — just sync position and state
+        const drift = Math.abs(audioRef.current.currentTime - adjustedPosition)
+
+        // Only force-seek if drift > 1.5 seconds (avoid jitter from minor differences)
+        if (drift > 1.5) {
+          audioRef.current.currentTime = adjustedPosition
+        }
+
+        // Sync play/pause state
+        if (data.state === 'playing' && !isPlaying) {
+          audioRef.current.play().catch(() => {})
+          setIsPlaying(true)
+        } else if (data.state === 'paused' && isPlaying) {
+          audioRef.current.pause()
+          setIsPlaying(false)
+        }
+      }
+    }
+
+    socket.on('music:sync', onSync)
+
+    return () => {
+      socket.off('music:sync', onSync)
+      socket.emit('music:leave', activeRoomId)
+    }
+  }, [socket, activeRoomId, currentTrack, isPlaying])
 
   const trendingTracks = trendingData?.tracks || []
   const rooms = roomsData?.rooms || []
@@ -421,7 +526,8 @@ export function MusicView() {
                         isActive={activeRoomId === room.id}
                         onJoin={() => {
                           setActiveRoomId(room.id)
-                          // Fetch room state to sync playback
+                          // Fetch room state ONCE to get the initial sync point.
+                          // After this, all updates come via Socket.io in real-time.
                           fetch(`/api/music/rooms/${room.id}`).then((r) => r.json()).then((data) => {
                             if (data.room?.currentVideoId) {
                               const track: Track = {
@@ -435,7 +541,12 @@ export function MusicView() {
                               setTimeout(() => {
                                 if (audioRef.current) {
                                   audioRef.current.src = `/api/music/stream/${data.room.currentVideoId}`
-                                  audioRef.current.currentTime = data.room.currentPosition || 0
+                                  // Calculate how far into the track we should be
+                                  const lastSync = new Date(data.room.lastSyncAt).getTime()
+                                  const elapsed = data.room.currentState === 'playing'
+                                    ? (Date.now() - lastSync) / 1000
+                                    : 0
+                                  audioRef.current.currentTime = (data.room.currentPosition || 0) + elapsed
                                   if (data.room.currentState === 'playing') {
                                     audioRef.current.play().catch(() => {})
                                     setIsPlaying(true)
@@ -572,7 +683,7 @@ export function MusicView() {
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className="absolute bottom-0 left-0 right-0 z-20 glass-dark border-t border-border/50"
+            className="absolute bottom-0 left-0 right-0 z-20 bg-popover/95 backdrop-blur-2xl border-t border-border/50 shadow-2xl"
           >
             <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
               {/* Track info */}
@@ -596,22 +707,22 @@ export function MusicView() {
                   onClick={playNext}
                   variant="ghost"
                   size="icon"
-                  className="h-9 w-9"
+                  className="h-9 w-9 text-foreground hover:bg-accent"
                 >
                   <SkipForward className="w-4 h-4" />
                 </Button>
                 <Button
                   onClick={togglePlay}
                   size="icon"
-                  className="rounded-full h-10 w-10 gradient-primary"
+                  className="rounded-full h-11 w-11 gradient-primary shadow-glow hover:scale-105 transition-transform"
                 >
-                  {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                  {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
                 </Button>
                 <Button
                   onClick={() => { setCurrentTrack(null); setIsPlaying(false); if (audioRef.current) audioRef.current.pause() }}
                   variant="ghost"
                   size="icon"
-                  className="h-9 w-9"
+                  className="h-9 w-9 text-foreground hover:bg-accent"
                 >
                   <X className="w-4 h-4" />
                 </Button>
