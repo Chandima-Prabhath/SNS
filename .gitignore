@@ -19,6 +19,12 @@ node_modules
 
 # production
 /build
+/public
+cookies.txt
+bun
+deno.lock
+run
+start
 
 # misc
 .DS_Store
