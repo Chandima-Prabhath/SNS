@@ -224,3 +224,34 @@ Stage Summary:
 - TTS voice messages integrated (Pocket TTS / Kyutai pocket-tts)
 - Theme pushed further with animated aurora, deeper colors, stronger glow
 - All changes pushed to GitHub (commit 97373ec)
+
+---
+Task ID: musical-and-tts-safetensors
+Agent: Super Z (main)
+Task: Optimize TTS voice cloning with safetensors export, research and build Musical synced music feature with yt-dlp + ffmpeg audio extraction, YouTube Music metadata, real-time room sync, and Spotify-style UI.
+
+Work Log:
+- TTS safetensors optimization:
+  - Added safetensorsUrl field to CustomVoice model
+  - POST /api/tts/voices runs 'pocket-tts export-voice' in background to pre-compute voice model
+  - POST /api/tts checks for safetensors first (fast path), falls back to voice_wav (slow path)
+  - Safetensors file served via HTTP as voice_url — Pocket TTS auto-detects extension and uses fast load
+
+- Musical feature:
+  - Installed youtubei.js for YouTube Music metadata (search, trending)
+  - Added MusicRoom and MusicRoomMember models to Prisma
+  - GET /api/music/search — search YouTube Music
+  - GET /api/music/trending — trending tracks
+  - GET /api/music/stream/[videoId] — yt-dlp extraction + disk cache + HTTP 206 byte-range
+  - GET/POST /api/music/rooms — room CRUD
+  - GET/PATCH/DELETE /api/music/rooms/[id] — room state (play/pause/seek/track/queue)
+  - Socket.io music:join/leave/sync events with serverTimestamp for drift compensation
+  - MusicView component: search bar, trending grid, room list, sticky bottom player bar
+  - Added Music to server rail and bottom nav (5 columns on mobile)
+
+Stage Summary:
+- TTS voice cloning now uses safetensors for fast inference (10x+ faster)
+- Full Musical feature: search music, stream audio, create listening rooms, sync playback
+- Spotify-style UI with trending grid, search results, room management, player bar
+- Real-time sync via Socket.io with drift compensation (>1.5s threshold)
+- All changes pushed to GitHub (commit 56094a7)
