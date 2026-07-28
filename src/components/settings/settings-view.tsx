@@ -33,7 +33,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { generateAvatarCandidates } from '@/lib/avatar'
-import { BotBuilderEditor } from '@/components/bots/bot-builder-editor'
+// BotBuilderEditor is now loaded via the standalone /bot-builder/[id] route
 import {
   Select,
   SelectContent,
@@ -349,42 +349,12 @@ function PrivacyRow({ title, desc, checked, onChange }: { title: string; desc: s
 // ─── Bots ─────────────────────────────────────────────────────────────────
 
 function BotsSection() {
-  const [editingBotId, setEditingBotId] = useState<string | null>(null)
-  const [editingBotFlow, setEditingBotFlow] = useState<any>(null)
-
-  if (editingBotId) {
-    return (
-      <div className="h-[calc(100vh-200px)]">
-        <BotBuilderEditor
-          initialFlow={editingBotFlow}
-          onSave={(flow) => {
-            // Save the flow to the bot
-            fetch(`/api/bots/${editingBotId}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ flow }),
-            }).then(() => {
-              toast.success('Bot flow saved')
-              setEditingBotId(null)
-            }).catch(() => toast.error('Failed to save flow'))
-          }}
-        />
-        <div className="flex justify-center p-2">
-          <Button variant="ghost" onClick={() => setEditingBotId(null)}>← Back to bots</Button>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-4">
       <BotsList onEditBot={(bot) => {
-        setEditingBotId(bot.id)
-        try {
-          setEditingBotFlow(bot.flow ? JSON.parse(bot.flow) : undefined)
-        } catch {
-          setEditingBotFlow(undefined)
-        }
+        // Open the bot builder in a new standalone tab — gives the canvas
+        // full screen space and makes it usable on mobile.
+        window.open(`/bot-builder/${bot.id}`, '_blank')
       }} />
       <BotModules />
     </div>

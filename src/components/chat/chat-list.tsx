@@ -20,10 +20,11 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
-import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn, UserX } from 'lucide-react'
+import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn, UserX, Settings, Crown, Shield, Video, Phone } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
+import { GroupSettingsDialog } from './channel-list'
 
 interface ChannelInfo {
   id: string
@@ -61,6 +62,7 @@ interface ChatRow {
 export function ChatList() {
   const activeChannelId = useAppStore((s) => s.activeChannelId)
   const setActiveChannel = useAppStore((s) => s.setActiveChannel)
+  const selectedGroupId = useAppStore((s) => s.selectedGroupId)
   const filter = useAppStore((s) => s.chatFilter)
   const setFilter = useAppStore((s) => s.setChatFilter)
   const presence = usePresence()
@@ -78,6 +80,10 @@ export function ChatList() {
       return data.groups as any[]
     },
   })
+
+  // The currently selected group object (or null for DMs)
+  const selectedGroup = groups?.find((g) => g.id === selectedGroupId) || null
+  const isViewingDms = selectedGroupId === 'dm'
 
   // Fetch all users for the "Discover people" section
   const { data: users } = useQuery({
@@ -98,10 +104,15 @@ export function ChatList() {
   }, [activeChannelId, groups, setActiveChannel])
 
   // Flatten channels into a unified list of "chat rows"
+  // When a server (non-DM group) is selected in the rail, only show that
+  // group's channels. When 'dm' is selected, only show DM channels.
   const allChats: ChatRow[] = useMemo(() => {
     if (!groups) return []
     const rows: ChatRow[] = []
     for (const g of groups) {
+      // Filter by selected group from the server rail
+      if (selectedGroupId === 'dm' && !g.isDm) continue
+      if (selectedGroupId && selectedGroupId !== 'dm' && g.id !== selectedGroupId) continue
       for (const ch of g.channels) {
         if (ch.type !== 'text') continue
         rows.push({
@@ -116,7 +127,7 @@ export function ChatList() {
       }
     }
     return rows
-  }, [groups])
+  }, [groups, selectedGroupId])
 
   // Apply filter
   const filteredChats = useMemo(() => {
@@ -140,14 +151,43 @@ export function ChatList() {
 
   return (
     <div className="flex flex-col h-full w-full bg-sidebar">
-      {/* Header */}
-      <div className="px-4 pt-4 pb-3 space-y-3">
+      {/* Header — shows the selected group name or "Direct Messages" */}
+      <div className="px-4 pt-4 pb-3 space-y-3 border-b border-sidebar-border/50">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold tracking-tight">Chats</h1>
-          <div className="flex gap-1">
-            <JoinGroupButton />
-            <NewDmButton />
-            <CreateGroupButton />
+          <div className="flex items-center gap-2.5 min-w-0">
+            {isViewingDms ? (
+              <>
+                <div className="w-9 h-9 rounded-xl bg-primary/15 flex items-center justify-center shrink-0">
+                  <MessageCircle className="w-4 h-4 text-primary" />
+                </div>
+                <div className="min-w-0">
+                  <h1 className="text-lg font-semibold tracking-tight truncate">Direct Messages</h1>
+                  <p className="text-[11px] text-muted-foreground">Private conversations</p>
+                </div>
+              </>
+            ) : selectedGroup ? (
+              <>
+                <div className="w-9 h-9 rounded-xl bg-primary/15 flex items-center justify-center shrink-0 overflow-hidden">
+                  {selectedGroup.iconUrl ? (
+                    <img src={selectedGroup.iconUrl} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <Users className="w-4 h-4 text-primary" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <h1 className="text-lg font-semibold tracking-tight truncate">{selectedGroup.name}</h1>
+                  {selectedGroup.description && (
+                    <p className="text-[11px] text-muted-foreground truncate">{selectedGroup.description}</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <h1 className="text-2xl font-semibold tracking-tight">Chats</h1>
+            )}
+          </div>
+          <div className="flex gap-1 shrink-0">
+            {isViewingDms && <NewDmButton />}
+            {!isViewingDms && selectedGroup && <GroupSettingsButton group={selectedGroup} />}
           </div>
         </div>
 
@@ -157,33 +197,33 @@ export function ChatList() {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search chats..."
+            placeholder={isViewingDms ? "Search DMs..." : "Search channels..."}
             className="pl-9 h-10 bg-background/50"
           />
         </div>
 
-        {/* Filter chips */}
-        <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4">
-          {([
-            ['all', 'All'],
-            ['unread', 'Unread'],
-            ['groups', 'Groups'],
-            ['dms', 'Direct'],
-          ] as const).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setFilter(key)}
-              className={cn(
-                'px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors',
-                filter === key
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground'
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        {/* Filter chips — only show for DMs */}
+        {isViewingDms && (
+          <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4">
+            {([
+              ['all', 'All'],
+              ['unread', 'Unread'],
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                className={cn(
+                  'px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors',
+                  filter === key
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground'
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Chat list */}
@@ -580,5 +620,79 @@ function NewDmButton() {
         </ScrollArea>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * Group settings button — opens the GroupSettingsDialog for the currently
+ * selected group. Shows a Crown for owners and Shield for admins.
+ */
+function GroupSettingsButton({ group }: { group: any }) {
+  const [open, setOpen] = useState(false)
+  const { data: session } = useSession()
+  const myId = (session?.user as any)?.id
+  const isOwner = group.ownerId === myId
+
+  // Check if I'm an admin via the members API
+  const { data: myMembership } = useQuery({
+    queryKey: ['my-membership', group.id],
+    queryFn: async () => {
+      const res = await fetch(`/api/groups/${group.id}/members`)
+      if (!res.ok) return null
+      const data = await res.json()
+      return data.members?.find((m: any) => m.userId === myId) || null
+    },
+    enabled: !!myId && open,
+  })
+  const isAdmin = myMembership?.role === 'admin'
+  const canManage = isOwner || isAdmin
+
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-9 w-9"
+        onClick={() => setOpen(true)}
+        title="Group settings"
+      >
+        <Settings className="w-4 h-4" />
+      </Button>
+      {open && canManage && (
+        <GroupSettingsDialog
+          group={group}
+          myRole={isOwner ? 'owner' : 'admin'}
+          onClose={() => setOpen(false)}
+        />
+      )}
+      {open && !canManage && (
+        <Dialog open onOpenChange={(o) => !o && setOpen(false)}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>{group.name}</DialogTitle>
+              <DialogDescription>You are a member of this group. Only owners and admins can manage channels and members.</DialogDescription>
+            </DialogHeader>
+            <div className="flex items-center gap-2 p-3 rounded-lg bg-muted">
+              <Copy className="w-4 h-4 text-muted-foreground" />
+              <Input
+                readOnly
+                value={group.inviteCode}
+                className="flex-1 bg-transparent border-0 focus-visible:ring-0"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  navigator.clipboard.writeText(group.inviteCode)
+                  toast.success('Invite code copied')
+                }}
+              >
+                Copy
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   )
 }

@@ -233,7 +233,7 @@ function GroupHeader({ group }: { group: any }) {
   )
 }
 
-function GroupSettingsDialog({
+export function GroupSettingsDialog({
   group,
   myRole,
   onClose,
@@ -532,31 +532,76 @@ function InviteCodeButton({ code }: { code: string }) {
 function CreateGroupButton({ variant = 'ghost' }: { variant?: 'ghost' | 'default' }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
-  const [channels, setChannels] = useState('general')
+  const [description, setDescription] = useState('')
+  // Channel builder — list of { name, type } instead of comma-separated string
+  const [channels, setChannels] = useState<Array<{ name: string; type: 'text' | 'voice' | 'video' }>>([
+    { name: 'general', type: 'text' },
+  ])
   const qc = useQueryClient()
 
   const create = useMutation({
     mutationFn: async () => {
+      // Create the group with just a default "general" text channel, then
+      // add the remaining channels via the channels API so they get the
+      // right type (voice/video). This avoids extending the groups API.
       const res = await fetch('/api/groups', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
-          channels: channels.split(',').map((s) => s.trim()).filter(Boolean),
+          description,
+          channels: ['general'],
         }),
       })
       if (!res.ok) throw new Error('failed')
-      return res.json()
+      const data = await res.json()
+      const groupId = data.group.id
+
+      // Add the remaining channels (skip the first "general" since the API
+      // already created it)
+      const extraChannels = channels.filter((_, i) => i > 0 || channels[0].name !== 'general')
+      for (const ch of extraChannels) {
+        await fetch(`/api/groups/${groupId}/channels`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: ch.name, type: ch.type }),
+        }).catch(() => {}) // ignore individual failures
+      }
+
+      // Rename "general" if the user changed the first channel's name
+      if (channels[0] && channels[0].name !== 'general' && data.group.channels[0]) {
+        await fetch(`/api/channels/${data.group.channels[0].id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: channels[0].name }),
+        }).catch(() => {})
+      }
+
+      return data
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['channels'] })
       toast.success('Group created')
       setOpen(false)
       setName('')
-      setChannels('general')
+      setDescription('')
+      setChannels([{ name: 'general', type: 'text' }])
     },
     onError: () => toast.error('Failed to create group'),
   })
+
+  const addChannel = () => {
+    setChannels([...channels, { name: '', type: 'text' }])
+  }
+
+  const removeChannel = (i: number) => {
+    if (channels.length === 1) return
+    setChannels(channels.filter((_, j) => j !== i))
+  }
+
+  const updateChannel = (i: number, patch: Partial<{ name: string; type: 'text' | 'voice' | 'video' }>) => {
+    setChannels(channels.map((c, j) => (j === i ? { ...c, ...patch } : c)))
+  }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -569,39 +614,102 @@ function CreateGroupButton({ variant = 'ghost' }: { variant?: 'ghost' | 'default
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Create a new group</DialogTitle>
           <DialogDescription>
-            Groups contain channels. You'll become the owner and can invite friends via the invite code.
+            Set up your group and add channels. You'll become the owner and can invite friends with the invite code.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="group-name">Group name</Label>
-            <Input
-              id="group-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Weekend Crew"
-            />
+        <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+          {/* Group info */}
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="group-name">Group name</Label>
+              <Input
+                id="group-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Weekend Crew"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="group-desc">Description (optional)</Label>
+              <Input
+                id="group-desc"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="What's this group about?"
+              />
+            </div>
           </div>
+
+          {/* Channels */}
           <div className="space-y-2">
-            <Label htmlFor="group-channels">Channels (comma-separated)</Label>
-            <Input
-              id="group-channels"
-              value={channels}
-              onChange={(e) => setChannels(e.target.value)}
-              placeholder="general, memes, planning"
-            />
+            <div className="flex items-center justify-between">
+              <Label>Channels</Label>
+              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={addChannel}>
+                <Plus className="w-3 h-3 mr-1" /> Add
+              </Button>
+            </div>
+            <div className="space-y-2">
+              {channels.map((ch, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <Select value={ch.type} onValueChange={(v) => updateChannel(i, { type: v as any })}>
+                    <SelectTrigger className="w-24 h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="text">
+                        <span className="flex items-center gap-1.5">
+                          <Hash className="w-3 h-3" /> Text
+                        </span>
+                      </SelectItem>
+                      <SelectItem value="voice">
+                        <span className="flex items-center gap-1.5">
+                          <Volume2 className="w-3 h-3" /> Voice
+                        </span>
+                      </SelectItem>
+                      <SelectItem value="video">
+                        <span className="flex items-center gap-1.5">
+                          <Video className="w-3 h-3" /> Video
+                        </span>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    value={ch.name}
+                    onChange={(e) => updateChannel(i, { name: e.target.value })}
+                    placeholder={ch.type === 'voice' ? 'Lounge' : ch.type === 'video' ? 'Movie Night' : 'general'}
+                    className="flex-1 h-9"
+                  />
+                  {channels.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 text-red-400 hover:text-red-300 shrink-0"
+                      onClick={() => removeChannel(i)}
+                    >
+                      ×
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Voice and video channels appear in the Calls tab. You can add more later.
+            </p>
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>
             Cancel
           </Button>
-          <Button onClick={() => create.mutate()} disabled={!name.trim() || create.isPending}>
-            {create.isPending ? 'Creating...' : 'Create'}
+          <Button
+            onClick={() => create.mutate()}
+            disabled={!name.trim() || channels.some((c) => !c.name.trim()) || create.isPending}
+          >
+            {create.isPending ? 'Creating...' : 'Create group'}
           </Button>
         </DialogFooter>
       </DialogContent>

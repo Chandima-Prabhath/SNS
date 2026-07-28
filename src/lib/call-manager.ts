@@ -763,6 +763,11 @@ export class CallManager {
    * Prefer VP8 video codec for cross-browser compatibility.
    * Firefox Android doesn't support H.264 reliably — VP8 is the only
    * universally supported WebRTC video codec (RFC 7742).
+   *
+   * IMPORTANT: We must keep RTX, RED, and ULPFEC in the preference list.
+   * Stripping them out causes "Failed to parse codecs correctly" errors
+   * when setRemoteDescription receives the answer — the SDP parser rejects
+   * an offer/answer that references codecs not in the local preference list.
    */
   private preferVp8(pc: RTCPeerConnection) {
     try {
@@ -770,11 +775,12 @@ export class CallManager {
       for (const t of transceivers) {
         if (t.receiver && 'track' in t.receiver && t.receiver.track?.kind === 'video') {
           const codecs = RTCRtpReceiver.getCapabilities('video')?.codecs || []
+          if (codecs.length === 0) continue
           const vp8 = codecs.filter((c) => c.mimeType === 'video/VP8')
-          const rest = codecs.filter((c) => c.mimeType !== 'video/VP8' && c.mimeType !== 'video/rtx' && c.mimeType !== 'video/red' && c.mimeType !== 'video/ulpfec')
-          if (vp8.length > 0) {
-            t.setCodecPreferences([...vp8, ...rest])
-          }
+          if (vp8.length === 0) continue
+          // Keep everything else (including RTX, RED, ULPFEC) — just put VP8 first.
+          const rest = codecs.filter((c) => c.mimeType !== 'video/VP8')
+          t.setCodecPreferences([...vp8, ...rest])
         }
       }
     } catch {

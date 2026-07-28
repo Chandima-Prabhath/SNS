@@ -5,7 +5,7 @@ import { usePresence } from '@/hooks/usePresence'
 import { useSession } from 'next-auth/react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { ChevronLeft, MoreVertical, Hash, Phone, Video, Volume2, Loader2 } from 'lucide-react'
+import { ChevronLeft, MoreVertical, Hash, Phone, Video, Volume2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -24,7 +24,6 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
   const presence = usePresence()
   const { startCall } = useCall()
   const { data: session } = useSession()
-  const [callPending, setCallPending] = useState(false)
 
   const isGroup = !channel.group?.isDm
   const isVoiceChannel = channel.type === 'voice'
@@ -33,7 +32,6 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
   const partnerStatus = partner ? presence[partner.id]?.status || partner.status || 'offline' : 'offline'
 
   const handleStartCall = async (video: boolean = false) => {
-    setCallPending(true)
     try {
       const res = await fetch('/api/calls', {
         method: 'POST',
@@ -73,8 +71,6 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
       setView('voice')
     } catch {
       toast.error('Could not start call')
-    } finally {
-      setCallPending(false)
     }
   }
 
@@ -144,23 +140,21 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
         <Button
           variant="ghost"
           size="icon"
-          className="h-9 w-9"
+          className="h-9 w-9 hover:bg-primary/10 hover:text-primary"
           title="Voice call"
           onClick={() => handleStartCall(false)}
-          disabled={callPending}
         >
-          {callPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Phone className="w-4 h-4" />}
+          <Phone className="w-4 h-4" />
         </Button>
         {partner && (
           <Button
             variant="ghost"
             size="icon"
-            className="h-9 w-9"
+            className="h-9 w-9 hover:bg-primary/10 hover:text-primary"
             title="Video call"
             onClick={() => handleStartCall(true)}
-            disabled={callPending}
           >
-            {callPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Video className="w-4 h-4" />}
+            <Video className="w-4 h-4" />
           </Button>
         )}
         <Button

@@ -41,6 +41,7 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
   --color-bubble-mine: var(--bubble-mine);
   --color-bubble-mine-foreground: var(--bubble-mine-foreground);
   --color-bubble-other: var(--bubble-other);
@@ -55,7 +56,7 @@
  * LIGHT THEME
  * ──────────────────────────────────────────────────────────────────────── */
 :root {
-  --radius: 0.75rem;
+  --radius: 0.875rem;
   --background: oklch(0.98 0.002 250);
   --foreground: oklch(0.18 0.005 250);
   --card: oklch(1 0 0);
@@ -98,72 +99,94 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
- * DARK THEME (default) — Modern Futuristic
- * Inspired by Linear, Arc Browser, and Vercel — deep navy-black base with
- * electric blurple accents, glassmorphic surfaces, and subtle gradients.
- * Layered surfaces with intentional depth (not flat black).
+ * DARK THEME (default) — Cinematic 3D
+ *
+ * Design language:
+ *   - Deep, near-black base with subtle chromatic undertone (not flat black)
+ *   - Layered surfaces: each elevation step is perceptibly lighter
+ *   - Glassmorphic panels with frosted blur and inner highlights
+ *   - Vibrant electric primary that glows against the dark base
+ *   - Soft, diffuse shadows for 3D depth (not harsh drop shadows)
+ *   - Micro-interactions: scale, glow, and shimmer on hover/active
+ *
+ * Inspired by: Linear, Arc Browser, Vercel, Vision OS, Liquid Glass
  * ──────────────────────────────────────────────────────────────────────── */
 .dark {
-  /* Main background — deep navy-black with slight blue undertone */
-  --background: oklch(0.16 0.008 264);
-  --foreground: oklch(0.95 0.004 250);
+  /* ── Base layers (from darkest to lightest) ── */
 
-  /* Elevated surface — slightly lighter for depth */
-  --card: oklch(0.20 0.008 264);
-  --card-foreground: oklch(0.95 0.004 250);
+  /* Main background — near-black with navy undertone */
+  --background: oklch(0.14 0.008 264);
+  --foreground: oklch(0.96 0.004 250);
 
-  /* Popover — floating panel, distinct from card */
-  --popover: oklch(0.22 0.01 264);
-  --popover-foreground: oklch(0.95 0.004 250);
-
-  /* Primary — electric blurple with more vibrancy */
-  --primary: oklch(0.62 0.20 264);
-  --primary-foreground: oklch(0.99 0 0);
-
-  /* Secondary surface — for hover/active states */
-  --secondary: oklch(0.26 0.008 264);
-  --secondary-foreground: oklch(0.95 0.004 250);
-
-  /* Muted — recessed surface */
-  --muted: oklch(0.18 0.006 264);
-  --muted-foreground: oklch(0.62 0.01 250);
-
-  /* Accent — primary tint for active states */
-  --accent: oklch(0.28 0.03 264);
-  --accent-foreground: oklch(0.95 0.004 250);
-
-  --destructive: oklch(0.64 0.22 25);
-  --border: oklch(1 0 0 / 6%);
-  --input: oklch(1 0 0 / 8%);
-  --ring: oklch(0.62 0.20 264);
-
-  --chart-1: oklch(0.62 0.20 264);
-  --chart-2: oklch(0.68 0.14 200);
-  --chart-3: oklch(0.66 0.16 264);
-  --chart-4: oklch(0.78 0.18 75);
-  --chart-5: oklch(0.68 0.22 16);
-
-  /* Sidebar — deepest layer for visual hierarchy */
-  --sidebar: oklch(0.13 0.006 264);
-  --sidebar-foreground: oklch(0.95 0.004 250);
+  /* Sidebar — deepest, anchors the visual hierarchy */
+  --sidebar: oklch(0.11 0.006 264);
+  --sidebar-foreground: oklch(0.96 0.004 250);
   --sidebar-primary: oklch(0.62 0.20 264);
   --sidebar-primary-foreground: oklch(0.98 0 0);
-  --sidebar-accent: oklch(0.20 0.008 264);
-  --sidebar-accent-foreground: oklch(0.95 0.004 250);
+  --sidebar-accent: oklch(0.18 0.008 264);
+  --sidebar-accent-foreground: oklch(0.96 0.004 250);
   --sidebar-border: oklch(1 0 0 / 6%);
   --sidebar-ring: oklch(0.62 0.20 264);
 
-  /* Chat bubbles — mine uses primary gradient feel, others use elevated surface */
-  --bubble-mine: oklch(0.54 0.18 264);
-  --bubble-mine-foreground: oklch(0.98 0 0);
-  --bubble-other: oklch(0.24 0.008 264);
-  --bubble-other-foreground: oklch(0.95 0.004 250);
+  /* Muted — recessed surface, below background */
+  --muted: oklch(0.16 0.006 264);
+  --muted-foreground: oklch(0.60 0.01 250);
 
-  /* Status dots — more vibrant */
-  --status-online: oklch(0.68 0.18 145);
-  --status-idle: oklch(0.80 0.16 75);
-  --status-dnd: oklch(0.64 0.22 25);
+  /* Card — elevated surface, first step up from background */
+  --card: oklch(0.19 0.008 264);
+  --card-foreground: oklch(0.96 0.004 250);
+
+  /* Popover — floating panel, highest surface */
+  --popover: oklch(0.21 0.01 264);
+  --popover-foreground: oklch(0.96 0.004 250);
+
+  /* Secondary — for hover states */
+  --secondary: oklch(0.25 0.008 264);
+  --secondary-foreground: oklch(0.96 0.004 250);
+
+  /* Accent — primary-tinted surface for active/selected states */
+  --accent: oklch(0.28 0.04 264);
+  --accent-foreground: oklch(0.96 0.004 250);
+
+  /* ── Brand colors ── */
+
+  /* Primary — electric blurple, vibrant against dark */
+  --primary: oklch(0.64 0.22 264);
+  --primary-foreground: oklch(0.99 0 0);
+
+  --destructive: oklch(0.66 0.24 25);
+  --border: oklch(1 0 0 / 7%);
+  --input: oklch(1 0 0 / 9%);
+  --ring: oklch(0.64 0.22 264);
+
+  --chart-1: oklch(0.64 0.22 264);
+  --chart-2: oklch(0.70 0.14 200);
+  --chart-3: oklch(0.68 0.16 264);
+  --chart-4: oklch(0.80 0.18 75);
+  --chart-5: oklch(0.70 0.22 16);
+
+  /* ── Chat bubbles ── */
+  --bubble-mine: oklch(0.56 0.20 264);
+  --bubble-mine-foreground: oklch(0.98 0 0);
+  --bubble-other: oklch(0.23 0.008 264);
+  --bubble-other-foreground: oklch(0.96 0.004 250);
+
+  /* ── Status dots — vibrant ── */
+  --status-online: oklch(0.70 0.19 145);
+  --status-idle: oklch(0.82 0.16 75);
+  --status-dnd: oklch(0.66 0.24 25);
   --status-offline: oklch(0.45 0.01 250);
+
+  /* ── 3D Shadow system — soft, diffuse, layered ── */
+  --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.3);
+  --shadow-sm: 0 2px 4px oklch(0 0 0 / 0.35), 0 1px 2px oklch(0 0 0 / 0.2);
+  --shadow-md: 0 4px 12px oklch(0 0 0 / 0.4), 0 2px 4px oklch(0 0 0 / 0.2);
+  --shadow-lg: 0 8px 24px oklch(0 0 0 / 0.45), 0 4px 8px oklch(0 0 0 / 0.25);
+  --shadow-xl: 0 16px 48px oklch(0 0 0 / 0.5), 0 8px 16px oklch(0 0 0 / 0.3);
+  --shadow-glow: 0 0 24px oklch(0.64 0.22 264 / 0.35);
+  --shadow-glow-strong: 0 0 40px oklch(0.64 0.22 264 / 0.5);
+  --shadow-inner-light: inset 0 1px 0 oklch(1 0 0 / 5%);
+  --shadow-inner-dark: inset 0 -1px 0 oklch(0 0 0 / 20%);
 }
 
 @layer base {
@@ -172,7 +195,6 @@
   }
   html, body {
     @apply bg-background text-foreground;
-    /* Use dvh for dynamic viewport height — adjusts when keyboard opens */
     height: 100%;
     overscroll-behavior-y: none;
     -webkit-tap-highlight-color: transparent;
@@ -183,20 +205,28 @@
     text-rendering: optimizeLegibility;
     font-feature-settings: "cv01", "cv03", "cv04", "cv11";
   }
+
+  /* ── Custom scrollbar — thin, themed, with 3D depth ── */
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
-    background: oklch(0.35 0.005 250);
+    background: oklch(0.32 0.008 264);
     border-radius: 4px;
     border: 2px solid transparent;
     background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: oklch(0.45 0.005 250);
+    background: oklch(0.42 0.01 264);
     background-clip: padding-box;
   }
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* ── Selection — primary-tinted ── */
+  ::selection {
+    background: oklch(0.64 0.22 264 / 0.3);
+    color: oklch(0.99 0 0);
+  }
 }
 
 @layer utilities {
@@ -207,45 +237,98 @@
     scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
   }
-  /* Glassmorphic surface — modern frosted glass effect */
+
+  /* ── Glassmorphic surfaces — frosted glass with depth ── */
+
+  /* Standard glass — for floating bars, headers */
   .glass {
-    background: oklch(0.20 0.008 264 / 0.72);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border: 1px solid oklch(1 0 0 / 6%);
-  }
-  .glass-light {
-    background: oklch(0.22 0.01 264 / 0.60);
-    backdrop-filter: blur(16px) saturate(160%);
-    -webkit-backdrop-filter: blur(16px) saturate(160%);
-    border: 1px solid oklch(1 0 0 / 5%);
-  }
-  .glass-dark {
-    background: oklch(0.13 0.006 264 / 0.80);
+    background: oklch(0.19 0.008 264 / 0.72);
     backdrop-filter: blur(24px) saturate(180%);
     -webkit-backdrop-filter: blur(24px) saturate(180%);
-    border: 1px solid oklch(1 0 0 / 8%);
+    border: 1px solid oklch(1 0 0 / 7%);
+    box-shadow: var(--shadow-inner-light), var(--shadow-sm);
   }
-  /* Subtle gradient surface for hero sections */
+  /* Light glass — for overlays on dark backgrounds */
+  .glass-light {
+    background: oklch(0.22 0.01 264 / 0.60);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border: 1px solid oklch(1 0 0 / 6%);
+    box-shadow: var(--shadow-inner-light);
+  }
+  /* Dark glass — for premium floating panels, call controls */
+  .glass-dark {
+    background: oklch(0.13 0.006 264 / 0.82);
+    backdrop-filter: blur(32px) saturate(180%);
+    -webkit-backdrop-filter: blur(32px) saturate(180%);
+    border: 1px solid oklch(1 0 0 / 9%);
+    box-shadow: var(--shadow-lg), var(--shadow-inner-light);
+  }
+  /* Glass card — elevated surface with strong depth */
+  .glass-card {
+    background: oklch(0.21 0.01 264 / 0.78);
+    backdrop-filter: blur(28px) saturate(170%);
+    -webkit-backdrop-filter: blur(28px) saturate(170%);
+    border: 1px solid oklch(1 0 0 / 8%);
+    box-shadow: var(--shadow-lg), var(--shadow-inner-light);
+  }
+
+  /* ── 3D Surface depth — for cards and panels ── */
+  .surface-raised {
+    background: var(--card);
+    box-shadow: var(--shadow-md), var(--shadow-inner-light);
+  }
+  .surface-floating {
+    background: var(--popover);
+    box-shadow: var(--shadow-xl), var(--shadow-inner-light);
+  }
+
+  /* ── Gradient surfaces ── */
   .gradient-surface {
     background: linear-gradient(
       135deg,
-      oklch(0.20 0.008 264) 0%,
+      oklch(0.21 0.008 264) 0%,
       oklch(0.16 0.008 264) 100%
     );
   }
-  /* Primary glow — for active states and accents */
+  .gradient-primary {
+    background: linear-gradient(
+      135deg,
+      oklch(0.64 0.22 264) 0%,
+      oklch(0.58 0.20 280) 100%
+    );
+  }
+  /* Cinematic backdrop — for full-screen views */
+  .gradient-cinematic {
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 0%, oklch(0.64 0.22 264 / 0.08), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 100% 100%, oklch(0.55 0.14 200 / 0.06), transparent 60%),
+      var(--background);
+  }
+
+  /* ── Glow effects ── */
   .glow-primary {
-    box-shadow: 0 0 20px oklch(0.62 0.20 264 / 0.25);
+    box-shadow: 0 0 24px oklch(0.64 0.22 264 / 0.30);
   }
   .glow-primary-strong {
-    box-shadow: 0 0 32px oklch(0.62 0.20 264 / 0.40);
+    box-shadow: 0 0 40px oklch(0.64 0.22 264 / 0.45);
   }
-  /* Inner highlight — subtle top border for depth */
+  .glow-success {
+    box-shadow: 0 0 24px oklch(0.70 0.19 145 / 0.30);
+  }
+  .glow-danger {
+    box-shadow: 0 0 24px oklch(0.66 0.24 25 / 0.30);
+  }
+
+  /* ── Inner highlights — for 3D depth on raised surfaces ── */
   .inner-highlight {
-    box-shadow: inset 0 1px 0 oklch(1 0 0 / 4%);
+    box-shadow: inset 0 1px 0 oklch(1 0 0 / 5%);
   }
-  /* Animated gradient border — for special highlights */
+  .inner-highlight-strong {
+    box-shadow: inset 0 1px 0 oklch(1 0 0 / 8%), inset 0 -1px 0 oklch(0 0 0 / 15%);
+  }
+
+  /* ── Animated gradient border — for special highlights ── */
   .border-gradient {
     position: relative;
     background-clip: padding-box;
@@ -258,8 +341,8 @@
     padding: 1px;
     background: linear-gradient(
       135deg,
-      oklch(0.62 0.20 264 / 0.5),
-      oklch(0.68 0.14 200 / 0.3),
+      oklch(0.64 0.22 264 / 0.6),
+      oklch(0.70 0.14 200 / 0.3),
       transparent
     );
     -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
@@ -267,7 +350,8 @@
     mask-composite: exclude;
     pointer-events: none;
   }
-  /* Shimmer animation — for loading states */
+
+  /* ── Shimmer — for loading states ── */
   @keyframes shimmer {
     0% { background-position: -200% 0; }
     100% { background-position: 200% 0; }
@@ -275,26 +359,55 @@
   .shimmer {
     background: linear-gradient(
       90deg,
-      oklch(0.18 0.006 264) 25%,
+      oklch(0.16 0.006 264) 25%,
       oklch(0.24 0.008 264) 50%,
-      oklch(0.18 0.006 264) 75%
+      oklch(0.16 0.006 264) 75%
     );
     background-size: 200% 100%;
     animation: shimmer 1.5s infinite;
   }
-  /* Pulse glow — for live indicators */
+
+  /* ── Pulse glow — for live indicators ── */
   @keyframes pulse-glow {
-    0%, 100% { box-shadow: 0 0 0 0 oklch(0.68 0.18 145 / 0.4); }
-    50% { box-shadow: 0 0 0 8px oklch(0.68 0.18 145 / 0); }
+    0%, 100% { box-shadow: 0 0 0 0 oklch(0.70 0.19 145 / 0.5); }
+    50% { box-shadow: 0 0 0 10px oklch(0.70 0.19 145 / 0); }
   }
   .pulse-glow {
     animation: pulse-glow 2s infinite;
   }
-  /* Smooth scale on press — for buttons */
+
+  /* ── Smooth scale on press — for buttons ── */
   .press-scale {
-    transition: transform 0.1s ease;
+    transition: transform 0.1s ease, box-shadow 0.2s ease;
   }
   .press-scale:active {
     transform: scale(0.96);
+  }
+
+  /* ── Float animation — for hero elements ── */
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+  .animate-float {
+    animation: float 4s ease-in-out infinite;
+  }
+
+  /* ── Fade-in — for view transitions ── */
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-fade-in {
+    animation: fade-in 0.3s ease-out;
+  }
+
+  /* ── Slide-in — for panels ── */
+  @keyframes slide-in-right {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  .animate-slide-in-right {
+    animation: slide-in-right 0.25s ease-out;
   }
 }

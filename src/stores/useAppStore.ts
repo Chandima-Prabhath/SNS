@@ -11,6 +11,11 @@ interface AppState {
   activeChannelId: string | null
   setActiveChannel: (id: string | null) => void
 
+  // Discord-style: which group is selected in the server rail.
+  // 'dm' is a virtual group for direct messages. null = nothing selected.
+  selectedGroupId: string | 'dm' | null
+  setSelectedGroupId: (id: string | 'dm' | null) => void
+
   chatInfoOpen: boolean
   setChatInfoOpen: (open: boolean) => void
 
@@ -31,6 +36,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   activeChannelId: null,
   setActiveChannel: (id) => set({ activeChannelId: id, chatInfoOpen: false }),
+
+  selectedGroupId: 'dm',
+  setSelectedGroupId: (selectedGroupId) => set({ selectedGroupId }),
 
   chatInfoOpen: false,
   setChatInfoOpen: (chatInfoOpen) => set({ chatInfoOpen }),
