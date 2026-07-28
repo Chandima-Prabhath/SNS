@@ -6,6 +6,7 @@ import { Readable } from 'stream'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import path from 'path'
+import os from 'os'
 
 const execFileAsync = promisify(execFile)
 
@@ -15,6 +16,26 @@ function ensureCacheDir() {
   if (!existsSync(CACHE_DIR)) {
     mkdirSync(CACHE_DIR, { recursive: true })
   }
+}
+
+/**
+ * Get the environment for yt-dlp, ensuring Deno is in PATH.
+ *
+ * The Next.js process may not have Deno in its PATH (it was installed via
+ * the setup script which adds it to ~/.bashrc, but the server process was
+ * started before that). We explicitly add ~/.deno/bin to PATH.
+ */
+function getYtDlpEnv(): NodeJS.ProcessEnv {
+  const home = os.homedir()
+  const denoBin = path.join(home, '.deno', 'bin')
+  const env = { ...process.env }
+
+  // Add Deno to PATH if it's not already there
+  if (existsSync(denoBin) && !env.PATH?.includes(denoBin)) {
+    env.PATH = `${denoBin}:${env.PATH || ''}`
+  }
+
+  return env
 }
 
 /**
@@ -179,6 +200,7 @@ async function downloadAudio(videoId: string, outputPath: string): Promise<void>
 
   try {
     await execFileAsync('yt-dlp', args, {
+      env: getYtDlpEnv(),
       timeout: 120000,
       maxBuffer: 1024 * 1024 * 10,
     })
@@ -204,7 +226,11 @@ async function downloadAudio(videoId: string, outputPath: string): Promise<void>
         url,
       ]
       try {
-        await execFileAsync('yt-dlp', fallbackArgs, { timeout: 120000, maxBuffer: 1024 * 1024 * 10 })
+        await execFileAsync('yt-dlp', fallbackArgs, {
+          env: getYtDlpEnv(),
+          timeout: 120000,
+          maxBuffer: 1024 * 1024 * 10,
+        })
         if (existsSync(outputPath) && statSync(outputPath).size > 1000) {
           console.log(`[music/stream] downloaded ${videoId} via fallback format chain`)
           return
