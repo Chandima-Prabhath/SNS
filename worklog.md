@@ -177,3 +177,28 @@ Stage Summary:
 - Bot builder opens in standalone full-screen tab
 - Modern 3D cinematic theme applied across the whole app (sidebar, nav, chat list, call screens)
 - All changes pushed to GitHub (commit 7b75e85)
+
+---
+Task ID: unified-sidebar-and-overhaul
+Agent: Super Z (main)
+Task: Remove old sidebar and bring tabs to Discord sidebar bottom, show voice/video channels in chat list, remove duplicate bot nodes, add image compression, SW update notification, research and apply modern 3D cinematic theme, improve notifications.
+
+Work Log:
+- Removed DesktopSidebar entirely. ServerRail is now the single primary sidebar with DMs, server icons, bottom nav (Status/Calls/Settings), and user avatar.
+- Voice/video channels now visible in chat list when a group is selected — rendered as 'join' rows with call icons and Join buttons.
+- Removed 'Send Choices' (choice) node — redundant with 'Wait for Choice'. Cleaned from engine, types, NODE_DEFS, defaultNodeData, and editor.
+- New UpdateBanner component: detects waiting SW, shows notification, sends SKIP_WAITING on click, reloads. SW v4 no longer auto-skips waiting.
+- New src/lib/image-compress.ts: Canvas-based compression (1280px max, 82% JPEG quality). Status uploads compress images 5-10x before upload.
+- Server upload limit: 50MB for videos, 8MB for images. Added webm/quicktime support.
+- Rich notifications: sender avatar, channel/group context, mention badge, clickable to open. Call notifications show caller + type.
+- Cinematic theme: ambient mesh gradient on body, enhanced glassmorphism with layered shadows, mesh-gradient utility for hero states, thinner scrollbars, focus-visible glow, translucent chat list with blur.
+
+Stage Summary:
+- Single unified sidebar (Discord-style) with nav at bottom
+- Voice/video channels accessible from chat list (not just Calls tab)
+- Bot builder cleaned: no duplicate nodes
+- Image compression: 5-10x smaller uploads
+- SW update banner: users get notified of new updates
+- Rich notifications with context and click-to-open
+- Cinematic 3D theme with mesh gradients, layered glass, and depth
+- All changes pushed to GitHub (commit 71be7d1)
