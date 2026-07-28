@@ -53,6 +53,8 @@ model User {
   callsStarted    VoiceCall[]      @relation("CallStarter")
   botSessions     ConversationSession[]
   customVoices    CustomVoice[]
+  hostedMusicRooms MusicRoom[]     @relation("MusicRoomHost")
+  musicRoomMemberships MusicRoomMember[] @relation("MusicRoomMembers")
   settings        UserSetting[]
   sessions        Session[]
   accounts        Account[]
@@ -71,6 +73,7 @@ model CustomVoice {
 
   name      String   // user-given name, e.g. "My Voice"
   audioUrl  String   // path to the voice clip in /uploads/
+  safetensorsUrl String?  // path to the exported .safetensors model (fast inference)
   duration  Float?   // length in seconds (for display)
 
   createdAt DateTime @default(now())
@@ -383,4 +386,44 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Musical — Synced Music Rooms
+// ─────────────────────────────────────────────────────────────────────────────
+
+model MusicRoom {
+  id          String   @id @default(cuid())
+  name        String
+  hostId      String
+  host        User     @relation("MusicRoomHost", fields: [hostId], references: [id], onDelete: Cascade)
+
+  // Current playback state
+  currentVideoId String?  // YouTube video ID of the current track
+  currentState   String   @default("paused") // playing | paused
+  currentPosition Float   @default(0) // seconds into the track
+  lastSyncAt     DateTime @default(now()) // when the state was last updated
+
+  // Queue of upcoming tracks (JSON array of video IDs)
+  queue       String   @default("[]")
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members     MusicRoomMember[]
+
+  @@index([hostId])
+}
+
+model MusicRoomMember {
+  id        String   @id @default(cuid())
+  roomId    String
+  userId    String
+  joinedAt  DateTime @default(now())
+
+  room      MusicRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user      User      @relation("MusicRoomMembers", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+  @@index([userId])
 }

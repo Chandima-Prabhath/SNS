@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 
-export type ViewKey = 'chats' | 'status' | 'voice' | 'settings'
+export type ViewKey = 'chats' | 'status' | 'voice' | 'settings' | 'music'
 
 interface AppState {
   view: ViewKey

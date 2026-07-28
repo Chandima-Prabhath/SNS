@@ -445,6 +445,32 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       socket.emit('presence:update', list)
     })
 
+    // ─── Music room sync ────────────────────────────────────────────────
+    // Host-authoritative: the host broadcasts playback state changes to all
+    // room members. Members apply the state with drift compensation.
+    socket.on('music:join', (roomId: string) => {
+      socket.join(`music:${roomId}`)
+    })
+
+    socket.on('music:leave', (roomId: string) => {
+      socket.leave(`music:${roomId}`)
+    })
+
+    // Broadcast sync events to all room members.
+    // The host sends: { roomId, state, position, videoId?, timestamp }
+    // We include the server's receive timestamp for drift compensation.
+    socket.on('music:sync', (payload: {
+      roomId: string
+      state: string
+      position: number
+      videoId?: string
+    }) => {
+      io.to(`music:${payload.roomId}`).emit('music:sync', {
+        ...payload,
+        serverTimestamp: Date.now(),
+      })
+    })
+
     socket.on('disconnect', () => {
       removeSocket(userId, socket.id)
       console.log(`[realtime] disconnect ${username} (${userId})`)

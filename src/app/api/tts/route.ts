@@ -47,8 +47,10 @@ export async function POST(req: Request) {
     const formData = new FormData()
     formData.append('text', truncatedText)
 
-    // If a custom voice ID is provided, read the voice clip file and pass
-    // it as voice_wav for one-shot voice cloning.
+    // If a custom voice ID is provided, check for a safetensors model first
+    // (fast path — just loads tensors, no PyTorch compute). Fall back to the
+    // raw audio clip (slow path — runs the Mimi encoder) if no safetensors
+    // model has been exported yet.
     if (customVoiceId) {
       const customVoice = await db.customVoice.findUnique({
         where: { id: customVoiceId },
@@ -57,16 +59,26 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'custom voice not found' }, { status: 404 })
       }
 
-      // The audioUrl is like "/uploads/abc.wav" — resolve to filesystem path
-      const audioPath = path.join(process.cwd(), 'public', customVoice.audioUrl)
-      if (!existsSync(audioPath)) {
-        return NextResponse.json({ error: 'voice clip file not found' }, { status: 404 })
+      if (customVoice.safetensorsUrl) {
+        // Fast path: pass the safetensors URL as voice_url. The Pocket TTS
+        // server detects the .safetensors extension and loads tensors directly
+        // instead of running the audio through the Mimi encoder.
+        // We need to pass an absolute URL since the TTS server needs to
+        // download it. Use the app's public URL or localhost.
+        const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3090'
+        formData.append('voice_url', `${baseUrl}${customVoice.safetensorsUrl}`)
+        console.log(`[tts] using safetensors voice: ${customVoice.name}`)
+      } else {
+        // Slow path: pass the raw audio file as voice_wav
+        const audioPath = path.join(process.cwd(), 'public', customVoice.audioUrl)
+        if (!existsSync(audioPath)) {
+          return NextResponse.json({ error: 'voice clip file not found' }, { status: 404 })
+        }
+        const audioBuffer = await readFile(audioPath)
+        const audioBlob = new Blob([audioBuffer], { type: 'audio/wav' })
+        formData.append('voice_wav', audioBlob, 'voice.wav')
+        console.log(`[tts] using raw audio voice (no safetensors yet): ${customVoice.name}`)
       }
-
-      const audioBuffer = await readFile(audioPath)
-      const audioBlob = new Blob([audioBuffer], { type: 'audio/wav' })
-      formData.append('voice_wav', audioBlob, 'voice.wav')
-      console.log(`[tts] using custom voice: ${customVoice.name}`)
     } else {
       // Use a built-in voice name
       formData.append('voice_url', voice)

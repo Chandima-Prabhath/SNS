@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
-  Plus, MessageCircle, Compass, Phone, Settings, Circle,
+  Plus, MessageCircle, Compass, Phone, Settings, Circle, Music,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -27,6 +27,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  { key: 'music', label: 'Music', icon: Music },
   { key: 'status', label: 'Status', icon: Circle },
   { key: 'voice', label: 'Calls', icon: Phone },
   { key: 'settings', label: 'Settings', icon: Settings },

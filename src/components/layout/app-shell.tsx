@@ -8,6 +8,7 @@ import { ChatView } from '@/components/chat/chat-view'
 import { StatusView } from '@/components/status/status-view'
 import { VoiceView } from '@/components/voice/voice-view'
 import { SettingsView } from '@/components/settings/settings-view'
+import { MusicView } from '@/components/music/music-view'
 import { IncomingCallOverlay } from '@/components/voice/incoming-call-overlay'
 import { CallController } from '@/components/voice/call-controller'
 import { FirefoxBanner } from '@/components/voice/firefox-banner'
@@ -59,6 +60,7 @@ export function AppShell() {
               {view === 'chats' && <ChatView />}
               {view === 'status' && <StatusView />}
               {view === 'voice' && <VoiceView />}
+              {view === 'music' && <MusicView />}
               {view === 'settings' && <SettingsView />}
             </main>
           </div>

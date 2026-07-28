@@ -5,7 +5,7 @@ import { useUnreadCounts } from '@/hooks/useUnreadCounts'
 import { useCall } from '@/hooks/useCall'
 import { useSession } from 'next-auth/react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { MessageCircle, Circle, Phone, Settings } from 'lucide-react'
+import { MessageCircle, Circle, Phone, Settings, Music } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface NavItem {
@@ -16,6 +16,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { key: 'chats', label: 'Chats', icon: MessageCircle },
+  { key: 'music', label: 'Music', icon: Music },
   { key: 'status', label: 'Status', icon: Circle },
   { key: 'voice', label: 'Calls', icon: Phone },
   { key: 'settings', label: 'Settings', icon: Settings },
@@ -36,7 +37,7 @@ export function BottomNav() {
         <div className="fixed inset-0 bg-black/40 z-40 md:hidden" onClick={() => setSidebarOpen(false)} />
       )}
       <nav className="lg:hidden shrink-0 glass-dark border-t border-border/50 pb-safe" aria-label="Primary">
-        <div className="grid grid-cols-4 max-w-md mx-auto">
+        <div className="grid grid-cols-5 max-w-md mx-auto">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon
             const active = view === item.key
