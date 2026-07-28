@@ -33,6 +33,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { generateAvatarCandidates } from '@/lib/avatar'
+import { SpotlightCard, GlassSurface, GradientText, ShinyText } from '@/components/reactbits'
 // BotBuilderEditor is now loaded via the standalone /bot-builder/[id] route
 import {
   Select,
@@ -60,32 +61,40 @@ export function SettingsView() {
   ]
 
   return (
-    <div className="h-full overflow-hidden bg-background flex flex-col">
+    <div className="h-full overflow-hidden flex flex-col mesh-gradient">
       <div className="max-w-4xl w-full mx-auto p-4 md:p-6 flex-1 flex flex-col min-h-0 lg:pb-0 pb-20">
-        <h1 className="text-2xl font-semibold tracking-tight mb-4 shrink-0">Settings</h1>
-
-        {/* Section tabs — clean pill buttons */}
-        <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-3 mb-4 border-b shrink-0">
-          {sections.map((s) => {
-            const Icon = s.icon
-            const active = section === s.key
-            return (
-              <button
-                key={s.key}
-                onClick={() => setSection(s.key)}
-                className={cn(
-                  'flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap shrink-0',
-                  active
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-                )}
-              >
-                <Icon className="w-4 h-4" />
-                <span>{s.label}</span>
-              </button>
-            )
-          })}
+        {/* Header with gradient text */}
+        <div className="mb-5 shrink-0">
+          <h1 className="text-3xl font-bold tracking-tight">
+            <GradientText>Settings</GradientText>
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">Manage your profile, privacy, and more</p>
         </div>
+
+        {/* Section navigation — glassmorphic pill bar */}
+        <GlassSurface className="mb-4 shrink-0" blur={16} opacity={0.05}>
+          <div className="flex gap-1.5 overflow-x-auto no-scrollbar p-1.5">
+            {sections.map((s) => {
+              const Icon = s.icon
+              const active = section === s.key
+              return (
+                <button
+                  key={s.key}
+                  onClick={() => setSection(s.key)}
+                  className={cn(
+                    'flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap shrink-0',
+                    active
+                      ? 'gradient-primary text-primary-foreground shadow-glow'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
+                  )}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span>{s.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        </GlassSurface>
 
         {/* Section content — scrollable */}
         <div className="flex-1 min-h-0 overflow-y-auto pb-4">
@@ -214,7 +223,7 @@ function ProfileSection() {
   if (isLoading) return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin" /></div>
 
   return (
-    <Card className="p-6 space-y-5">
+    <SpotlightCard className="p-6 space-y-5">
       {/* Avatar picker — generated avatars + upload option */}
       <AvatarPicker
         currentAvatarUrl={avatarUrl}
@@ -226,12 +235,12 @@ function ProfileSection() {
 
       <div className="space-y-2">
         <Label htmlFor="displayName">Display name</Label>
-        <Input id="displayName" value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="h-11" />
+        <Input id="displayName" value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="h-11 bg-muted/50" />
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="username">Username</Label>
-        <Input id="username" value={me?.username || ''} disabled className="h-11" />
+        <Input id="username" value={me?.username || ''} disabled className="h-11 bg-muted/50" />
         <p className="text-xs text-muted-foreground">Username cannot be changed.</p>
       </div>
 
@@ -243,6 +252,7 @@ function ProfileSection() {
           onChange={(e) => setBio(e.target.value)}
           placeholder="Tell your friends a bit about yourself."
           rows={3}
+          className="bg-muted/50"
         />
       </div>
 
@@ -254,15 +264,15 @@ function ProfileSection() {
           onChange={(e) => setCustomStatus(e.target.value)}
           placeholder="🎧 Listening to lofi"
           maxLength={80}
-          className="h-11"
+          className="h-11 bg-muted/50"
         />
       </div>
 
-      <Button onClick={handleSave} disabled={update.isPending} className="h-11">
+      <Button onClick={handleSave} disabled={update.isPending} className="h-11 gradient-primary">
         {update.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
         Save changes
       </Button>
-    </Card>
+    </SpotlightCard>
   )
 }
 

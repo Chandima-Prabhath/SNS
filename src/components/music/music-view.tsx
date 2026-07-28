@@ -9,12 +9,13 @@ import { Card } from '@/components/ui/card'
 import {
   Search, Play, Pause, SkipForward, Plus,
   Loader2, Radio, Headphones, X, ListMusic, Compass,
-  Trash2, Repeat, Shuffle,
+  Trash2, Repeat, Shuffle, Music as MusicIcon, Users,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useMusicStore, type Track } from '@/stores/useMusicStore'
 import { useMusicPlayer } from '@/components/music/global-music-player'
+import { SpotlightCard, GlassSurface, GradientText, BorderGlow } from '@/components/reactbits'
 
 interface Room {
   id: string
@@ -147,41 +148,43 @@ export function MusicView() {
 
   return (
     <div className="h-full flex flex-col mesh-gradient overflow-hidden">
-      {/* Header with tabs */}
+      {/* Header with gradient title and glassmorphic tabs */}
       <div className="shrink-0 px-4 pt-4 pb-2 border-b border-border/30">
         <div className="max-w-5xl mx-auto">
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-2 mb-3">
-            <Radio className="w-7 h-7 text-primary" />
-            Musical
+            <MusicIcon className="w-7 h-7 text-primary" />
+            <GradientText>Musical</GradientText>
           </h1>
 
-          {/* Tab navigation */}
-          <div className="flex gap-1 p-1 bg-muted/50 rounded-xl max-w-xs">
-            {([
-              ['browse', 'Browse', Compass],
-              ['rooms', 'Rooms', Radio],
-              ['queue', 'Queue', ListMusic],
-            ] as const).map(([key, label, Icon]) => (
-              <button
-                key={key}
-                onClick={() => setTab(key)}
-                className={cn(
-                  'flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-sm font-medium transition-all',
-                  tab === key
-                    ? 'bg-background text-primary shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                <Icon className="w-4 h-4" />
-                {label}
-                {key === 'queue' && queue.length > 0 && (
-                  <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded-full">
-                    {queue.length}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
+          {/* Tab navigation — glassmorphic pill bar */}
+          <GlassSurface className="max-w-xs" blur={12} opacity={0.05}>
+            <div className="flex gap-1 p-1">
+              {([
+                ['browse', 'Browse', Compass],
+                ['rooms', 'Rooms', Radio],
+                ['queue', 'Queue', ListMusic],
+              ] as const).map(([key, label, Icon]) => (
+                <button
+                  key={key}
+                  onClick={() => setTab(key)}
+                  className={cn(
+                    'flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-sm font-medium transition-all',
+                    tab === key
+                      ? 'gradient-primary text-primary-foreground shadow-glow'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+                  )}
+                >
+                  <Icon className="w-4 h-4" />
+                  {label}
+                  {key === 'queue' && queue.length > 0 && (
+                    <span className="text-[10px] bg-primary-foreground/20 text-primary-foreground px-1.5 py-0.5 rounded-full">
+                      {queue.length}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </GlassSurface>
         </div>
       </div>
 
@@ -595,9 +598,9 @@ function TrackCard({
   isPlaying: boolean
 }) {
   return (
-    <div
+    <SpotlightCard
       className={cn(
-        'group relative rounded-xl overflow-hidden text-left transition-all',
+        'group transition-all',
         isCurrent ? 'ring-2 ring-primary' : 'hover:scale-[1.02]',
       )}
     >
@@ -625,7 +628,7 @@ function TrackCard({
           </div>
         )}
       </button>
-      <div className="p-2 bg-card flex items-start gap-1">
+      <div className="p-2 flex items-start gap-1">
         <div className="flex-1 min-w-0">
           <div
             className={cn(
@@ -648,7 +651,7 @@ function TrackCard({
           <Plus className="w-3 h-3" />
         </button>
       </div>
-    </div>
+    </SpotlightCard>
   )
 }
 
