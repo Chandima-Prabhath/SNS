@@ -104,7 +104,7 @@ export function MusicView() {
   }
 
   // Play a track
-  const playTrack = useCallback((track: Track) => {
+  const playTrack = useCallback(async (track: Track) => {
     setCurrentTrack(track)
     setIsPlaying(true)
     setPosition(0)
@@ -119,15 +119,33 @@ export function MusicView() {
     }
 
     // Play the audio
-    setTimeout(() => {
-      if (audioRef.current) {
-        audioRef.current.src = `/api/music/stream/${track.videoId}`
-        audioRef.current.volume = volume
-        audioRef.current.play().catch(() => {
+    if (audioRef.current) {
+      audioRef.current.src = `/api/music/stream/${track.videoId}`
+      audioRef.current.volume = volume
+      try {
+        await audioRef.current.play()
+      } catch (e: any) {
+        // If the stream fails, check what went wrong
+        if (e?.name === 'NotSupportedError' || e?.name === 'MediaError') {
+          // The stream URL returned an error — fetch it to get the message
+          try {
+            const res = await fetch(`/api/music/stream/${track.videoId}`, { method: 'HEAD' })
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}))
+              toast.error(data.error || 'This track could not be downloaded. YouTube may be blocking requests.')
+              setCurrentTrack(null)
+              setIsPlaying(false)
+              return
+            }
+          } catch {
+            // HEAD might not work, try a range request
+          }
+          toast.error('Could not play this track. The server might be downloading it — try again in a moment.')
+        } else {
           toast.error('Click play again — browser autoplay policy')
-        })
+        }
       }
-    }, 100)
+    }
   }, [activeRoomId, volume])
 
   // Toggle play/pause
@@ -182,12 +200,37 @@ export function MusicView() {
       setIsPlaying(false)
       setPosition(0)
     }
+    const onError = () => {
+      // The audio element failed to load — likely a stream error.
+      // Fetch the stream URL to get the error message.
+      if (currentTrack) {
+        fetch(`/api/music/stream/${currentTrack.videoId}`)
+          .then((res) => {
+            if (!res.ok) return res.json()
+            return null
+          })
+          .then((data) => {
+            if (data?.error) {
+              toast.error(data.error)
+            } else {
+              toast.error('Could not play this track. Try another song.')
+            }
+          })
+          .catch(() => {
+            toast.error('Could not play this track. The server might still be downloading it — try again in a moment.')
+          })
+        setCurrentTrack(null)
+        setIsPlaying(false)
+      }
+    }
 
     audio.addEventListener('timeupdate', onTimeUpdate)
     audio.addEventListener('ended', onEnded)
+    audio.addEventListener('error', onError)
     return () => {
       audio.removeEventListener('timeupdate', onTimeUpdate)
       audio.removeEventListener('ended', onEnded)
+      audio.removeEventListener('error', onError)
     }
   }, [currentTrack])
 
