@@ -203,13 +203,13 @@ function MobileServerRail() {
     <AnimatePresence>
       {open && (
         <>
-          {/* Backdrop */}
+          {/* Backdrop — lower z-index so dialogs appear above it */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setOpen(false)}
-            className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-[100]"
+            className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
           />
           {/* Drawer */}
           <motion.div
@@ -217,7 +217,7 @@ function MobileServerRail() {
             animate={{ x: 0 }}
             exit={{ x: -300 }}
             transition={{ type: 'spring', stiffness: 350, damping: 35 }}
-            className="md:hidden fixed left-0 top-0 bottom-0 z-[101] w-20 flex flex-col items-center gap-1.5 py-4 bg-sidebar border-r border-sidebar-border/50 glass-dark"
+            className="md:hidden fixed left-0 top-0 bottom-0 z-50 w-20 flex flex-col items-center gap-1.5 py-4 bg-sidebar border-r border-sidebar-border/50 glass-dark"
           >
             {/* Top section: DMs + servers */}
             <div className="flex flex-col items-center gap-1.5">

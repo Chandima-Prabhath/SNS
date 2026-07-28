@@ -6,18 +6,20 @@ import {
   useCallback,
   useRef,
   useEffect,
+  useState,
   useMemo,
 } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import {
   Play, Pause, SkipForward, X, Volume2, Music as MusicIcon,
-  Shuffle, Repeat,
+  Shuffle, Repeat, ChevronUp, ChevronDown,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useSocket } from '@/hooks/useSocket'
 import { useMusicStore, type Track } from '@/stores/useMusicStore'
+import { useAppStore } from '@/stores/useAppStore'
 
 /**
  * GlobalMusicPlayer
@@ -544,7 +546,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       {children}
       {/* The hidden audio element — persists across all tabs */}
       <audio ref={audioRef} />
-      {/* The persistent bottom player bar */}
+      {/* The persistent floating player — collapses to a mini FAB */}
       <AnimatePresence>
         {currentTrack && (
           <PlayerBar
@@ -573,7 +575,12 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
   )
 }
 
-// ─── Player Bar (renders inside GlobalMusicPlayer) ──────────────────────
+// ─── Player Bar — Collapsible Floating Mini-Player ───────────────────────
+// When collapsed: a small floating circle (FAB) with album art + play/pause.
+// When expanded: a full player bar with all controls.
+// The player collapses automatically when the user switches away from the
+// Music tab, so it doesn't block content on other pages.
+
 function PlayerBar({
   currentTrack,
   isPlaying,
@@ -599,201 +606,172 @@ function PlayerBar({
   repeat: boolean
   onTogglePlay: () => void
   onSeek: (pos: number) => void
-  onNext: () => void
+  onNext: () => Promise<void>
   onStop: () => void
   onVolumeChange: (v: number) => void
   onShuffleToggle: () => void
   onRepeatToggle: () => void
 }) {
+  const [expanded, setExpanded] = useState(false)
+  const { view } = useAppStore()
+
+  // Auto-collapse when not on the Music tab
+  useEffect(() => {
+    if (view !== 'music') setExpanded(false)
+  }, [view])
+
   return (
-    <motion.div
-      initial={{ y: 100, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      exit={{ y: 100, opacity: 0 }}
-      transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-      // Persistent across all tabs. Positioned above the mobile bottom nav
-      // (bottom-16 = 64px, matching the nav's actual height) and pinned to
-      // the bottom on desktop (where there's no bottom nav).
-      className="fixed bottom-16 lg:bottom-0 left-0 right-0 z-30 bg-popover/95 backdrop-blur-2xl border-t border-border/50 shadow-2xl"
-    >
-      {/* Mobile layout: compact — track info + play/pause only */}
-      <div className="lg:hidden px-3 py-2.5 flex items-center gap-3">
-        {currentTrack.thumbnail ? (
-          <img
-            src={currentTrack.thumbnail}
-            alt=""
-            className="w-10 h-10 rounded-lg object-cover shrink-0"
-          />
-        ) : (
-          <div className="w-10 h-10 rounded-lg gradient-primary flex items-center justify-center shrink-0">
-            <MusicIcon className="w-4 h-4 text-primary-foreground" />
-          </div>
+    <>
+      {/* ─── Collapsed: Floating Mini-Player (FAB) ─── */}
+      <AnimatePresence>
+        {!expanded && (
+          <motion.div
+            initial={{ scale: 0, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+            className="fixed bottom-20 lg:bottom-6 right-4 z-30"
+          >
+            <div className="flex items-center gap-2">
+              {/* Play/pause button — floating circle */}
+              <button
+                onClick={onTogglePlay}
+                className="relative w-14 h-14 rounded-full gradient-primary shadow-glow hover:scale-105 transition-transform flex items-center justify-center shrink-0"
+                aria-label={isPlaying ? 'Pause' : 'Play'}
+              >
+                {currentTrack.thumbnail ? (
+                  <img
+                    src={currentTrack.thumbnail}
+                    alt=""
+                    className="absolute inset-0 w-full h-full rounded-full object-cover opacity-80"
+                  />
+                ) : (
+                  <MusicIcon className="w-5 h-5 text-primary-foreground relative z-10" />
+                )}
+                <div className="absolute inset-0 rounded-full bg-black/30 flex items-center justify-center">
+                  {isPlaying ? (
+                    <Pause className="w-5 h-5 text-white relative z-10" />
+                  ) : (
+                    <Play className="w-5 h-5 text-white ml-0.5 relative z-10" />
+                  )}
+                </div>
+              </button>
+
+              {/* Expand button — chevron up */}
+              <button
+                onClick={() => setExpanded(true)}
+                className="w-10 h-10 rounded-full glass-dark flex items-center justify-center text-foreground hover:scale-105 transition-transform shrink-0"
+                aria-label="Expand player"
+              >
+                <ChevronUp className="w-4 h-4" />
+              </button>
+            </div>
+          </motion.div>
         )}
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-medium truncate">
-            {currentTrack.title}
-          </div>
-          <div className="text-[10px] text-muted-foreground truncate">
-            {currentTrack.artist}
-          </div>
-          {/* Seek bar below track info on mobile */}
-          <div className="flex items-center gap-1.5 mt-1">
-            <span className="text-[8px] text-muted-foreground tabular-nums">
-              {formatTime(position)}
-            </span>
-            <input
-              type="range"
-              min={0}
-              max={currentTrack.durationSeconds || 300}
-              value={position}
-              onChange={(e) => onSeek(parseFloat(e.target.value))}
-              className="flex-1 h-0.5 rounded-full bg-muted appearance-none cursor-pointer accent-primary"
-            />
-            <span className="text-[8px] text-muted-foreground tabular-nums">
-              {formatTime(currentTrack.durationSeconds || 0)}
-            </span>
-          </div>
-        </div>
-        <Button
-          onClick={onTogglePlay}
-          size="icon"
-          className="rounded-full h-9 w-9 shrink-0 gradient-primary"
-          aria-label={isPlaying ? 'Pause' : 'Play'}
-        >
-          {isPlaying ? (
-            <Pause className="w-4 h-4" />
-          ) : (
-            <Play className="w-4 h-4 ml-0.5" />
-          )}
-        </Button>
-        <Button
-          onClick={onNext}
-          variant="ghost"
-          size="icon"
-          className="h-9 w-9 shrink-0 text-foreground"
-          aria-label="Next track"
-        >
-          <SkipForward className="w-4 h-4" />
-        </Button>
-      </div>
+      </AnimatePresence>
 
-      {/* Desktop layout: full — track info + seek bar + controls + volume */}
-      <div className="hidden lg:flex max-w-5xl mx-auto px-4 py-2.5 items-center gap-4">
-        {/* Track info */}
-        <div className="flex items-center gap-3 min-w-0 w-64 shrink-0">
-          {currentTrack.thumbnail ? (
-            <img
-              src={currentTrack.thumbnail}
-              alt=""
-              className="w-12 h-12 rounded-lg object-cover shrink-0"
-            />
-          ) : (
-            <div className="w-12 h-12 rounded-lg gradient-primary flex items-center justify-center shrink-0">
-              <MusicIcon className="w-5 h-5 text-primary-foreground" />
-            </div>
-          )}
-          <div className="min-w-0">
-            <div className="text-sm font-medium truncate">
-              {currentTrack.title}
-            </div>
-            <div className="text-xs text-muted-foreground truncate">
-              {currentTrack.artist}
-            </div>
-          </div>
-        </div>
-
-        {/* Seek bar + controls (center, flexible) */}
-        <div className="flex-1 flex flex-col items-center gap-1.5">
-          <div className="flex items-center gap-3">
-            <Button
-              onClick={onShuffleToggle}
-              variant="ghost"
-              size="icon"
-              className={cn(
-                'h-8 w-8 hover:bg-accent',
-                shuffle ? 'text-primary' : 'text-foreground',
-              )}
-              aria-label="Shuffle"
-            >
-              <Shuffle className="w-3.5 h-3.5" />
-            </Button>
-            <Button
-              onClick={onNext}
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-foreground hover:bg-accent"
-              aria-label="Next track"
-            >
-              <SkipForward className="w-4 h-4" />
-            </Button>
-            <Button
-              onClick={onTogglePlay}
-              size="icon"
-              className="rounded-full h-10 w-10 gradient-primary shadow-glow hover:scale-105 transition-transform"
-              aria-label={isPlaying ? 'Pause' : 'Play'}
-            >
-              {isPlaying ? (
-                <Pause className="w-4 h-4" />
+      {/* ─── Expanded: Full Player Bar ─── */}
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ y: 120, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 120, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+            className="fixed bottom-16 lg:bottom-4 left-4 right-4 lg:left-1/2 lg:-translate-x-1/2 lg:right-auto lg:w-[640px] z-30 bg-popover/95 backdrop-blur-2xl border border-border/50 rounded-2xl shadow-2xl overflow-hidden"
+          >
+            {/* Mobile layout */}
+            <div className="lg:hidden px-3 py-3 flex items-center gap-3">
+              {currentTrack.thumbnail ? (
+                <img src={currentTrack.thumbnail} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
               ) : (
-                <Play className="w-4 h-4 ml-0.5" />
+                <div className="w-12 h-12 rounded-lg gradient-primary flex items-center justify-center shrink-0">
+                  <MusicIcon className="w-5 h-5 text-primary-foreground" />
+                </div>
               )}
-            </Button>
-            <Button
-              onClick={onStop}
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-foreground hover:bg-accent"
-              aria-label="Stop"
-            >
-              <X className="w-4 h-4" />
-            </Button>
-            <Button
-              onClick={onRepeatToggle}
-              variant="ghost"
-              size="icon"
-              className={cn(
-                'h-8 w-8 hover:bg-accent',
-                repeat ? 'text-primary' : 'text-foreground',
-              )}
-              aria-label="Repeat"
-            >
-              <Repeat className="w-3.5 h-3.5" />
-            </Button>
-          </div>
-          <div className="flex items-center gap-2 w-full max-w-md">
-            <span className="text-[10px] text-muted-foreground tabular-nums w-8 text-right">
-              {formatTime(position)}
-            </span>
-            <input
-              type="range"
-              min={0}
-              max={currentTrack.durationSeconds || 300}
-              value={position}
-              onChange={(e) => onSeek(parseFloat(e.target.value))}
-              className="flex-1 h-1 rounded-full bg-muted appearance-none cursor-pointer accent-primary"
-            />
-            <span className="text-[10px] text-muted-foreground tabular-nums w-8">
-              {formatTime(currentTrack.durationSeconds || 0)}
-            </span>
-          </div>
-        </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-medium truncate">{currentTrack.title}</div>
+                <div className="text-[10px] text-muted-foreground truncate">{currentTrack.artist}</div>
+                <div className="flex items-center gap-1.5 mt-1">
+                  <span className="text-[8px] text-muted-foreground tabular-nums">{formatTime(position)}</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={currentTrack.durationSeconds || 300}
+                    value={position}
+                    onChange={(e) => onSeek(parseFloat(e.target.value))}
+                    className="flex-1 h-0.5 rounded-full bg-muted appearance-none cursor-pointer accent-primary"
+                  />
+                  <span className="text-[8px] text-muted-foreground tabular-nums">{formatTime(currentTrack.durationSeconds || 0)}</span>
+                </div>
+              </div>
+              <Button onClick={onTogglePlay} size="icon" className="rounded-full h-9 w-9 shrink-0 gradient-primary">
+                {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+              </Button>
+              <Button onClick={onNext} variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-foreground">
+                <SkipForward className="w-4 h-4" />
+              </Button>
+              <Button onClick={() => setExpanded(false)} variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-muted-foreground">
+                <ChevronDown className="w-4 h-4" />
+              </Button>
+            </div>
 
-        {/* Volume */}
-        <div className="flex items-center gap-2 shrink-0 w-28">
-          <Volume2 className="w-4 h-4 text-muted-foreground" />
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={volume}
-            onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
-            className="flex-1 h-1 rounded-full bg-muted appearance-none cursor-pointer accent-primary"
-            aria-label="Volume"
-          />
-        </div>
-      </div>
-    </motion.div>
+            {/* Desktop layout */}
+            <div className="hidden lg:flex px-4 py-3 items-center gap-4">
+              {/* Track info */}
+              <div className="flex items-center gap-3 min-w-0 w-48 shrink-0">
+                {currentTrack.thumbnail ? (
+                  <img src={currentTrack.thumbnail} alt="" className="w-11 h-11 rounded-lg object-cover shrink-0" />
+                ) : (
+                  <div className="w-11 h-11 rounded-lg gradient-primary flex items-center justify-center shrink-0">
+                    <MusicIcon className="w-5 h-5 text-primary-foreground" />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate">{currentTrack.title}</div>
+                  <div className="text-xs text-muted-foreground truncate">{currentTrack.artist}</div>
+                </div>
+              </div>
+
+              {/* Controls + seek bar */}
+              <div className="flex-1 flex flex-col items-center gap-1.5">
+                <div className="flex items-center gap-2">
+                  <button onClick={onShuffleToggle} className={cn('p-1.5 rounded-lg transition-colors', shuffle ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground')} aria-label="Shuffle">
+                    <Shuffle className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={onNext} className="p-1.5 rounded-lg text-foreground hover:bg-accent transition-colors" aria-label="Next">
+                    <SkipForward className="w-4 h-4" />
+                  </button>
+                  <button onClick={onTogglePlay} className="w-9 h-9 rounded-full gradient-primary flex items-center justify-center hover:scale-105 transition-transform shadow-glow" aria-label={isPlaying ? 'Pause' : 'Play'}>
+                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                  </button>
+                  <button onClick={onStop} className="p-1.5 rounded-lg text-foreground hover:bg-accent transition-colors" aria-label="Stop">
+                    <X className="w-4 h-4" />
+                  </button>
+                  <button onClick={onRepeatToggle} className={cn('p-1.5 rounded-lg transition-colors', repeat ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground')} aria-label="Repeat">
+                    <Repeat className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 w-full max-w-xs">
+                  <span className="text-[10px] text-muted-foreground tabular-nums w-8 text-right">{formatTime(position)}</span>
+                  <input type="range" min={0} max={currentTrack.durationSeconds || 300} value={position} onChange={(e) => onSeek(parseFloat(e.target.value))} className="flex-1 h-1 rounded-full bg-muted appearance-none cursor-pointer accent-primary" />
+                  <span className="text-[10px] text-muted-foreground tabular-nums w-8">{formatTime(currentTrack.durationSeconds || 0)}</span>
+                </div>
+              </div>
+
+              {/* Volume + collapse */}
+              <div className="flex items-center gap-2 shrink-0">
+                <Volume2 className="w-4 h-4 text-muted-foreground" />
+                <input type="range" min={0} max={1} step={0.01} value={volume} onChange={(e) => onVolumeChange(parseFloat(e.target.value))} className="w-16 h-1 rounded-full bg-muted appearance-none cursor-pointer accent-primary" />
+                <button onClick={() => setExpanded(false)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors" aria-label="Collapse player">
+                  <ChevronDown className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   )
 }
 
