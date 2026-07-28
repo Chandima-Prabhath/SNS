@@ -11,12 +11,16 @@ import { Button } from '@/components/ui/button'
  * the new SW, or dismiss the banner.
  *
  * How it works:
- *   1. On mount, we register the service worker (if not already registered).
- *   2. We listen for the 'controllerchange' event on navigator.serviceWorker.
- *   3. We periodically check for updates by calling registration.update().
- *   4. When a new SW is waiting, we show the banner.
- *   5. On "Update" click, we post a SKIP_WAITING message to the waiting SW
- *      and reload the page once the new SW takes control.
+ *   1. On mount, we register the service worker.
+ *   2. We immediately check for updates (not just every 10 min).
+ *   3. We listen for 'updatefound' events — a new SW is installing.
+ *   4. When the new SW reaches 'installed' state (and there's an existing
+ *      controller), we show the banner.
+ *   5. On "Update" click, we post SKIP_WAITING to the waiting SW and reload
+ *      once the new SW takes control.
+ *
+ * The key fix: we check for updates on EVERY page load, not just every 10
+ * minutes. This ensures the banner appears promptly after a deployment.
  */
 export function UpdateBanner() {
   const [updateAvailable, setUpdateAvailable] = useState(false)
@@ -32,6 +36,7 @@ export function UpdateBanner() {
       if (!mounted) return
       // A new SW is waiting to activate
       if (reg.waiting) {
+        console.log('[update-banner] waiting SW detected')
         setUpdateAvailable(true)
         setRegistration(reg)
       }
@@ -42,6 +47,7 @@ export function UpdateBanner() {
         newWorker.addEventListener('statechange', () => {
           if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
             // New SW installed and there's an existing one — update ready
+            console.log('[update-banner] new SW installed, update ready')
             setUpdateAvailable(true)
             setRegistration(reg)
           }
@@ -49,27 +55,51 @@ export function UpdateBanner() {
       })
     }
 
-    // Register or get existing registration
-    navigator.serviceWorker.register('/sw.js').then(handleUpdate).catch(() => {})
+    // Register the service worker and immediately check for updates.
+    // This is the key fix — we check on every page load, not just periodically.
+    navigator.serviceWorker.register('/sw.js').then((reg) => {
+      handleUpdate(reg)
+      // Immediately check for updates (the browser may have a cached old SW)
+      reg.update().then(() => handleUpdate(reg)).catch(() => {})
+    }).catch(() => {})
 
     // Also listen for controller changes (when a new SW takes over)
+    let reloading = false
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      // The new SW has taken control — reload to ensure fresh assets
-      if (mounted) window.location.reload()
+      // The new SW has taken control — reload to ensure fresh assets.
+      // Guard against double-reload.
+      if (mounted && !reloading) {
+        reloading = true
+        window.location.reload()
+      }
     })
 
-    // Periodically check for updates every 10 minutes
+    // Check for updates when the page becomes visible again (user returns
+    // to the tab — common pattern for checking for new deployments)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        navigator.serviceWorker.getRegistration().then((reg) => {
+          if (reg) {
+            reg.update().then(() => handleUpdate(reg)).catch(() => {})
+          }
+        })
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
+    // Also check periodically (every 5 minutes as a fallback)
     const interval = setInterval(async () => {
-      const regs = await navigator.serviceWorker.getRegistrations()
-      for (const reg of regs) {
+      const reg = await navigator.serviceWorker.getRegistration().catch(() => null)
+      if (reg) {
         await reg.update().catch(() => {})
         handleUpdate(reg)
       }
-    }, 10 * 60 * 1000)
+    }, 5 * 60 * 1000)
 
     return () => {
       mounted = false
       clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [])
 

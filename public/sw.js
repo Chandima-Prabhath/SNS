@@ -1,13 +1,17 @@
 /**
- * Adoo Service Worker v4
- * - App shell caching
- * - Network-first navigations
+ * Adoo Service Worker v5
+ * - App shell caching (versioned cache name — bump on every deploy)
+ * - Network-first navigations (so new HTML is always fetched)
  * - Cache-first for static assets
  * - SKIP_WAITING message handler for update activation
  * - Push notifications
+ *
+ * The cache version is bumped on every deploy so that the activate event
+ * cleans up old caches. This is critical for the update flow — when the
+ * new SW activates, it purges the old v4 cache and replaces it with v5.
  */
 
-const CACHE_NAME = 'adoo-v4'
+const CACHE_NAME = 'adoo-v5'
 const APP_SHELL = ['/', '/manifest.json', '/icon.svg']
 
 self.addEventListener('install', (event) => {
@@ -16,13 +20,21 @@ self.addEventListener('install', (event) => {
 })
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))))
-  self.clients.claim()
+  // Clean up ALL old caches (any cache name that doesn't match CACHE_NAME)
+  event.waitUntil(
+    caches.keys().then((keys) => Promise.all(
+      keys.filter((k) => k !== CACHE_NAME).map((k) => {
+        console.log('[sw] deleting old cache:', k)
+        return caches.delete(k)
+      })
+    )).then(() => self.clients.claim())
+  )
 })
 
 // Handle SKIP_WAITING message from the UpdateBanner
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
+    console.log('[sw] received SKIP_WAITING, activating...')
     self.skipWaiting()
   }
 })

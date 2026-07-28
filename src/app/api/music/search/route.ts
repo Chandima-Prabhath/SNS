@@ -10,6 +10,7 @@ import { Innertube } from 'youtubei.js'
  *   { videoId, title, artist, thumbnail, durationSeconds }
  *
  * Uses youtubei.js (the most actively maintained YouTube Music scraper).
+ * The search API is unchanged in v17+.
  */
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions)
@@ -25,14 +26,21 @@ export async function GET(req: Request) {
     const youtube = await Innertube.create()
     const searchResults = await youtube.music.search(query.trim(), { type: 'song' })
 
-    const tracks = (searchResults.songs?.contents || []).map((item: any) => ({
-      videoId: item.id,
-      title: item.title?.text || 'Unknown',
-      artist: item.artists?.map((a: any) => a.text).join(', ') || 'Unknown',
-      thumbnail: item.thumbnail?.[0]?.url || null,
-      durationSeconds: item.duration_seconds || null,
-      album: item.album?.text || null,
-    })).filter((t: any) => t.videoId)
+    // The search result has a .songs property (MusicShelf) when type='song'
+    const songsShelf = (searchResults as any).songs
+    const contents = songsShelf?.contents || (searchResults as any).contents || []
+
+    const tracks = contents.map((item: any) => {
+      // MusicResponsiveListItem properties
+      return {
+        videoId: item.id,
+        title: item.title || 'Unknown',
+        artist: item.artists?.map((a: any) => a.name || a.text).join(', ') || 'Unknown',
+        thumbnail: item.thumbnail?.contents?.[0]?.url || item.thumbnail?.[0]?.url || null,
+        durationSeconds: item.duration?.seconds || null,
+        album: item.album?.name || null,
+      }
+    }).filter((t: any) => t.videoId)
 
     return NextResponse.json({ tracks })
   } catch (e: any) {

@@ -4,8 +4,12 @@ import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { writeFile, mkdir, readFile } from 'fs/promises'
 import { existsSync } from 'fs'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import path from 'path'
 import crypto from 'crypto'
+
+const execFileAsync = promisify(execFile)
 
 /**
  * POST /api/tts — Generate a voice message using PocketBase TTS (Kyutai pocket-tts).
@@ -69,13 +73,17 @@ export async function POST(req: Request) {
         formData.append('voice_url', `${baseUrl}${customVoice.safetensorsUrl}`)
         console.log(`[tts] using safetensors voice: ${customVoice.name}`)
       } else {
-        // Slow path: pass the raw audio file as voice_wav
+        // Slow path: pass the raw audio file as voice_wav.
+        // IMPORTANT: Pocket TTS expects a valid WAV file (RIFF header).
+        // If the uploaded file is webm/mp3/m4a, we must convert it to WAV
+        // using ffmpeg first.
         const audioPath = path.join(process.cwd(), 'public', customVoice.audioUrl)
         if (!existsSync(audioPath)) {
           return NextResponse.json({ error: 'voice clip file not found' }, { status: 404 })
         }
-        const audioBuffer = await readFile(audioPath)
-        const audioBlob = new Blob([audioBuffer], { type: 'audio/wav' })
+
+        const wavBuffer = await ensureWav(audioPath)
+        const audioBlob = new Blob([wavBuffer], { type: 'audio/wav' })
         formData.append('voice_wav', audioBlob, 'voice.wav')
         console.log(`[tts] using raw audio voice (no safetensors yet): ${customVoice.name}`)
       }
@@ -159,4 +167,50 @@ export async function GET() {
   ]
 
   return NextResponse.json({ voices })
+}
+
+/**
+ * Ensure an audio file is in WAV format (RIFF header).
+ *
+ * Pocket TTS's voice_wav parameter expects a valid WAV file. Browser
+ * recordings from MediaRecorder produce audio/webm, and uploaded files
+ * might be mp3/m4a/ogg. We use ffmpeg to convert any audio format to
+ * 16-bit PCM WAV at 24kHz mono (Pocket TTS's expected format).
+ *
+ * If the file is already a WAV, we return it as-is.
+ * If ffmpeg is not available, we return the original file (will fail at
+ * the TTS server with a clear RIFF error).
+ */
+async function ensureWav(audioPath: string): Promise<Buffer> {
+  // Check if the file is already a WAV by reading the first 4 bytes
+  const header = await readFile(audioPath, { encoding: null }).then((buf) => buf.subarray(0, 4).toString('ascii'))
+  if (header === 'RIFF') {
+    // Already a WAV — return as-is
+    return readFile(audioPath)
+  }
+
+  // Not a WAV — convert with ffmpeg
+  const tempWavPath = audioPath.replace(/\.[^.]+$/, '') + `_converted.wav`
+  try {
+    console.log(`[tts] converting audio to WAV: ${audioPath} → ${tempWavPath}`)
+    await execFileAsync('ffmpeg', [
+      '-y',               // overwrite output
+      '-i', audioPath,    // input
+      '-ar', '24000',     // 24kHz sample rate (Pocket TTS default)
+      '-ac', '1',         // mono
+      '-acodec', 'pcm_s16le', // 16-bit PCM
+      tempWavPath,
+    ], { timeout: 30000 })
+
+    const wavBuffer = await readFile(tempWavPath)
+
+    // Clean up temp file
+    await import('fs/promises').then((fs) => fs.unlink(tempWavPath).catch(() => {}))
+
+    return wavBuffer
+  } catch (e: any) {
+    console.error('[tts] ffmpeg conversion failed:', e?.message || e)
+    // Return original file — the TTS server will give a clearer error
+    return readFile(audioPath)
+  }
 }

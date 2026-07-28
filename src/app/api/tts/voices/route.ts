@@ -70,10 +70,17 @@ export async function POST(req: Request) {
  * voice model. On success, updates the CustomVoice record with the
  * safetensorsUrl. On failure, the voice remains usable via the slower
  * voice_wav path.
+ *
+ * IMPORTANT: Pocket TTS expects WAV files (RIFF header). Browser recordings
+ * produce audio/webm, and uploaded files might be mp3/m4a. We convert the
+ * audio to WAV using ffmpeg before passing it to pocket-tts.
  */
 async function exportSafetensors(voiceId: string, audioUrl: string) {
   // Resolve the audio file path (audioUrl is like "/uploads/abc.wav")
   const audioPath = path.join(process.cwd(), 'public', audioUrl)
+
+  // Convert to WAV first (pocket-tts requires WAV format)
+  const wavPath = await ensureWavFile(audioPath)
 
   // Generate the safetensors file path
   const safetensorsFilename = `voice-${voiceId}.safetensors`
@@ -81,11 +88,10 @@ async function exportSafetensors(voiceId: string, audioUrl: string) {
   const safetensorsUrl = `/uploads/${safetensorsFilename}`
 
   // Try to run pocket-tts export-voice
-  // The command is: pocket-tts export-voice <audio-path> <export-path>
   try {
     const { stdout, stderr } = await execFileAsync('pocket-tts', [
       'export-voice',
-      audioPath,
+      wavPath,
       safetensorsPath,
     ], {
       timeout: 120000, // 2 minute timeout — encoding can take a while
@@ -99,11 +105,42 @@ async function exportSafetensors(voiceId: string, audioUrl: string) {
       data: { safetensorsUrl },
     })
   } catch (e: any) {
-    // Common failures:
-    // - pocket-tts CLI not installed (ENOENT)
-    // - Audio file not found
-    // - Timeout
     console.warn(`[tts-voices] safetensors export failed for ${voiceId}:`, e?.message || e)
     // Voice remains usable via voice_wav fallback
+  } finally {
+    // Clean up the temporary WAV file if it was converted
+    if (wavPath !== audioPath) {
+      await import('fs/promises').then((fs) => fs.unlink(wavPath).catch(() => {}))
+    }
+  }
+}
+
+/**
+ * Ensure an audio file is in WAV format. If it's already WAV, return the
+ * original path. Otherwise, convert to WAV using ffmpeg and return the
+ * temp file path.
+ */
+async function ensureWavFile(audioPath: string): Promise<string> {
+  const { readFile } = await import('fs/promises')
+  const header = await readFile(audioPath).then((buf) => buf.subarray(0, 4).toString('ascii'))
+  if (header === 'RIFF') {
+    return audioPath // already WAV
+  }
+
+  // Convert to WAV
+  const wavPath = audioPath.replace(/\.[^.]+$/, '') + `_converted.wav`
+  try {
+    await execFileAsync('ffmpeg', [
+      '-y',
+      '-i', audioPath,
+      '-ar', '24000',
+      '-ac', '1',
+      '-acodec', 'pcm_s16le',
+      wavPath,
+    ], { timeout: 30000 })
+    return wavPath
+  } catch (e: any) {
+    console.error('[tts-voices] ffmpeg conversion failed:', e?.message || e)
+    return audioPath // return original — will fail with a clear error
   }
 }
