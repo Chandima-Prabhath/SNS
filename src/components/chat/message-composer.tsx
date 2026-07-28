@@ -4,8 +4,18 @@ import { useState, useRef, useEffect } from 'react'
 import { useChannel } from '@/hooks/useChannel'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Reply, X, Send, Image as ImageIcon, Loader2, Smile } from 'lucide-react'
+import {
+  Reply, X, Send, Image as ImageIcon, Loader2, AudioLines, Sparkles,
+} from 'lucide-react'
 import { toast } from 'sonner'
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+} from '@/components/ui/dialog'
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select'
+import { Label } from '@/components/ui/label'
+import { cn } from '@/lib/utils'
 
 interface MessageComposerProps {
   channelId: string
@@ -16,6 +26,7 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [ttsOpen, setTtsOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -85,7 +96,7 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
   }
 
   return (
-    <div className="border-t bg-background px-3 md:px-6 py-3 pb-safe">
+    <div className="border-t bg-background/80 backdrop-blur-xl px-3 md:px-6 py-3 pb-safe">
       {/* Reply banner */}
       {replyTo && (
         <div className="flex items-center gap-2 text-xs bg-muted rounded-lg p-2 mb-2">
@@ -107,8 +118,17 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
           <input type="file" className="hidden" accept="image/*,video/*,audio/*" onChange={handleUpload} disabled={uploading} />
         </label>
 
+        {/* TTS voice message button */}
+        <button
+          onClick={() => setTtsOpen(true)}
+          className="p-2.5 hover:bg-accent rounded-full transition-colors shrink-0 group"
+          title="Send AI voice message"
+        >
+          <AudioLines className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+        </button>
+
         {/* Text input — grows up to ~4 lines */}
-        <div className="flex-1 bg-muted rounded-2xl px-4 py-2 flex items-end">
+        <div className="flex-1 bg-muted/70 backdrop-blur-sm rounded-2xl px-4 py-2 flex items-end border border-border/30">
           <Textarea
             ref={textareaRef}
             value={text}
@@ -126,11 +146,187 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
           onClick={handleSend}
           disabled={!text.trim() || sending}
           size="icon"
-          className="rounded-full h-10 w-10 shrink-0 transition-transform active:scale-90"
+          className="rounded-full h-10 w-10 shrink-0 transition-transform active:scale-90 gradient-primary"
         >
           {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
         </Button>
       </div>
+
+      {/* TTS Voice Message Dialog */}
+      <TtsDialog
+        open={ttsOpen}
+        onOpenChange={setTtsOpen}
+        onSend={async (url) => {
+          await send({
+            body: '🎙️ AI voice message',
+            mediaUrl: url,
+            mediaType: 'audio',
+          })
+          setTtsOpen(false)
+          toast.success('Voice message sent')
+        }}
+      />
     </div>
+  )
+}
+
+/**
+ * TTS Dialog — lets the user type text, pick a voice, preview, and send.
+ */
+function TtsDialog({
+  open,
+  onOpenChange,
+  onSend,
+}: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  onSend: (url: string) => Promise<void>
+}) {
+  const [text, setText] = useState('')
+  const [voice, setVoice] = useState('alba')
+  const [generating, setGenerating] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
+
+  const handleGenerate = async () => {
+    if (!text.trim() || generating) return
+    setGenerating(true)
+    setPreviewUrl(null)
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Generation failed')
+      }
+      const data = await res.json()
+      setPreviewUrl(data.url)
+      toast.success('Voice generated — preview and send')
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to generate voice')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const handleSend = async () => {
+    if (!previewUrl || sending) return
+    setSending(true)
+    try {
+      await onSend(previewUrl)
+      // Reset
+      setText('')
+      setPreviewUrl(null)
+    } catch {
+      toast.error('Failed to send voice message')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const handleClose = (o: boolean) => {
+    if (!o) {
+      setText('')
+      setPreviewUrl(null)
+    }
+    onOpenChange(o)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-primary" />
+            AI Voice Message
+          </DialogTitle>
+          <DialogDescription>
+            Type a message and send it as an AI-generated voice note.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>Message</Label>
+            <Textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Type what the voice should say..."
+              rows={3}
+              maxLength={500}
+              className="resize-none"
+            />
+            <div className="text-xs text-muted-foreground text-right">
+              {text.length}/500
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Voice</Label>
+            <Select value={voice} onValueChange={setVoice}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="alba">Alba (English, Female)</SelectItem>
+                <SelectItem value="charles">Charles (English, Male)</SelectItem>
+                <SelectItem value="jane">Jane (English, Female)</SelectItem>
+                <SelectItem value="michael">Michael (English, Male)</SelectItem>
+                <SelectItem value="vera">Vera (English, Female)</SelectItem>
+                <SelectItem value="paul">Paul (English, Male)</SelectItem>
+                <SelectItem value="estelle">Estelle (French, Female)</SelectItem>
+                <SelectItem value="giovanni">Giovanni (Italian, Male)</SelectItem>
+                <SelectItem value="juergen">Juergen (German, Male)</SelectItem>
+                <SelectItem value="lola">Lola (Spanish, Female)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Preview player */}
+          {previewUrl && (
+            <div className="space-y-2">
+              <Label>Preview</Label>
+              <audio controls src={previewUrl} className="w-full" />
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => handleClose(false)}>Cancel</Button>
+          {!previewUrl ? (
+            <Button onClick={handleGenerate} disabled={!text.trim() || generating}>
+              {generating ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 mr-1.5" />
+                  Generate voice
+                </>
+              )}
+            </Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => setPreviewUrl(null)} disabled={sending}>
+                Regenerate
+              </Button>
+              <Button onClick={handleSend} disabled={sending}>
+                {sending ? (
+                  <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4 mr-1.5" />
+                )}
+                Send
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -4,12 +4,13 @@ import { useEffect, useRef, useState, useMemo } from 'react'
 import { useChannel, type ChannelMessage } from '@/hooks/useChannel'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot, UserX } from 'lucide-react'
+import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot, UserX, Copy, Pin, AudioLines } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { format, isToday, isYesterday } from 'date-fns'
 import { useAppStore } from '@/stores/useAppStore'
 import { useSession } from 'next-auth/react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useContextMenu } from '@/components/ui/context-menu-provider'
 
 interface MessageListProps {
   channelId: string
@@ -309,6 +310,47 @@ function MessageItem(props: MessageItemProps) {
   const { message: m, isMine, isLastOfGroup, isEditing, setEditing, onEditSubmit } = props
   const [editText, setEditText] = useState(m.body)
   const isDeleted = !!m.deletedAt
+  const ctxMenu = useContextMenu()
+
+  const showMessageContextMenu = (e: React.MouseEvent | React.TouchEvent) => {
+    let x: number, y: number
+    if ('touches' in e) {
+      const t = e.touches[0] || (e.changedTouches?.[0])
+      if (!t) return
+      x = t.clientX; y = t.clientY
+    } else {
+      x = e.clientX; y = e.clientY
+    }
+    if (!ctxMenu) return
+    const items: Array<{ label: string; icon: React.ReactNode; onClick: () => void; variant?: 'default' | 'danger' }> = [
+      {
+        label: 'Reply',
+        icon: <Reply className="w-4 h-4" />,
+        onClick: () => props.onReply(),
+      },
+      {
+        label: 'Copy text',
+        icon: <Copy className="w-4 h-4" />,
+        onClick: () => {
+          navigator.clipboard.writeText(m.body)
+        },
+      },
+    ]
+    if (isMine && !isEditing) {
+      items.push({
+        label: 'Edit',
+        icon: <Edit2 className="w-4 h-4" />,
+        onClick: () => setEditing(true),
+      })
+      items.push({
+        label: 'Delete',
+        icon: <Trash2 className="w-4 h-4" />,
+        variant: 'danger',
+        onClick: () => props.onDelete(),
+      })
+    }
+    ctxMenu.show(x, y, items)
+  }
 
   if (isDeleted) {
     return (
@@ -337,8 +379,27 @@ function MessageItem(props: MessageItemProps) {
 
       {/* Message bubble */}
       <div
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); showMessageContextMenu(e) }}
+        onTouchStart={(e) => {
+          // Long-press for mobile
+          const touch = e.touches[0]
+          const timer = setTimeout(() => {
+            showMessageContextMenu({ touches: [{ clientX: touch.clientX, clientY: touch.clientY }] } as any)
+            if (navigator.vibrate) navigator.vibrate(50)
+          }, 500)
+          const el = e.currentTarget
+          const clear = () => {
+            clearTimeout(timer)
+            el.removeEventListener('touchend', clear)
+            el.removeEventListener('touchmove', clear)
+            el.removeEventListener('touchcancel', clear)
+          }
+          el.addEventListener('touchend', clear, { once: true })
+          el.addEventListener('touchmove', clear, { once: true })
+          el.addEventListener('touchcancel', clear, { once: true })
+        }}
         className={cn(
-          'relative max-w-[78%] md:max-w-[65%] px-3.5 py-2 text-[15px] leading-snug break-words',
+          'relative max-w-[78%] md:max-w-[65%] px-3.5 py-2 text-[15px] leading-snug break-words select-none cursor-default',
           isMine
             ? 'bg-bubble-mine text-bubble-mine-foreground rounded-2xl rounded-br-md'
             : 'bg-bubble-other text-bubble-other-foreground rounded-2xl rounded-bl-md',
@@ -366,6 +427,19 @@ function MessageItem(props: MessageItemProps) {
         )}
         {m.mediaUrl && m.mediaType?.startsWith('video') && (
           <video src={m.mediaUrl} controls className="rounded-lg mb-1.5 max-w-full -mx-1 w-[calc(100%+0.5rem)]" />
+        )}
+        {m.mediaUrl && m.mediaType?.startsWith('audio') && (
+          <div className="mb-1.5 -mx-1">
+            <div className={cn(
+              'flex items-center gap-2 p-2 rounded-xl',
+              isMine ? 'bg-black/15' : 'bg-black/20'
+            )}>
+              <div className="w-8 h-8 rounded-full gradient-primary flex items-center justify-center shrink-0">
+                <AudioLines className="w-4 h-4 text-primary-foreground" />
+              </div>
+              <audio controls src={m.mediaUrl} className="flex-1 h-8 min-w-0" style={{ maxWidth: '100%' }} />
+            </div>
+          </div>
         )}
 
         {/* Body or editor */}

@@ -60,11 +60,11 @@ export function VoiceView() {
   })
 
   const startCallMutation = useMutation({
-    mutationFn: async (channelId: string) => {
+    mutationFn: async (params: { channelId?: string; dmGroupId?: string }) => {
       const res = await fetch('/api/calls', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channelId }),
+        body: JSON.stringify(params),
       })
       if (!res.ok) throw new Error('failed')
       return res.json()
@@ -166,7 +166,7 @@ export function VoiceView() {
                 return (
                   <motion.button
                     key={ch.id}
-                    onClick={() => startCallMutation.mutate(ch.id)}
+                    onClick={() => startCallMutation.mutate({ channelId: ch.id })}
                     disabled={startCallMutation.isPending}
                     whileTap={{ scale: 0.98 }}
                     className={cn(
@@ -248,7 +248,7 @@ export function VoiceView() {
                 return (
                   <button
                     key={call.id}
-                    onClick={() => startCallMutation.mutate(call.channelId)}
+                    onClick={() => startCallMutation.mutate({ channelId: call.channelId })}
                     className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-primary/20 hover:bg-accent/50 transition-colors text-left"
                   >
                     <div className="relative">
@@ -352,7 +352,16 @@ export function VoiceView() {
                     {/* Call back button */}
                     {call.channel && (
                       <button
-                        onClick={() => startCallMutation.mutate(call.channel.id)}
+                        onClick={() => {
+                          // For DM calls, use dmGroupId so it rings the partner
+                          // directly instead of creating a persistent channel call.
+                          const isDm = call.channel.group?.isDm
+                          startCallMutation.mutate(
+                            isDm
+                              ? { dmGroupId: call.channel.groupId }
+                              : { channelId: call.channel.id }
+                          )
+                        }}
                         className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center hover:bg-primary/20 transition-colors"
                         title="Call back"
                       >

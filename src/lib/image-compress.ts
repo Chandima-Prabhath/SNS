@@ -2,7 +2,7 @@
  * Client-side image compression using the Canvas API.
  *
  * Why: mobile photos can easily be 5-10MB. Uploading raw wastes bandwidth
- * and time. We downscale to a max dimension and re-encode as JPEG/WebP at
+ * and time. We downscale to a max dimension and re-encode as JPEG at
  * a quality that keeps the image looking good while shrinking it 5-10x.
  *
  * For videos we can't easily compress client-side without ffmpeg.wasm
@@ -20,11 +20,15 @@ interface CompressOptions {
 }
 
 /**
- * Compress an image File using canvas. Returns a new File with the
- * compressed image. If the input is already small or not an image, returns
- * the original file unchanged.
+ * Compress an image File using canvas. Returns a new File (or Blob) with the
+ * compressed image. If compression fails or the input is already small,
+ * returns the original file unchanged.
+ *
+ * Returns a Blob (not File) for maximum browser compatibility — the File
+ * constructor isn't available in all environments, but Blob is universal
+ * and FormData accepts both.
  */
-export async function compressImage(file: File, opts: CompressOptions = {}): Promise<File> {
+export async function compressImage(file: File, opts: CompressOptions = {}): Promise<Blob> {
   const { maxDimension = 1280, quality = 0.82, mimeType = 'image/jpeg' } = opts
 
   // Only compress raster images
@@ -33,9 +37,17 @@ export async function compressImage(file: File, opts: CompressOptions = {}): Pro
   }
 
   try {
-    // Load the image into an HTMLImageElement
-    const img = await loadImage(file)
-    const { width, height } = img
+    // Load the image into an HTMLImageElement via createImageBitmap (faster)
+    // with fallback to the classic Image element.
+    let bitmap: ImageBitmap | HTMLImageElement
+    try {
+      bitmap = await createImageBitmap(file)
+    } catch {
+      bitmap = await loadImage(file)
+    }
+
+    const width = 'width' in bitmap ? bitmap.width : (bitmap as HTMLImageElement).naturalWidth
+    const height = 'height' in bitmap ? bitmap.height : (bitmap as HTMLImageElement).naturalHeight
 
     // Skip if already small enough
     if (width <= maxDimension && height <= maxDimension && file.size < 1024 * 1024) {
@@ -67,7 +79,12 @@ export async function compressImage(file: File, opts: CompressOptions = {}): Pro
     // High-quality downscaling
     ctx.imageSmoothingEnabled = true
     ctx.imageSmoothingQuality = 'high'
-    ctx.drawImage(img, 0, 0, scaledW, scaledH)
+    ctx.drawImage(bitmap as CanvasImageSource, 0, 0, scaledW, scaledH)
+
+    // Release bitmap memory if it's an ImageBitmap
+    if ('close' in bitmap && typeof (bitmap as ImageBitmap).close === 'function') {
+      ;(bitmap as ImageBitmap).close()
+    }
 
     // Convert to blob
     const blob = await new Promise<Blob | null>((resolve) => {
@@ -75,12 +92,18 @@ export async function compressImage(file: File, opts: CompressOptions = {}): Pro
     })
     if (!blob) return file
 
-    // Generate filename
+    // Return the blob with a proper filename if possible
     const ext = mimeType === 'image/webp' ? 'webp' : 'jpg'
-    const baseName = file.name.replace(/\.[^.]+$/, '') || 'image'
-    return new File([blob], `${baseName}.${ext}`, { type: mimeType })
+    const baseName = (file.name || 'image').replace(/\.[^.]+$/, '')
+    const filename = `${baseName}.${ext}`
+    try {
+      return new File([blob], filename, { type: mimeType })
+    } catch {
+      // File constructor not available — return the blob directly
+      return blob
+    }
   } catch (e) {
-    console.error('[compressImage] failed:', e)
+    console.error('[compressImage] failed, returning original:', e)
     return file
   }
 }

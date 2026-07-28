@@ -28,6 +28,10 @@ interface AppState {
   // Mobile sidebar
   sidebarOpen: boolean
   setSidebarOpen: (open: boolean) => void
+
+  // Mobile server rail drawer
+  serverRailOpen: boolean
+  setServerRailOpen: (open: boolean) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -51,4 +55,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   sidebarOpen: false,
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+
+  serverRailOpen: false,
+  setServerRailOpen: (serverRailOpen) => set({ serverRailOpen }),
 }))

@@ -18,6 +18,7 @@ import {
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 
 interface NavItem {
   key: ViewKey
@@ -43,9 +44,20 @@ const NAV_ITEMS: NavItem[] = [
  *   - Bottom nav: Status, Calls, Settings
  *   - User avatar (click → settings)
  *
- * On mobile this is hidden — the BottomNav handles navigation there.
+ * On desktop: always visible as a 72px column.
+ * On mobile: hidden by default, revealed via a slide-out drawer triggered
+ * by a button in the chat list header.
  */
 export function ServerRail() {
+  return (
+    <>
+      <DesktopServerRail />
+      <MobileServerRail />
+    </>
+  )
+}
+
+function DesktopServerRail() {
   const view = useAppStore((s) => s.view)
   const setView = useAppStore((s) => s.setView)
   const selectedGroupId = useAppStore((s) => s.selectedGroupId)
@@ -64,7 +76,6 @@ export function ServerRail() {
     },
   })
 
-  // Non-DM groups only
   const serverGroups = groups?.filter((g) => !g.isDm) || []
 
   return (
@@ -160,6 +171,128 @@ export function ServerRail() {
 }
 
 /**
+ * Mobile server rail — a slide-out drawer that's triggered by the
+ * `serverRailOpen` state in the app store. Shows the same content as the
+ * desktop rail but in a horizontal-friendly vertical layout.
+ */
+function MobileServerRail() {
+  const view = useAppStore((s) => s.view)
+  const setView = useAppStore((s) => s.setView)
+  const selectedGroupId = useAppStore((s) => s.selectedGroupId)
+  const setSelectedGroupId = useAppStore((s) => s.setSelectedGroupId)
+  const open = useAppStore((s) => s.serverRailOpen)
+  const setOpen = useAppStore((s) => s.setServerRailOpen)
+  const { data: unreadData } = useUnreadCounts()
+  const { status: callStatus } = useCall()
+  const { data: session } = useSession()
+  const totalUnread = unreadData?.total || 0
+
+  const { data: groups } = useQuery({
+    queryKey: ['channels'],
+    queryFn: async () => {
+      const res = await fetch('/api/channels')
+      const data = await res.json()
+      return data.groups as any[]
+    },
+  })
+
+  const serverGroups = groups?.filter((g) => !g.isDm) || []
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          {/* Backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setOpen(false)}
+            className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-[100]"
+          />
+          {/* Drawer */}
+          <motion.div
+            initial={{ x: -300 }}
+            animate={{ x: 0 }}
+            exit={{ x: -300 }}
+            transition={{ type: 'spring', stiffness: 350, damping: 35 }}
+            className="md:hidden fixed left-0 top-0 bottom-0 z-[101] w-20 flex flex-col items-center gap-1.5 py-4 bg-sidebar border-r border-sidebar-border/50 glass-dark"
+          >
+            {/* Top section: DMs + servers */}
+            <div className="flex flex-col items-center gap-1.5">
+              {/* DMs */}
+              <RailButton
+                active={view === 'chats' && selectedGroupId === 'dm'}
+                onClick={() => { setView('chats'); setSelectedGroupId('dm'); setOpen(false) }}
+                label="Direct Messages"
+              >
+                <MessageCircle className="w-5 h-5" strokeWidth={2.2} />
+                {totalUnread > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center">
+                    {totalUnread > 99 ? '99+' : totalUnread}
+                  </span>
+                )}
+              </RailButton>
+
+              <div className="w-8 h-px bg-sidebar-border/60 my-0.5" />
+
+              {serverGroups.map((g) => (
+                <RailButton
+                  key={g.id}
+                  active={view === 'chats' && selectedGroupId === g.id}
+                  onClick={() => { setView('chats'); setSelectedGroupId(g.id); setOpen(false) }}
+                  label={g.name}
+                >
+                  {g.iconUrl ? (
+                    <img src={g.iconUrl} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="font-semibold text-sm">{g.name.charAt(0).toUpperCase()}</span>
+                  )}
+                </RailButton>
+              ))}
+
+              <CreateOrJoinGroupButton onCreated={() => setOpen(false)} />
+            </div>
+
+            <div className="flex-1" />
+
+            {/* Bottom nav */}
+            <div className="flex flex-col items-center gap-1.5">
+              <div className="w-8 h-px bg-sidebar-border/60 mb-0.5" />
+              {NAV_ITEMS.map((item) => {
+                const Icon = item.icon
+                const active = view === item.key
+                return (
+                  <RailButton
+                    key={item.key}
+                    active={active}
+                    onClick={() => { setView(item.key); setOpen(false) }}
+                    label={item.label}
+                  >
+                    <Icon className="w-5 h-5" strokeWidth={active ? 2.4 : 2} fill={active && item.key === 'status' ? 'currentColor' : 'none'} />
+                  </RailButton>
+                )
+              })}
+              <button
+                onClick={() => { setView('settings'); setOpen(false) }}
+                className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all hover:rounded-xl active:scale-95 overflow-hidden ring-2 ring-border/50"
+              >
+                <Avatar className="w-full h-full">
+                  <AvatarImage src={(session?.user as any)?.avatarUrl || undefined} />
+                  <AvatarFallback className="bg-sidebar-accent text-sm font-semibold">
+                    {(session?.user as any)?.displayName?.charAt(0).toUpperCase() || '?'}
+                  </AvatarFallback>
+                </Avatar>
+              </button>
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  )
+}
+
+/**
  * A single square icon button in the rail. Active state shows a primary
  * background; inactive shows a sidebar-accent background. Hover shows a
  * tooltip with the label.
@@ -201,7 +334,7 @@ function RailButton({
   )
 }
 
-function CreateOrJoinGroupButton() {
+function CreateOrJoinGroupButton({ onCreated }: { onCreated?: () => void } = {}) {
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<'create' | 'join'>('create')
   const [name, setName] = useState('')
@@ -229,6 +362,7 @@ function CreateOrJoinGroupButton() {
       setOpen(false)
       setName('')
       setDescription('')
+      onCreated?.()
     },
     onError: () => toast.error('Failed to create group'),
   })
@@ -253,6 +387,7 @@ function CreateOrJoinGroupButton() {
       setView('chats')
       setOpen(false)
       setCode('')
+      onCreated?.()
     },
     onError: (e: any) => toast.error(e.message),
   })

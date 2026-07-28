@@ -20,13 +20,14 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
-import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn, UserX, Settings, Crown, Shield, Video, Phone } from 'lucide-react'
+import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn, UserX, Settings, Crown, Shield, Video, Phone, Server, Pin, BellOff, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
 import { GroupSettingsDialog } from './channel-list'
 import { useCall } from '@/hooks/useCall'
 import { unlockAudio } from '@/lib/call-manager'
+import { useContextMenu } from '@/components/ui/context-menu-provider'
 
 interface ChannelInfo {
   id: string
@@ -86,6 +87,75 @@ export function ChatList() {
   // The currently selected group object (or null for DMs)
   const selectedGroup = groups?.find((g) => g.id === selectedGroupId) || null
   const isViewingDms = selectedGroupId === 'dm'
+  const setServerRailOpen = useAppStore((s) => s.setServerRailOpen)
+  const ctxMenu = useContextMenu()
+  const qc = useQueryClient()
+
+  // Show a context menu for a chat row — supports right-click (desktop) and
+  // long-press (mobile, via the custom touch handler).
+  const showChatContextMenu = (e: React.MouseEvent | React.TouchEvent, row: ChatRow) => {
+    let x: number, y: number
+    if ('touches' in e) {
+      const t = e.touches[0] || (e.changedTouches?.[0])
+      if (!t) return
+      x = t.clientX; y = t.clientY
+    } else {
+      x = e.clientX; y = e.clientY
+    }
+    if (!ctxMenu) return
+    ctxMenu.show(x, y, [
+      {
+        label: 'Open',
+        icon: <MessageCircle className="w-4 h-4" />,
+        onClick: () => setActiveChannel(row.channel.id),
+      },
+      {
+        label: 'Mark as read',
+        icon: <Check className="w-4 h-4" />,
+        onClick: () => {
+          fetch(`/api/channels/${row.channel.id}/read`, { method: 'POST' }).then(() => {
+            qc.invalidateQueries({ queryKey: ['unread-counts'] })
+            qc.invalidateQueries({ queryKey: ['channels'] })
+            toast.success('Marked as read')
+          })
+        },
+      },
+      {
+        label: 'Mute notifications',
+        icon: <BellOff className="w-4 h-4" />,
+        onClick: () => toast.info('Mute coming soon'),
+      },
+      {
+        label: row.isDm ? 'Delete conversation' : 'Leave channel',
+        icon: <Trash2 className="w-4 h-4" />,
+        variant: 'danger',
+        onClick: () => {
+          if (row.isDm) {
+            if (confirm('Delete this conversation? Messages will be removed for you.')) {
+              // For DMs, we leave the channel membership
+              fetch(`/api/channels/${row.channel.id}/members`, {
+                method: 'DELETE',
+              }).then(() => {
+                qc.invalidateQueries({ queryKey: ['channels'] })
+                if (activeChannelId === row.channel.id) setActiveChannel(null)
+                toast.success('Conversation deleted')
+              }).catch(() => toast.error('Failed to delete'))
+            }
+          } else {
+            if (confirm(`Leave #${row.channel.name}?`)) {
+              fetch(`/api/channels/${row.channel.id}/members`, {
+                method: 'DELETE',
+              }).then(() => {
+                qc.invalidateQueries({ queryKey: ['channels'] })
+                if (activeChannelId === row.channel.id) setActiveChannel(null)
+                toast.success('Left channel')
+              }).catch(() => toast.error('Failed to leave'))
+            }
+          }
+        },
+      },
+    ])
+  }
 
   // Join a voice/video channel — creates a call and switches to the voice view
   const setView = useAppStore((s) => s.setView)
@@ -181,6 +251,14 @@ export function ChatList() {
       <div className="px-4 pt-4 pb-3 space-y-3 border-b border-sidebar-border/50">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5 min-w-0">
+            {/* Mobile: hamburger to open server rail drawer */}
+            <button
+              onClick={() => setServerRailOpen(true)}
+              className="md:hidden w-9 h-9 rounded-xl bg-sidebar-accent flex items-center justify-center shrink-0 hover:bg-accent transition-colors"
+              title="Groups & servers"
+            >
+              <Server className="w-4 h-4" />
+            </button>
             {isViewingDms ? (
               <>
                 <div className="w-9 h-9 rounded-xl bg-primary/15 flex items-center justify-center shrink-0">
@@ -329,8 +407,33 @@ export function ChatList() {
                     <button
                       key={row.channel.id}
                       onClick={() => setActiveChannel(row.channel.id)}
+                      onContextMenu={(e) => { e.preventDefault(); showChatContextMenu(e, row) }}
+                      onTouchStart={(e) => {
+                        // Long-press detection for mobile
+                        const touch = e.touches[0]
+                        const timer = setTimeout(() => {
+                          showChatContextMenu({
+                            touches: [{ clientX: touch.clientX, clientY: touch.clientY }],
+                          } as any, row)
+                          // Trigger haptic feedback if available
+                          if (navigator.vibrate) navigator.vibrate(50)
+                        }, 500)
+                        const cancel = () => clearTimeout(timer)
+                        ;(e.currentTarget as HTMLElement).dataset.longPressTimer = String(timer)
+                        // One-time listeners for cancellation
+                        const el = e.currentTarget
+                        const clear = () => {
+                          cancel()
+                          el.removeEventListener('touchend', clear)
+                          el.removeEventListener('touchmove', clear)
+                          el.removeEventListener('touchcancel', clear)
+                        }
+                        el.addEventListener('touchend', clear, { once: true })
+                        el.addEventListener('touchmove', clear, { once: true })
+                        el.addEventListener('touchcancel', clear, { once: true })
+                      }}
                       className={cn(
-                        'w-full flex items-center gap-3 p-2.5 rounded-xl transition-colors text-left',
+                        'w-full flex items-center gap-3 p-2.5 rounded-xl transition-colors text-left select-none',
                         active ? 'bg-accent' : 'hover:bg-accent/50'
                       )}
                     >

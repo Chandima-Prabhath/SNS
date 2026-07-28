@@ -33,10 +33,19 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
 
   const handleStartCall = async (video: boolean = false) => {
     try {
+      // For DM channels, pass dmGroupId so the call is treated as a DM call
+      // (rings the partner directly) rather than a persistent channel call.
+      // For group text channels, pass channelId — the call lives in that channel.
+      // For voice/video channels, the join happens from the Calls tab instead.
+      const isDm = channel.group?.isDm
+      const payload = isDm
+        ? { dmGroupId: channel.group.id }
+        : { channelId: channel.id }
+
       const res = await fetch('/api/calls', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channelId: channel.id }),
+        body: JSON.stringify(payload),
       })
       if (!res.ok) throw new Error('failed')
       const data = await res.json()
