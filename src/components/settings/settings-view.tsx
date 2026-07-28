@@ -106,11 +106,18 @@ export function SettingsView() {
           </AnimatePresence>
         </div>
 
-        {/* Sign out — always visible at bottom */}
+        {/* Sign out — always visible at bottom.
+            We use redirect:false and navigate manually with window.location
+            so the redirect always targets '/' relative to the current origin
+            (no absolute localhost URL leaked through next-auth's callbackUrl
+            resolution, which breaks behind reverse proxies / gateways). */}
         <div className="pt-4 border-t shrink-0">
           <Button
             variant="outline"
-            onClick={() => signOut({ callbackUrl: '/' })}
+            onClick={async () => {
+              await signOut({ callbackUrl: '/', redirect: false })
+              window.location.replace('/')
+            }}
             className="text-red-500 hover:text-red-500 hover:bg-red-500/10"
           >
             <LogOut className="w-4 h-4 mr-2" /> Sign out
