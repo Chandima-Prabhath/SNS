@@ -148,3 +148,32 @@ Stage Summary:
   10. Voice and video caller UIs are now distinct and modern
 - Theme upgraded to modern futuristic with glassmorphism, gradients, and glow effects
 - All changes pushed to GitHub (commit 96458c4)
+
+---
+Task ID: discord-style-and-cinematic-theme
+Agent: Super Z (main)
+Task: Fix video calls, remove call button spinners, redesign chat list to Discord-style (servers + channels), replace comma-separated group creation with proper flow, fix bottom nav overlapping content, make bot builder open in standalone tab, apply modern 3D cinematic theme across whole app.
+
+Work Log:
+- Fixed WebRTC video call error: preferVp8() was stripping RTX/RED/ULFEC codecs, causing 'Failed to parse codecs' SDP error. Now keeps all codecs, just reorders VP8 to front.
+- Removed call button spinners entirely — both voice and video buttons now transition directly to call screen without loading state.
+- Fixed bottom nav overlapping content: restructured app-shell to flex column where nav is a shrink-0 child (not fixed positioning).
+- Bot builder now opens in standalone /bot-builder/[id] tab via window.open() — full screen canvas, usable on mobile.
+- Replaced comma-separated group creation with proper channel builder: type selectors (text/voice/video) per channel, add/remove buttons.
+- Created Discord-style ServerRail: narrow icon bar showing DMs, server (group) icons, create/join button with mode switcher.
+- ChatList now filters by selectedGroupId from server rail — shows DMs or a specific group's channels.
+- Group header shows name, description, settings button (for owners/admins).
+- Added selectedGroupId state to useAppStore.
+- Cinematic 3D theme: deeper dark base (oklch 0.14), vibrant primary (oklch 0.64 0.22 264), layered surface system, comprehensive shadows, enhanced glassmorphism (glass/glass-light/glass-dark/glass-card), gradient utilities, glow effects, float/fade-in/slide-in animations.
+- DesktopSidebar: gradient brand icon with glow, active nav items glow, subtle top radial gradient for cinematic depth.
+- BottomNav: glass-dark surface, active indicator bar at top with glow.
+
+Stage Summary:
+- Video calls now work (codec parsing fixed)
+- No more spinners on call buttons
+- Discord-style server rail with group icons
+- Proper group creation flow with channel type selectors
+- Bottom nav no longer overlaps content
+- Bot builder opens in standalone full-screen tab
+- Modern 3D cinematic theme applied across the whole app (sidebar, nav, chat list, call screens)
+- All changes pushed to GitHub (commit 7b75e85)
