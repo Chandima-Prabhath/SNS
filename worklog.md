@@ -202,3 +202,25 @@ Stage Summary:
 - Rich notifications with context and click-to-open
 - Cinematic 3D theme with mesh gradients, layered glass, and depth
 - All changes pushed to GitHub (commit 71be7d1)
+
+---
+Task ID: mobile-context-tts-callrework
+Agent: Super Z (main)
+Task: Add mobile group access, fix status upload, custom context menus, rework call system, TTS voice messages, push theme further.
+
+Work Log:
+- Mobile server rail: slide-out drawer with hamburger trigger in chat list header. Added serverRailOpen state. CreateOrJoinGroupButton works on mobile.
+- Image compression fix: rewrote compressImage() with createImageBitmap + fallback, returns Blob, better error handling.
+- Custom context menus: ContextMenuProvider with global useContextMenu hook. Browser context menu disabled globally. Chat messages: Reply/Copy/Edit/Delete. Chat list: Open/MarkRead/Mute/Delete/Leave. Long-press with haptic feedback. New DELETE /api/channels/[id]/members endpoint.
+- Call system rework: DM calls pass dmGroupId (rings partner directly), channel calls pass channelId. Chat header and voice view both distinguish DM vs channel calls.
+- Pocket TTS: POST /api/tts proxies to Kyutai pocket-tts at TTS_URL. TTS dialog in composer: type text, pick voice, generate, preview, send. Audio messages render with gradient icon + player. 10+ pre-built voices.
+- Theme: deeper space-black (oklch 0.12), vibrant primary (oklch 0.66 0.24), animated aurora mesh background, .aurora utility with 20s drift, stronger glow shadows.
+
+Stage Summary:
+- Mobile users can now access groups and join/create via slide-out drawer
+- Status image upload fixed (compression now works reliably)
+- Custom context menus on chat messages and chat list (right-click + long-press)
+- DM calls ring the partner directly; channel calls join persistent channels
+- TTS voice messages integrated (Pocket TTS / Kyutai pocket-tts)
+- Theme pushed further with animated aurora, deeper colors, stronger glow
+- All changes pushed to GitHub (commit 97373ec)
