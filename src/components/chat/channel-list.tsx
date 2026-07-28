@@ -239,11 +239,19 @@ export function GroupSettingsDialog({
   onClose,
 }: {
   group: any
-  myRole: 'owner' | 'admin'
+  myRole: 'owner' | 'admin' | 'member'
   onClose: () => void
 }) {
   const qc = useQueryClient()
-  const [tab, setTab] = useState<'channels' | 'members'>('channels')
+  const [tab, setTab] = useState<'channels' | 'members' | 'invite'>('channels')
+  const [copied, setCopied] = useState(false)
+
+  const copyInvite = () => {
+    navigator.clipboard.writeText(group.inviteCode)
+    setCopied(true)
+    toast.success('Invite code copied!')
+    setTimeout(() => setCopied(false), 2000)
+  }
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -254,7 +262,7 @@ export function GroupSettingsDialog({
             {group.name}
           </DialogTitle>
           <DialogDescription>
-            Manage channels and members. You are {myRole === 'owner' ? 'the owner' : 'an admin'}.
+            {myRole === 'owner' ? 'You are the owner' : myRole === 'admin' ? 'You are an admin' : 'You are a member'}.
           </DialogDescription>
         </DialogHeader>
 
@@ -278,12 +286,60 @@ export function GroupSettingsDialog({
           >
             Members
           </button>
+          <button
+            onClick={() => setTab('invite')}
+            className={cn(
+              'flex-1 py-1.5 text-sm font-medium rounded-md transition-colors',
+              tab === 'invite' ? 'bg-background text-foreground' : 'text-muted-foreground'
+            )}
+          >
+            Invite
+          </button>
         </div>
 
-        {tab === 'channels' ? (
+        {tab === 'channels' && (myRole === 'owner' || myRole === 'admin') ? (
           <ChannelsTab groupId={group.id} channels={group.channels} />
-        ) : (
+        ) : tab === 'members' && (myRole === 'owner' || myRole === 'admin') ? (
           <MembersTab groupId={group.id} myRole={myRole} />
+        ) : tab === 'invite' ? (
+          <div className="space-y-4">
+            <div className="text-center py-4">
+              <p className="text-sm text-muted-foreground mb-3">
+                Share this invite code with friends so they can join the group.
+              </p>
+              <div className="flex items-center gap-2 p-3 rounded-xl bg-muted">
+                <code className="flex-1 text-sm font-mono text-center break-all">
+                  {group.inviteCode}
+                </code>
+                <Button onClick={copyInvite} size="sm" className="shrink-0">
+                  {copied ? <Check className="w-4 h-4 mr-1" /> : <Copy className="w-4 h-4 mr-1" />}
+                  {copied ? 'Copied!' : 'Copy'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {tab === 'channels' && (
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {group.channels?.map((ch: any) => (
+                  <div key={ch.id} className="flex items-center gap-2 p-2 rounded-md">
+                    {ch.type === 'voice' ? (
+                      <Volume2 className="w-4 h-4 text-primary/70" />
+                    ) : ch.type === 'video' ? (
+                      <Video className="w-4 h-4 text-emerald-400" />
+                    ) : (
+                      <Hash className="w-4 h-4 text-muted-foreground" />
+                    )}
+                    <span className="flex-1 text-sm truncate">{ch.name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {tab === 'members' && (
+              <MembersTab groupId={group.id} myRole={myRole} />
+            )}
+          </div>
         )}
       </DialogContent>
     </Dialog>
@@ -319,12 +375,16 @@ function ChannelsTab({ groupId, channels }: { groupId: string; channels: any[] }
   const deleteChannel = useMutation({
     mutationFn: async (channelId: string) => {
       const res = await fetch(`/api/channels/${channelId}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error('failed')
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || `Delete failed (${res.status})`)
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['channels'] })
       toast.success('Channel deleted')
     },
+    onError: (e: any) => toast.error(e.message || 'Failed to delete channel'),
   })
 
   return (

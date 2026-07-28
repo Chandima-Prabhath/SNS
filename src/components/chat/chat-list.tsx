@@ -740,6 +740,7 @@ function GroupSettingsButton({ group }: { group: any }) {
   })
   const isAdmin = myMembership?.role === 'admin'
   const canManage = isOwner || isAdmin
+  const myRole = isOwner ? 'owner' : isAdmin ? 'admin' : 'member'
 
   return (
     <>
@@ -752,40 +753,12 @@ function GroupSettingsButton({ group }: { group: any }) {
       >
         <Settings className="w-4 h-4" />
       </Button>
-      {open && canManage && (
+      {open && (
         <GroupSettingsDialog
           group={group}
-          myRole={isOwner ? 'owner' : 'admin'}
+          myRole={myRole}
           onClose={() => setOpen(false)}
         />
-      )}
-      {open && !canManage && (
-        <Dialog open onOpenChange={(o) => !o && setOpen(false)}>
-          <DialogContent className="sm:max-w-sm">
-            <DialogHeader>
-              <DialogTitle>{group.name}</DialogTitle>
-              <DialogDescription>You are a member of this group. Only owners and admins can manage channels and members.</DialogDescription>
-            </DialogHeader>
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-muted">
-              <Copy className="w-4 h-4 text-muted-foreground" />
-              <Input
-                readOnly
-                value={group.inviteCode}
-                className="flex-1 bg-transparent border-0 focus-visible:ring-0"
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  navigator.clipboard.writeText(group.inviteCode)
-                  toast.success('Invite code copied')
-                }}
-              >
-                Copy
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
       )}
     </>
   )

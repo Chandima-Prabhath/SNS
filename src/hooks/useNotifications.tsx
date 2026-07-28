@@ -73,6 +73,10 @@ export function useNotifications() {
           () => (
             <button
               onClick={() => {
+                // Invalidate the channels and messages cache so the new
+                // message appears immediately when the chat opens
+                qc.invalidateQueries({ queryKey: ['channels'] })
+                qc.invalidateQueries({ queryKey: ['unread-counts'] })
                 setActiveChannel(channelId)
                 setView('chats')
                 toast.dismiss()

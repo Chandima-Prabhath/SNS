@@ -78,12 +78,11 @@ export async function PATCH(req: Request) {
     .create({ data: { groupId: group.id, userId, role: 'member' } })
     .catch(() => {}) // already a member — ignore
 
+  // Add the user to ALL channels in the group (text, voice, video)
   for (const ch of group.channels) {
-    if (ch.type === 'text') {
-      await db.channelMember
-        .create({ data: { channelId: ch.id, userId, role: 'member' } })
-        .catch(() => {})
-    }
+    await db.channelMember
+      .create({ data: { channelId: ch.id, userId, role: 'member' } })
+      .catch(() => {}) // already a member — ignore
   }
   return NextResponse.json({ group })
 }
