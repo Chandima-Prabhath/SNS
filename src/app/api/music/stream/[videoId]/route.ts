@@ -21,11 +21,21 @@ function ensureCacheDir() {
  * GET /api/music/stream/[videoId]
  *
  * Streams audio from YouTube. Cache-first: if the file is already on disk,
- * serve it directly. Otherwise, download with yt-dlp + ffmpeg and cache it.
+ * serve it directly. Otherwise, download with yt-dlp and cache it.
  *
- * YouTube bot detection: YouTube blocks yt-dlp by default. We use cookies
- * (if configured via YTDLP_COOKIES_PATH) and the android player to avoid
- * detection. If cookies aren't set, the user gets a clear error message.
+ * YouTube bot detection (2026 state):
+ *   - The `web` client is SABR-blocked (no https formats)
+ *   - The `android` client requires GVS PO Token and rejects cookies
+ *   - yt-dlp needs Deno + yt-dlp-ejs to solve the "n challenge"
+ *   - Default clients (tv, ios, web_safari, mweb) work best
+ *
+ * We do NOT force player_client — we let yt-dlp use its defaults.
+ * We use `-f "ba/b"` which selects best audio, falling back to best stream.
+ *
+ * Server prerequisites (run scripts/setup-ytdlp.sh):
+ *   pip install -U yt-dlp yt-dlp-ejs bgutil-ytdlp-pot-provider
+ *   curl -fsSL https://deno.land/install.sh | sh
+ *   apt install ffmpeg
  */
 export async function GET(
   req: Request,
@@ -37,7 +47,6 @@ export async function GET(
   const { videoId } = await params
   if (!videoId) return NextResponse.json({ error: 'videoId required' }, { status: 400 })
 
-  // Validate the video ID — must be exactly 11 alphanumeric chars
   if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     return NextResponse.json(
       { error: 'Invalid video ID. This might be an album or playlist ID, not a track.' },
@@ -55,10 +64,9 @@ export async function GET(
     } catch (e: any) {
       console.error(`[music/stream] download failed for ${videoId}:`, e?.message || e)
       const errorMsg = e?.message || 'unknown error'
-      // Provide a user-friendly error for common YouTube blocking issues
       if (errorMsg.includes('Sign in to confirm') || errorMsg.includes('not a bot')) {
         return NextResponse.json(
-          { error: 'YouTube is blocking downloads. Set YTDLP_COOKIES_PATH in .env to fix this. See .env.example for instructions.' },
+          { error: 'YouTube is blocking downloads. Ensure yt-dlp, Deno, yt-dlp-ejs, and cookies are set up. Run scripts/setup-ytdlp.sh on the server.' },
           { status: 502 }
         )
       }
@@ -70,7 +78,7 @@ export async function GET(
       }
       if (errorMsg.includes('Requested format is not available')) {
         return NextResponse.json(
-          { error: 'Could not extract audio from this video. Try another track.' },
+          { error: 'Could not extract audio. Run scripts/setup-ytdlp.sh to install yt-dlp-ejs and Deno — these are required for YouTube audio extraction in 2026.' },
           { status: 502 }
         )
       }
@@ -122,14 +130,20 @@ export async function GET(
 /**
  * Download audio from YouTube using yt-dlp.
  *
- * Tries multiple strategies in order:
- *   1. Android + web player clients with best audio format
- *   2. Default player (no extractor-args) with best audio format
- *   3. Fallback: just grab the best available stream
+ * CRITICAL: Do NOT force player_client=android or web. The android client
+ * requires GVS PO Token and rejects cookies. The web client is SABR-blocked.
+ * Let yt-dlp use its default clients (tv, ios, web_safari, mweb) which work.
  *
- * The "Requested format is not available" error happens when the android
- * player doesn't have audio-only formats for a video. Using multiple player
- * clients and a flexible format string fixes this.
+ * The format string "ba/b" selects best audio, falling back to best stream.
+ * This is the most foolproof format string per 2026 research.
+ *
+ * Prerequisites (all required):
+ *   - yt-dlp >= 2026.07.04 (pip install -U yt-dlp)
+ *   - Deno >= 2.3.0 (for n-challenge solving)
+ *   - yt-dlp-ejs >= 0.5.0 (pip install -U yt-dlp-ejs)
+ *   - bgutil-ytdlp-pot-provider (pip install bgutil-ytdlp-pot-provider)
+ *   - ffmpeg (apt install ffmpeg)
+ *   - cookies.txt (set YTDLP_COOKIES_PATH in .env)
  */
 async function downloadAudio(videoId: string, outputPath: string): Promise<void> {
   const url = `https://www.youtube.com/watch?v=${videoId}`
@@ -139,84 +153,68 @@ async function downloadAudio(videoId: string, outputPath: string): Promise<void>
   if (hasCookies) {
     console.log(`[music/stream] using cookies from ${cookiesPath}`)
   } else {
-    console.warn(`[music/stream] no cookies configured — YouTube may block downloads. Set YTDLP_COOKIES_PATH in .env`)
+    console.warn(`[music/stream] no cookies configured — YouTube may block downloads.`)
   }
 
   console.log(`[music/stream] downloading ${videoId}...`)
 
-  // Strategy 1: Multiple player clients + flexible format
-  // Using "android,web" lets yt-dlp fall back to the web client if the
-  // android client doesn't have the requested format.
-  const strategies: string[][] = [
-    // Strategy 1: android + web clients, best audio, convert to mp3
-    [
-      ...(hasCookies ? ['--cookies', cookiesPath!] : []),
-      '-f', 'bestaudio/best',
-      '-x', '--audio-format', 'mp3',
-      '--audio-quality', '5',
-      '--no-playlist', '--no-warnings', '--no-progress',
-      '--extractor-args', 'youtube:player_client=android,web',
-      '-o', outputPath,
-      url,
-    ],
-    // Strategy 2: Default client (no extractor-args), best audio
-    [
-      ...(hasCookies ? ['--cookies', cookiesPath!] : []),
-      '-f', 'bestaudio/best',
-      '-x', '--audio-format', 'mp3',
-      '--audio-quality', '5',
-      '--no-playlist', '--no-warnings', '--no-progress',
-      '-o', outputPath,
-      url,
-    ],
-    // Strategy 3: No format selection at all — just extract whatever's there
-    [
-      ...(hasCookies ? ['--cookies', cookiesPath!] : []),
-      '-x', '--audio-format', 'mp3',
-      '--audio-quality', '5',
-      '--no-playlist', '--no-warnings', '--no-progress',
-      '-o', outputPath,
-      url,
-    ],
+  // Build the command — minimal and foolproof.
+  // Do NOT use --extractor-args to force player_client. Let yt-dlp use defaults.
+  const args = [
+    ...(hasCookies ? ['--cookies', cookiesPath!] : []),
+    '-f', 'ba/b',                    // best audio, fallback to best
+    '-x',                            // extract audio
+    '--audio-format', 'mp3',         // convert to mp3
+    '--audio-quality', '5',          // medium quality (smaller, faster)
+    '--no-playlist',
+    '--no-warnings',
+    '--no-progress',
+    '--retries', '3',                // retry on network errors
+    '--fragment-retries', '3',       // retry fragments
+    '-o', outputPath,
+    url,
   ]
 
-  let lastError: Error | null = null
+  console.log(`[music/stream] running: yt-dlp ${args.join(' ')}`)
 
-  for (let i = 0; i < strategies.length; i++) {
-    try {
-      console.log(`[music/stream] trying strategy ${i + 1}...`)
-      await execFileAsync('yt-dlp', strategies[i], {
-        timeout: 120000,
-        maxBuffer: 1024 * 1024 * 10,
-      })
+  try {
+    await execFileAsync('yt-dlp', args, {
+      timeout: 120000,
+      maxBuffer: 1024 * 1024 * 10,
+    })
 
-      if (existsSync(outputPath)) {
-        const size = statSync(outputPath).size
-        if (size > 1000) { // at least 1KB
-          console.log(`[music/stream] downloaded ${videoId} → ${outputPath} (${size} bytes) via strategy ${i + 1}`)
+    if (existsSync(outputPath) && statSync(outputPath).size > 1000) {
+      const size = statSync(outputPath).size
+      console.log(`[music/stream] downloaded ${videoId} → ${outputPath} (${size} bytes)`)
+      return
+    }
+
+    throw new Error('yt-dlp did not produce a valid output file')
+  } catch (e: any) {
+    const msg = e?.message || ''
+    // If it's a format error, try ONE fallback with explicit format chain
+    if (msg.includes('Requested format is not available')) {
+      console.warn(`[music/stream] format not available, trying explicit chain...`)
+      const fallbackArgs = [
+        ...(hasCookies ? ['--cookies', cookiesPath!] : []),
+        '-f', '251/250/234/233/140/bestaudio/best',
+        '-x', '--audio-format', 'mp3', '--audio-quality', '5',
+        '--no-playlist', '--no-warnings', '--no-progress',
+        '-o', outputPath,
+        url,
+      ]
+      try {
+        await execFileAsync('yt-dlp', fallbackArgs, { timeout: 120000, maxBuffer: 1024 * 1024 * 10 })
+        if (existsSync(outputPath) && statSync(outputPath).size > 1000) {
+          console.log(`[music/stream] downloaded ${videoId} via fallback format chain`)
           return
         }
+      } catch (e2: any) {
+        console.error(`[music/stream] fallback also failed: ${e2?.message?.slice(0, 200)}`)
       }
-
-      throw new Error('yt-dlp did not produce a valid output file')
-    } catch (e: any) {
-      lastError = e
-      const msg = e?.message || ''
-      console.warn(`[music/stream] strategy ${i + 1} failed: ${msg.slice(0, 200)}`)
-
-      // If it's a bot detection error, no point trying more strategies
-      if (msg.includes('Sign in to confirm') || msg.includes('not a bot')) {
-        throw new Error('YouTube is blocking downloads. Set YTDLP_COOKIES_PATH in .env to fix this.')
-      }
-      // If the video is unavailable, no point retrying
-      if (msg.includes('Video unavailable')) {
-        throw new Error('This video is unavailable. It may have been removed or is region-locked.')
-      }
-      // Otherwise try the next strategy
     }
+    throw e
   }
-
-  throw lastError || new Error('All download strategies failed')
 }
 
 export const dynamic = 'force-dynamic'
