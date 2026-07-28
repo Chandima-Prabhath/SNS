@@ -204,19 +204,24 @@
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
     font-feature-settings: "cv01", "cv03", "cv04", "cv11";
+    /* Subtle ambient mesh gradient — gives every screen cinematic depth */
+    background-image:
+      radial-gradient(at 0% 0%, oklch(0.64 0.22 264 / 0.04) 0px, transparent 50%),
+      radial-gradient(at 100% 100%, oklch(0.55 0.14 200 / 0.03) 0px, transparent 50%);
+    background-attachment: fixed;
   }
 
   /* ── Custom scrollbar — thin, themed, with 3D depth ── */
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
-    background: oklch(0.32 0.008 264);
+    background: oklch(0.32 0.008 264 / 0.6);
     border-radius: 4px;
     border: 2px solid transparent;
     background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: oklch(0.42 0.01 264);
+    background: oklch(0.42 0.01 264 / 0.8);
     background-clip: padding-box;
   }
   .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -226,6 +231,12 @@
   ::selection {
     background: oklch(0.64 0.22 264 / 0.3);
     color: oklch(0.99 0 0);
+  }
+
+  /* ── Focus ring — subtle glow ── */
+  :focus-visible {
+    outline: 2px solid oklch(0.64 0.22 264 / 0.5);
+    outline-offset: 2px;
   }
 }
 
@@ -238,7 +249,7 @@
     -webkit-overflow-scrolling: touch;
   }
 
-  /* ── Glassmorphic surfaces — frosted glass with depth ── */
+  /* ── Glassmorphic surfaces — frosted glass with 3D depth ── */
 
   /* Standard glass — for floating bars, headers */
   .glass {
@@ -246,7 +257,10 @@
     backdrop-filter: blur(24px) saturate(180%);
     -webkit-backdrop-filter: blur(24px) saturate(180%);
     border: 1px solid oklch(1 0 0 / 7%);
-    box-shadow: var(--shadow-inner-light), var(--shadow-sm);
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 6%),
+      inset 0 -1px 0 oklch(0 0 0 / 15%),
+      0 4px 16px oklch(0 0 0 / 0.35);
   }
   /* Light glass — for overlays on dark backgrounds */
   .glass-light {
@@ -254,15 +268,18 @@
     backdrop-filter: blur(20px) saturate(160%);
     -webkit-backdrop-filter: blur(20px) saturate(160%);
     border: 1px solid oklch(1 0 0 / 6%);
-    box-shadow: var(--shadow-inner-light);
+    box-shadow: inset 0 1px 0 oklch(1 0 0 / 5%);
   }
-  /* Dark glass — for premium floating panels, call controls */
+  /* Dark glass — for premium floating panels, call controls, bottom nav */
   .glass-dark {
     background: oklch(0.13 0.006 264 / 0.82);
     backdrop-filter: blur(32px) saturate(180%);
     -webkit-backdrop-filter: blur(32px) saturate(180%);
     border: 1px solid oklch(1 0 0 / 9%);
-    box-shadow: var(--shadow-lg), var(--shadow-inner-light);
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 7%),
+      0 8px 32px oklch(0 0 0 / 0.45),
+      0 2px 8px oklch(0 0 0 / 0.25);
   }
   /* Glass card — elevated surface with strong depth */
   .glass-card {
@@ -270,17 +287,26 @@
     backdrop-filter: blur(28px) saturate(170%);
     -webkit-backdrop-filter: blur(28px) saturate(170%);
     border: 1px solid oklch(1 0 0 / 8%);
-    box-shadow: var(--shadow-lg), var(--shadow-inner-light);
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 6%),
+      0 12px 40px oklch(0 0 0 / 0.4),
+      0 4px 12px oklch(0 0 0 / 0.2);
   }
 
   /* ── 3D Surface depth — for cards and panels ── */
   .surface-raised {
     background: var(--card);
-    box-shadow: var(--shadow-md), var(--shadow-inner-light);
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 4%),
+      0 4px 12px oklch(0 0 0 / 0.35),
+      0 1px 3px oklch(0 0 0 / 0.2);
   }
   .surface-floating {
     background: var(--popover);
-    box-shadow: var(--shadow-xl), var(--shadow-inner-light);
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 6%),
+      0 16px 48px oklch(0 0 0 / 0.5),
+      0 4px 12px oklch(0 0 0 / 0.25);
   }
 
   /* ── Gradient surfaces ── */
@@ -298,12 +324,20 @@
       oklch(0.58 0.20 280) 100%
     );
   }
-  /* Cinematic backdrop — for full-screen views */
+  /* Cinematic backdrop — for full-screen views (calls, status) */
   .gradient-cinematic {
     background:
-      radial-gradient(ellipse 80% 60% at 50% 0%, oklch(0.64 0.22 264 / 0.08), transparent 60%),
+      radial-gradient(ellipse 80% 60% at 50% 0%, oklch(0.64 0.22 264 / 0.10), transparent 60%),
       radial-gradient(ellipse 60% 40% at 100% 100%, oklch(0.55 0.14 200 / 0.06), transparent 60%),
       var(--background);
+  }
+  /* Mesh gradient — for empty states and hero sections */
+  .mesh-gradient {
+    background-color: var(--background);
+    background-image:
+      radial-gradient(at 20% 30%, oklch(0.64 0.22 264 / 0.08) 0px, transparent 50%),
+      radial-gradient(at 80% 20%, oklch(0.55 0.14 200 / 0.06) 0px, transparent 50%),
+      radial-gradient(at 50% 80%, oklch(0.70 0.18 264 / 0.05) 0px, transparent 50%);
   }
 
   /* ── Glow effects ── */

@@ -7,7 +7,6 @@ import { MessageList } from './message-list'
 import { MessageComposer } from './message-composer'
 import { ChatHeader } from './chat-header'
 import { ChatInfoPanel } from './chat-info-panel'
-import { ServerRail } from './server-rail'
 import { MessageCircle } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -31,9 +30,6 @@ export function ChatView() {
 
   return (
     <div className="flex h-full relative">
-      {/* Server rail — Discord-style narrow icon bar */}
-      <ServerRail />
-
       {/* Chat list — full width on mobile when no chat is open, sidebar on desktop */}
       <div
         className={

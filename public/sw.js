@@ -1,18 +1,30 @@
 /**
- * Adoo Service Worker
+ * Adoo Service Worker v4
+ * - App shell caching
+ * - Network-first navigations
+ * - Cache-first for static assets
+ * - SKIP_WAITING message handler for update activation
+ * - Push notifications
  */
 
-const CACHE_NAME = 'adoo-v3'
+const CACHE_NAME = 'adoo-v4'
 const APP_SHELL = ['/', '/manifest.json', '/icon.svg']
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).catch(() => {}))
-  self.skipWaiting()
+  // Don't skipWaiting automatically — let the user trigger it via the UpdateBanner
 })
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))))
   self.clients.claim()
+})
+
+// Handle SKIP_WAITING message from the UpdateBanner
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting()
+  }
 })
 
 self.addEventListener('fetch', (event) => {

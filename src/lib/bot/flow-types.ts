@@ -26,7 +26,6 @@
 export type NodeType =
   | 'trigger'
   | 'message'
-  | 'choice'
   | 'typing'
   | 'input'
   | 'wait_choice'
@@ -71,7 +70,7 @@ export interface FlowNodeData {
   // ── message ──
   text?: string
 
-  // ── choice / wait_choice ──
+  // ── wait_choice ──
   prompt?: string
   options?: string[] // quick-reply choices
   variableName?: string // where to store the reply
@@ -275,24 +274,6 @@ export async function executeBotFlow(
         continue
       }
 
-      // ── OUTPUT: choice ─────────────────────────────────────────────────
-      case 'choice': {
-        // Send the prompt with the options appended as inline buttons (visual
-        // approximation). The next node is typically a `wait_choice` that
-        // uses the same `variableName`.
-        const prompt = interpolate(currentNode.data.prompt || '', ctx)
-        const options = currentNode.data.options || []
-        const text = options.length > 0
-          ? `${prompt}\n${options.map((o, i) => `${i + 1}. ${o}`).join('\n')}`
-          : prompt
-        if (text.trim()) {
-          await ctx.reply(text)
-          sentCount++
-        }
-        currentNode = followEdge(currentNode.id, null)
-        continue
-      }
-
       // ── OUTPUT: typing ─────────────────────────────────────────────────
       case 'typing': {
         const seconds = currentNode.data.seconds || 1
@@ -469,12 +450,6 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
     icon: 'Send', color: '#34D399', bg: '#34D3991A',
     handles: 'single',
   },
-  choice: {
-    type: 'choice', label: 'Send Choices', category: 'output',
-    description: 'Sends a prompt with numbered choices',
-    icon: 'ListChecks', color: '#10B981', bg: '#10B9811A',
-    handles: 'single',
-  },
   typing: {
     type: 'typing', label: 'Typing Pause', category: 'output',
     description: 'Shows a typing indicator for a moment',
@@ -548,8 +523,6 @@ export function defaultNodeData(type: NodeType): FlowNodeData {
       return { triggerType: 'any_message', label: 'Trigger' }
     case 'message':
       return { text: 'Hello {{sender}}!', label: 'Send Message' }
-    case 'choice':
-      return { prompt: 'Pick one:', options: ['Yes', 'No'], variableName: 'choice', label: 'Send Choices' }
     case 'typing':
       return { seconds: 2, label: 'Typing Pause' }
     case 'input':

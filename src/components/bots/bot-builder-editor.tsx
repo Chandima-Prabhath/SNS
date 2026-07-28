@@ -30,7 +30,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
-  Zap, Send, ListChecks, Loader, Keyboard, MousePointerClick,
+  Zap, Send, Loader, Keyboard, MousePointerClick,
   GitBranch, Variable, Clock, Square, Webhook, Shuffle,
   Save, Trash2, Plus, X, AlertTriangle, Info, Sparkles,
 } from 'lucide-react'
@@ -41,7 +41,7 @@ import {
 
 // ─── Icon registry ───────────────────────────────────────────────────────────
 const ICONS: Record<string, typeof Zap> = {
-  Zap, Send, ListChecks, Loader, Keyboard, MousePointerClick,
+  Zap, Send, Loader, Keyboard, MousePointerClick,
   GitBranch, Variable, Clock, Square, Webhook, Shuffle,
 }
 
@@ -75,9 +75,6 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
     }
     case 'message':
       preview = { label: 'Says', value: data.text || '(empty)' }
-      break
-    case 'choice':
-      preview = { label: 'Options', value: (data.options || []).join(' · ') || '(none)' }
       break
     case 'typing':
       preview = { label: 'For', value: `${data.seconds || 1}s` }
@@ -160,7 +157,7 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
           <div className="space-y-1">
             <div className="text-white/40 uppercase tracking-wider text-[10px]">{preview.label}</div>
             <div className="text-white/80 break-words line-clamp-2">{preview.value}</div>
-            {(nodeType === 'input' || nodeType === 'wait_choice' || nodeType === 'choice' || nodeType === 'api_call') && data.variableName && (
+            {(nodeType === 'input' || nodeType === 'wait_choice' || nodeType === 'api_call') && data.variableName && (
               <div className="text-[10px] text-white/40">→ saves as <code className="text-white/60">{`{{${data.variableName}}}`}</code></div>
             )}
           </div>
@@ -690,37 +687,6 @@ function NodeInspectorBody({
           className={inputCls + ' resize-none'}
         />
         <VariableHelp />
-      </div>
-    )
-  }
-
-  // ── CHOICE ───────────────────────────────────────────────────────────
-  if (nodeType === 'choice') {
-    return (
-      <div className="space-y-4">
-        <div className="space-y-2">
-          <Label className="text-white/60 text-xs">Prompt</Label>
-          <Textarea
-            value={data.prompt || ''}
-            onChange={(e) => onUpdate({ prompt: e.target.value })}
-            placeholder="What would you like to do?"
-            rows={2}
-            className={inputCls + ' resize-none'}
-          />
-        </div>
-        <OptionsEditor
-          options={data.options || []}
-          onChange={(options) => onUpdate({ options })}
-        />
-        <VariableNameField
-          value={data.variableName || ''}
-          onChange={(v) => onUpdate({ variableName: v })}
-          label="Save picked choice as"
-          placeholder="choice"
-        />
-        <p className="text-xs text-white/40">
-          Pair this with a <span className="text-orange-400">Wait for Choice</span> node to actually wait for the user's reply.
-        </p>
       </div>
     )
   }

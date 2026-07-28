@@ -6,7 +6,10 @@ import { existsSync } from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 
-const MAX_BYTES = 8 * 1024 * 1024 // 8MB
+// Images: 8MB (typically compressed client-side first, so this is the safety net)
+// Videos: 50MB — can't easily compress client-side without ffmpeg.wasm
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024
 
 export async function POST(req: Request) {
   try {
@@ -21,11 +24,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'no file provided' }, { status: 400 })
     }
 
-    if (file.size > MAX_BYTES) {
-      return NextResponse.json({ error: 'file too large (max 8MB)' }, { status: 413 })
+    const isImage = file.type.startsWith('image/')
+    const isVideo = file.type.startsWith('video/')
+    const maxSize = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES
+    const maxLabel = isVideo ? '50MB' : '8MB'
+
+    if (file.size > maxSize) {
+      return NextResponse.json({ error: `file too large (max ${maxLabel})` }, { status: 413 })
     }
 
-    const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4']
+    const allowed = [
+      'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+      'video/mp4', 'video/webm', 'video/quicktime',
+    ]
     if (!allowed.includes(file.type)) {
       return NextResponse.json({ error: `unsupported file type: ${file.type}` }, { status: 415 })
     }

@@ -25,6 +25,8 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
 import { GroupSettingsDialog } from './channel-list'
+import { useCall } from '@/hooks/useCall'
+import { unlockAudio } from '@/lib/call-manager'
 
 interface ChannelInfo {
   id: string
@@ -85,6 +87,28 @@ export function ChatList() {
   const selectedGroup = groups?.find((g) => g.id === selectedGroupId) || null
   const isViewingDms = selectedGroupId === 'dm'
 
+  // Join a voice/video channel — creates a call and switches to the voice view
+  const setView = useAppStore((s) => s.setView)
+  const { startCall } = useCall()
+  const joinCallMutation = useMutation({
+    mutationFn: async (channelId: string) => {
+      const res = await fetch('/api/calls', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId }),
+      })
+      if (!res.ok) throw new Error('failed')
+      return res.json()
+    },
+    onSuccess: async (data) => {
+      await startCall({ callId: data.call.id, channelId: data.call.channelId })
+      unlockAudio()
+      setView('voice')
+      toast.success('Joined channel')
+    },
+    onError: () => toast.error('Failed to join channel'),
+  })
+
   // Fetch all users for the "Discover people" section
   const { data: users } = useQuery({
     queryKey: ['users'],
@@ -104,8 +128,9 @@ export function ChatList() {
   }, [activeChannelId, groups, setActiveChannel])
 
   // Flatten channels into a unified list of "chat rows"
-  // When a server (non-DM group) is selected in the rail, only show that
-  // group's channels. When 'dm' is selected, only show DM channels.
+  // When a server (non-DM group) is selected in the rail, show ALL channel
+  // types (text, voice, video) for that group. When 'dm' is selected, only
+  // show DM text channels.
   const allChats: ChatRow[] = useMemo(() => {
     if (!groups) return []
     const rows: ChatRow[] = []
@@ -114,7 +139,8 @@ export function ChatList() {
       if (selectedGroupId === 'dm' && !g.isDm) continue
       if (selectedGroupId && selectedGroupId !== 'dm' && g.id !== selectedGroupId) continue
       for (const ch of g.channels) {
-        if (ch.type !== 'text') continue
+        // DMs only have text channels. Groups show all types.
+        if (g.isDm && ch.type !== 'text') continue
         rows.push({
           channel: ch,
           isDm: g.isDm,
@@ -150,7 +176,7 @@ export function ChatList() {
   }, [allChats, filter, search])
 
   return (
-    <div className="flex flex-col h-full w-full bg-sidebar">
+    <div className="flex flex-col h-full w-full bg-sidebar/80 backdrop-blur-xl">
       {/* Header — shows the selected group name or "Direct Messages" */}
       <div className="px-4 pt-4 pb-3 space-y-3 border-b border-sidebar-border/50">
         <div className="flex items-center justify-between">
@@ -248,6 +274,57 @@ export function ChatList() {
                   const handleText = row.isGroup
                     ? row.groupName
                     : row.partner ? `@${row.partner.username}` : 'account no longer exists'
+
+                  // Voice/video channels are rendered as "join" rows, not chat rows
+                  const isCallChannel = row.channel.type === 'voice' || row.channel.type === 'video'
+                  const CallIcon = row.channel.type === 'video' ? Video : Volume2
+
+                  if (isCallChannel) {
+                    return (
+                      <button
+                        key={row.channel.id}
+                        onClick={() => joinCallMutation.mutate(row.channel.id)}
+                        disabled={joinCallMutation.isPending}
+                        className={cn(
+                          'w-full flex items-center gap-3 p-2.5 rounded-xl transition-colors text-left group/call',
+                          'hover:bg-accent/50 disabled:opacity-50'
+                        )}
+                      >
+                        {/* Icon */}
+                        <div className={cn(
+                          'relative w-12 h-12 rounded-full flex items-center justify-center shrink-0',
+                          row.channel.type === 'video'
+                            ? 'bg-emerald-500/15 text-emerald-400'
+                            : 'bg-primary/15 text-primary'
+                        )}>
+                          <CallIcon className="w-5 h-5" />
+                        </div>
+
+                        {/* Name + status */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className="truncate text-[15px] font-medium">
+                              {row.channel.name}
+                            </span>
+                          </div>
+                          <div className="text-xs text-muted-foreground truncate flex items-center gap-1.5">
+                            <span className="capitalize">{row.channel.type} channel</span>
+                            <span>·</span>
+                            <span className="text-primary flex items-center gap-0.5">
+                              <Phone className="w-3 h-3" />
+                              Tap to join
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Join button */}
+                        <div className="w-9 h-9 rounded-full gradient-primary flex items-center justify-center shrink-0 group-hover/call:scale-110 transition-transform shadow-glow">
+                          <Phone className="w-4 h-4 text-primary-foreground" />
+                        </div>
+                      </button>
+                    )
+                  }
+
                   return (
                     <button
                       key={row.channel.id}

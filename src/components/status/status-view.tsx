@@ -23,6 +23,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
+import { compressImage, formatBytes } from '@/lib/image-compress'
 
 export function StatusView() {
   const { stories, isLoading, upload, remove } = useStories()
@@ -33,7 +34,7 @@ export function StatusView() {
   const otherStories = stories.filter((s) => s.userId !== myId)
 
   return (
-    <div className="h-full overflow-y-auto bg-background">
+    <div className="h-full overflow-y-auto mesh-gradient">
       <div className="max-w-2xl mx-auto p-4 md:p-6 space-y-6">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Status</h1>
@@ -113,8 +114,21 @@ function UploadStoryCard() {
     if (!file) return
     setUploading(true)
     try {
+      // Compress images client-side before uploading.
+      // Mobile photos can be 5-10MB; we downscale to max 1280px and
+      // re-encode as JPEG at 82% quality — typically a 5-10x size reduction.
+      const isImage = file.type.startsWith('image/')
+      const isVideo = file.type.startsWith('video/')
+      let uploadFile: File = file
+      if (isImage) {
+        const originalSize = formatBytes(file.size)
+        uploadFile = await compressImage(file, { maxDimension: 1280, quality: 0.82 })
+        const newSize = formatBytes(uploadFile.size)
+        console.log(`[status] compressed ${file.name}: ${originalSize} → ${newSize}`)
+      }
+
       const formData = new FormData()
-      formData.append('file', file)
+      formData.append('file', uploadFile)
       const res = await fetch('/api/upload', { method: 'POST', body: formData })
       if (!res.ok) {
         const text = await res.text()
@@ -201,7 +215,7 @@ function UploadStoryCard() {
                       <>
                         <Camera className="w-8 h-8 mx-auto text-muted-foreground" />
                         <div className="text-sm mt-2">Tap to upload</div>
-                        <div className="text-xs text-muted-foreground">Image or video, max 8MB</div>
+                        <div className="text-xs text-muted-foreground">Image or video · images auto-compressed</div>
                       </>
                     )}
                   </div>

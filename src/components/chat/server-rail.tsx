@@ -1,7 +1,10 @@
 'use client'
 
-import { useQuery } from '@tanstack/react-query'
-import { useAppStore } from '@/stores/useAppStore'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useAppStore, type ViewKey } from '@/stores/useAppStore'
+import { useUnreadCounts } from '@/hooks/useUnreadCounts'
+import { useCall } from '@/hooks/useCall'
+import { useSession } from 'next-auth/react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription,
@@ -9,25 +12,48 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Plus, MessageCircle, Users, Compass } from 'lucide-react'
+import {
+  Plus, MessageCircle, Compass, Phone, Settings, Circle,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { useQueryClient, useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 
+interface NavItem {
+  key: ViewKey
+  label: string
+  icon: typeof MessageCircle
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { key: 'status', label: 'Status', icon: Circle },
+  { key: 'voice', label: 'Calls', icon: Phone },
+  { key: 'settings', label: 'Settings', icon: Settings },
+]
+
 /**
- * Discord-style server rail — a narrow vertical bar on the far left showing:
- *   - DMs (MessageCircle icon, always at top)
- *   - A divider
- *   - Each group the user is a member of (group icon or first letter)
- *   - A "+" button to create/join a group
+ * Discord-style server rail — the single primary navigation sidebar.
  *
- * On mobile this is hidden by default and revealed via the sidebar toggle.
- * On desktop it's always visible.
+ * Layout (top to bottom):
+ *   - DMs button (always at top)
+ *   - Divider
+ *   - Server (group) icons
+ *   - Create/join group button
+ *   - Spacer (flex-1)
+ *   - Bottom nav: Status, Calls, Settings
+ *   - User avatar (click → settings)
+ *
+ * On mobile this is hidden — the BottomNav handles navigation there.
  */
 export function ServerRail() {
+  const view = useAppStore((s) => s.view)
+  const setView = useAppStore((s) => s.setView)
   const selectedGroupId = useAppStore((s) => s.selectedGroupId)
   const setSelectedGroupId = useAppStore((s) => s.setSelectedGroupId)
+  const { data: unreadData } = useUnreadCounts()
+  const { status: callStatus } = useCall()
+  const { data: session } = useSession()
+  const totalUnread = unreadData?.total || 0
 
   const { data: groups } = useQuery({
     queryKey: ['channels'],
@@ -42,47 +68,93 @@ export function ServerRail() {
   const serverGroups = groups?.filter((g) => !g.isDm) || []
 
   return (
-    <div className="hidden md:flex w-16 lg:w-[72px] shrink-0 flex-col items-center gap-2 py-3 bg-sidebar border-r border-sidebar-border overflow-y-auto no-scrollbar">
-      {/* DMs button */}
-      <RailButton
-        active={selectedGroupId === 'dm'}
-        onClick={() => setSelectedGroupId('dm')}
-        label="Direct Messages"
-      >
-        <MessageCircle className="w-5 h-5" />
-      </RailButton>
+    <div className="hidden md:flex w-[72px] lg:w-20 shrink-0 flex-col items-center gap-1.5 py-3 bg-sidebar border-r border-sidebar-border/50 relative">
+      {/* Subtle top gradient for cinematic depth */}
+      <div
+        className="absolute inset-x-0 top-0 h-24 pointer-events-none opacity-60"
+        style={{ background: 'radial-gradient(ellipse 100% 100% at 50% 0%, oklch(0.64 0.22 264 / 0.06), transparent 70%)' }}
+      />
 
-      {/* Divider */}
-      <div className="w-8 h-px bg-sidebar-border my-1" />
-
-      {/* Server list */}
-      {serverGroups.map((g) => (
+      {/* Top section: DMs + servers */}
+      <div className="relative flex flex-col items-center gap-1.5">
+        {/* DMs button */}
         <RailButton
-          key={g.id}
-          active={selectedGroupId === g.id}
-          onClick={() => setSelectedGroupId(g.id)}
-          label={g.name}
+          active={view === 'chats' && selectedGroupId === 'dm'}
+          onClick={() => { setView('chats'); setSelectedGroupId('dm') }}
+          label="Direct Messages"
         >
-          {g.iconUrl ? (
-            <img src={g.iconUrl} alt="" className="w-full h-full object-cover" />
-          ) : (
-            <span className="font-semibold text-sm">
-              {g.name.charAt(0).toUpperCase()}
+          <MessageCircle className="w-5 h-5" strokeWidth={2.2} />
+          {totalUnread > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center">
+              {totalUnread > 99 ? '99+' : totalUnread}
             </span>
           )}
         </RailButton>
-      ))}
 
-      {/* Create / join group */}
-      <CreateOrJoinGroupButton />
+        {/* Divider */}
+        <div className="w-8 h-px bg-sidebar-border/60 my-0.5" />
 
-      {/* Compass — discover public groups (future) */}
-      <RailButton
-        onClick={() => toast.info('Group discovery coming soon')}
-        label="Discover"
-      >
-        <Compass className="w-5 h-5" />
-      </RailButton>
+        {/* Server list */}
+        {serverGroups.map((g) => (
+          <RailButton
+            key={g.id}
+            active={view === 'chats' && selectedGroupId === g.id}
+            onClick={() => { setView('chats'); setSelectedGroupId(g.id) }}
+            label={g.name}
+          >
+            {g.iconUrl ? (
+              <img src={g.iconUrl} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <span className="font-semibold text-sm">
+                {g.name.charAt(0).toUpperCase()}
+              </span>
+            )}
+          </RailButton>
+        ))}
+
+        {/* Create / join group */}
+        <CreateOrJoinGroupButton />
+      </div>
+
+      {/* Spacer pushes bottom nav down */}
+      <div className="flex-1" />
+
+      {/* Bottom nav: Status, Calls, Settings */}
+      <div className="relative flex flex-col items-center gap-1.5">
+        <div className="w-8 h-px bg-sidebar-border/60 mb-0.5" />
+        {NAV_ITEMS.map((item) => {
+          const Icon = item.icon
+          const active = view === item.key
+          const showCallIndicator = item.key === 'voice' && callStatus !== 'idle'
+          return (
+            <RailButton
+              key={item.key}
+              active={active}
+              onClick={() => setView(item.key)}
+              label={item.label}
+            >
+              <Icon className="w-5 h-5" strokeWidth={active ? 2.4 : 2} fill={active && item.key === 'status' ? 'currentColor' : 'none'} />
+              {showCallIndicator && (
+                <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse border-2 border-sidebar" />
+              )}
+            </RailButton>
+          )
+        })}
+
+        {/* User avatar */}
+        <button
+          onClick={() => setView('settings')}
+          title={session?.user ? (session.user as any).displayName : 'Settings'}
+          className="w-12 h-12 lg:w-[52px] lg:h-[52px] rounded-2xl flex items-center justify-center transition-all hover:rounded-xl active:scale-95 overflow-hidden ring-2 ring-border/50 hover:ring-primary/40"
+        >
+          <Avatar className="w-full h-full">
+            <AvatarImage src={(session?.user as any)?.avatarUrl || undefined} />
+            <AvatarFallback className="bg-sidebar-accent text-sm font-semibold">
+              {(session?.user as any)?.displayName?.charAt(0).toUpperCase() || '?'}
+            </AvatarFallback>
+          </Avatar>
+        </button>
+      </div>
     </div>
   )
 }
@@ -116,10 +188,10 @@ function RailButton({
         onClick={onClick}
         title={label}
         className={cn(
-          'w-12 h-12 lg:w-[52px] lg:h-[52px] rounded-2xl flex items-center justify-center transition-all overflow-hidden',
+          'relative w-12 h-12 lg:w-[52px] lg:h-[52px] rounded-2xl flex items-center justify-center transition-all overflow-hidden',
           'hover:rounded-xl active:scale-95',
           active
-            ? 'bg-primary text-primary-foreground'
+            ? 'bg-primary text-primary-foreground shadow-glow'
             : 'bg-sidebar-accent text-sidebar-accent-foreground hover:bg-primary hover:text-primary-foreground'
         )}
       >
@@ -137,6 +209,7 @@ function CreateOrJoinGroupButton() {
   const [code, setCode] = useState('')
   const qc = useQueryClient()
   const setSelectedGroupId = useAppStore((s) => s.setSelectedGroupId)
+  const setView = useAppStore((s) => s.setView)
 
   const create = useMutation({
     mutationFn: async () => {
@@ -152,6 +225,7 @@ function CreateOrJoinGroupButton() {
       qc.invalidateQueries({ queryKey: ['channels'] })
       toast.success('Group created')
       setSelectedGroupId(data.group.id)
+      setView('chats')
       setOpen(false)
       setName('')
       setDescription('')
@@ -176,6 +250,7 @@ function CreateOrJoinGroupButton() {
       qc.invalidateQueries({ queryKey: ['channels'] })
       toast.success('Joined group')
       setSelectedGroupId(data.group.id)
+      setView('chats')
       setOpen(false)
       setCode('')
     },
