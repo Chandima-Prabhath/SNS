@@ -20,7 +20,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
-import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn, UserX, Settings, Crown, Shield, Video, Phone, Server, Pin, BellOff, Trash2 } from 'lucide-react'
+import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn, UserX, Settings, Crown, Shield, Video, Phone, Menu, Pin, BellOff, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
@@ -179,16 +179,6 @@ export function ChatList() {
     onError: () => toast.error('Failed to join channel'),
   })
 
-  // Fetch all users for the "Discover people" section
-  const { data: users } = useQuery({
-    queryKey: ['users'],
-    queryFn: async () => {
-      const res = await fetch('/api/users')
-      const data = await res.json()
-      return data.users as any[]
-    },
-  })
-
   // Auto-select first channel on desktop only (mobile shows the list first)
   useEffect(() => {
     if (!activeChannelId && groups && groups.length > 0 && typeof window !== 'undefined' && window.innerWidth >= 1024) {
@@ -254,10 +244,10 @@ export function ChatList() {
             {/* Mobile: hamburger to open server rail drawer */}
             <button
               onClick={() => setServerRailOpen(true)}
-              className="md:hidden w-9 h-9 rounded-xl bg-sidebar-accent flex items-center justify-center shrink-0 hover:bg-accent transition-colors"
+              className="md:hidden w-9 h-9 rounded-xl bg-sidebar-accent flex items-center justify-center shrink-0 hover:bg-accent transition-colors active:scale-95"
               title="Groups & servers"
             >
-              <Server className="w-4 h-4" />
+              <Menu className="w-4 h-4" />
             </button>
             {isViewingDms ? (
               <>
@@ -334,7 +324,7 @@ export function ChatList() {
       <ScrollArea className="flex-1">
         <div className="px-2 pb-4">
           {filteredChats.length === 0 ? (
-            <EmptyChatList hasUsers={!!(users && users.length > 0)} />
+            <EmptyChatList />
           ) : (
             <>
               <div className="space-y-0.5">
@@ -500,11 +490,6 @@ export function ChatList() {
                   )
                 })}
               </div>
-
-              {/* Discover people to DM — only shown when not searching and filter is 'all' */}
-              {filter === 'all' && !search.trim() && users && users.length > 0 && (
-                <DiscoverPeople users={users} existingDmPartnerIds={filteredChats.filter(c => c.isDm).map(c => c.partner?.id).filter(Boolean)} />
-              )}
             </>
           )}
         </div>
@@ -514,91 +499,20 @@ export function ChatList() {
 }
 
 /**
- * Discover section — shows all users you can DM but haven't yet.
- * Helps first-time users find people to talk to without hunting for the + button.
+ * Discover section removed — users now start DMs from the NewDmButton in the
+ * chat list header (the + icon next to the search bar).
  */
-function DiscoverPeople({ users, existingDmPartnerIds }: { users: any[]; existingDmPartnerIds: string[] }) {
-  const qc = useQueryClient()
-  const setActiveChannel = useAppStore((s) => s.setActiveChannel)
 
-  const startDm = useMutation({
-    mutationFn: async (targetUserId: string) => {
-      const res = await fetch('/api/groups', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetUserId }),
-      })
-      if (!res.ok) throw new Error('failed')
-      return res.json()
-    },
-    onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ['channels'] })
-      setActiveChannel(data.channel.id)
-      toast.success('DM started')
-    },
-  })
-
-  // Filter out users we already have a DM with
-  const newUsers = users.filter((u) => !existingDmPartnerIds.includes(u.id))
-  if (newUsers.length === 0) return null
-
-  return (
-    <div className="mt-6">
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-2">
-        Discover people
-      </h3>
-      <div className="space-y-0.5">
-        {newUsers.map((u) => (
-          <button
-            key={u.id}
-            onClick={() => startDm.mutate(u.id)}
-            className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-accent/50 transition-colors text-left"
-          >
-            <div className="relative shrink-0">
-              <Avatar className="w-11 h-11">
-                <AvatarImage src={u.avatarUrl || undefined} />
-                <AvatarFallback>{u.displayName?.charAt(0) || '?'}</AvatarFallback>
-              </Avatar>
-              <span
-                className={cn(
-                  'absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-sidebar',
-                  u.status === 'online' && 'bg-status-online',
-                  u.status === 'idle' && 'bg-status-idle',
-                  u.status === 'dnd' && 'bg-status-dnd',
-                  u.status === 'offline' && 'bg-status-offline'
-                )}
-              />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="font-medium text-[15px] truncate">{u.displayName}</div>
-              <div className="text-xs text-muted-foreground truncate">@{u.username}</div>
-            </div>
-            <span className="text-xs text-primary font-medium shrink-0">Message</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function EmptyChatList({ hasUsers }: { hasUsers: boolean }) {
+function EmptyChatList() {
   return (
     <div className="text-center py-20 px-6">
       <div className="w-20 h-20 mx-auto rounded-3xl bg-primary/10 flex items-center justify-center mb-4 ring-1 ring-primary/15">
         <MessageCircle className="w-9 h-9 text-primary" strokeWidth={1.5} />
       </div>
-      <h3 className="font-semibold text-lg">Welcome to Adoo</h3>
+      <h3 className="font-semibold text-lg">No conversations yet</h3>
       <p className="text-sm text-muted-foreground mt-1.5 max-w-xs mx-auto leading-relaxed">
-        {hasUsers
-          ? 'No conversations yet. Tap someone below to start chatting, or create a group with the + button.'
-          : 'You\'re the first one here! Invite your friends — tap the + button and share the invite code.'}
+        Start a DM with the + button, or create a group from the server rail.
       </p>
-      {!hasUsers && (
-        <div className="mt-4 inline-flex items-center gap-2 text-xs text-primary bg-primary/10 px-3 py-1.5 rounded-full">
-          <MessageCircle className="w-3.5 h-3.5" />
-          Share invite code from any channel
-        </div>
-      )}
     </div>
   )
 }

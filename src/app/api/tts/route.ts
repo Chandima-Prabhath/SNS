@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { writeFile, mkdir } from 'fs/promises'
+import { db } from '@/lib/db'
+import { writeFile, mkdir, readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import path from 'path'
 import crypto from 'crypto'
@@ -9,7 +10,10 @@ import crypto from 'crypto'
 /**
  * POST /api/tts — Generate a voice message using PocketBase TTS (Kyutai pocket-tts).
  *
- * Body: { text: string, voice?: string }
+ * Body: { text: string, voice?: string, customVoiceId?: string }
+ *   - voice: a built-in voice name (alba, charles, etc.) — passed as voice_url
+ *   - customVoiceId: ID of a user-created CustomVoice — passed as voice_wav
+ *
  * Returns: { url: string } — the URL of the generated WAV file saved to /uploads/
  *
  * The TTS service is expected to be running on the VM at the URL specified
@@ -25,8 +29,9 @@ export async function POST(req: Request) {
     if (!session?.user) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     }
+    const userId = (session.user as any).id
 
-    const { text, voice = 'alba' } = await req.json()
+    const { text, voice = 'alba', customVoiceId } = await req.json()
 
     if (!text?.trim()) {
       return NextResponse.json({ error: 'text required' }, { status: 400 })
@@ -38,10 +43,34 @@ export async function POST(req: Request) {
     const ttsUrl = process.env.TTS_URL || 'http://localhost:8000'
     console.log(`[tts] generating speech: "${truncatedText.slice(0, 50)}..." with voice ${voice}`)
 
-    // Call the Pocket TTS API — multipart form with text and voice_url
+    // Build the multipart form for Pocket TTS
     const formData = new FormData()
     formData.append('text', truncatedText)
-    formData.append('voice_url', voice)
+
+    // If a custom voice ID is provided, read the voice clip file and pass
+    // it as voice_wav for one-shot voice cloning.
+    if (customVoiceId) {
+      const customVoice = await db.customVoice.findUnique({
+        where: { id: customVoiceId },
+      })
+      if (!customVoice || customVoice.ownerId !== userId) {
+        return NextResponse.json({ error: 'custom voice not found' }, { status: 404 })
+      }
+
+      // The audioUrl is like "/uploads/abc.wav" — resolve to filesystem path
+      const audioPath = path.join(process.cwd(), 'public', customVoice.audioUrl)
+      if (!existsSync(audioPath)) {
+        return NextResponse.json({ error: 'voice clip file not found' }, { status: 404 })
+      }
+
+      const audioBuffer = await readFile(audioPath)
+      const audioBlob = new Blob([audioBuffer], { type: 'audio/wav' })
+      formData.append('voice_wav', audioBlob, 'voice.wav')
+      console.log(`[tts] using custom voice: ${customVoice.name}`)
+    } else {
+      // Use a built-in voice name
+      formData.append('voice_url', voice)
+    }
 
     const ttsRes = await fetch(`${ttsUrl}/tts`, {
       method: 'POST',
@@ -76,7 +105,7 @@ export async function POST(req: Request) {
       url: `/uploads/${filename}`,
       type: 'audio',
       text: truncatedText,
-      voice,
+      voice: customVoiceId ? 'custom' : voice,
       size: audioBuffer.length,
     })
   } catch (e: any) {

@@ -52,11 +52,30 @@ model User {
   callParticipants CallParticipant[]
   callsStarted    VoiceCall[]      @relation("CallStarter")
   botSessions     ConversationSession[]
+  customVoices    CustomVoice[]
   settings        UserSetting[]
   sessions        Session[]
   accounts        Account[]
 
   @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom TTS Voices — user-created voice models from voice clips
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CustomVoice {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  name      String   // user-given name, e.g. "My Voice"
+  audioUrl  String   // path to the voice clip in /uploads/
+  duration  Float?   // length in seconds (for display)
+
+  createdAt DateTime @default(now())
+
+  @@index([ownerId])
 }
 
 model UserSetting {

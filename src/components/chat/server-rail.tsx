@@ -251,7 +251,10 @@ function MobileServerRail() {
                 </RailButton>
               ))}
 
-              <CreateOrJoinGroupButton onCreated={() => setOpen(false)} />
+              <CreateOrJoinGroupButton
+                onCreated={() => setOpen(false)}
+                onOpen={() => setOpen(false)}
+              />
             </div>
 
             <div className="flex-1" />
@@ -334,7 +337,7 @@ function RailButton({
   )
 }
 
-function CreateOrJoinGroupButton({ onCreated }: { onCreated?: () => void } = {}) {
+function CreateOrJoinGroupButton({ onCreated, onOpen }: { onCreated?: () => void; onOpen?: () => void } = {}) {
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<'create' | 'join'>('create')
   const [name, setName] = useState('')
@@ -343,6 +346,13 @@ function CreateOrJoinGroupButton({ onCreated }: { onCreated?: () => void } = {})
   const qc = useQueryClient()
   const setSelectedGroupId = useAppStore((s) => s.setSelectedGroupId)
   const setView = useAppStore((s) => s.setView)
+
+  // When the dialog opens, call onOpen (closes the mobile drawer so the
+  // dialog is accessible without the drawer's backdrop blocking it)
+  const handleOpenChange = (o: boolean) => {
+    setOpen(o)
+    if (o) onOpen?.()
+  }
 
   const create = useMutation({
     mutationFn: async () => {
@@ -393,7 +403,7 @@ function CreateOrJoinGroupButton({ onCreated }: { onCreated?: () => void } = {})
   })
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <button
           title="Create or join a group"
