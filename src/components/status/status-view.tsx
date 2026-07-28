@@ -24,7 +24,6 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { compressImage, formatBytes } from '@/lib/image-compress'
-import CircularGallery from '@/components/ui/circular-gallery/circular-gallery'
 
 export function StatusView() {
   const { stories, isLoading, upload, remove } = useStories()
@@ -34,14 +33,6 @@ export function StatusView() {
   const myStories = stories.find((s) => s.userId === myId)
   const otherStories = stories.filter((s) => s.userId !== myId)
 
-  // Build gallery items from stories for the CircularGallery component
-  const galleryItems = otherStories
-    .filter((s) => s.stories.length > 0)
-    .map((s) => ({
-      image: s.stories[0].mediaUrl || s.user.avatarUrl || `https://picsum.photos/seed/${s.userId}/800/600`,
-      text: s.user.displayName || 'Unknown',
-    }))
-
   return (
     <div className="h-full overflow-y-auto mesh-gradient">
       <div className="max-w-2xl mx-auto p-4 md:p-6 space-y-6">
@@ -49,21 +40,6 @@ export function StatusView() {
           <h1 className="text-2xl font-semibold tracking-tight">Status</h1>
           <p className="text-sm text-muted-foreground">Share moments that disappear in 24h</p>
         </div>
-
-        {/* Circular Gallery — 3D carousel of friends' status updates */}
-        {galleryItems.length > 0 && (
-          <section>
-            <div style={{ height: '320px', position: 'relative' }} className="rounded-2xl overflow-hidden">
-              <CircularGallery
-                items={galleryItems}
-                bend={3}
-                textColor="#ffffff"
-                borderRadius={0.05}
-                scrollEase={0.05}
-              />
-            </div>
-          </section>
-        )}
 
         {/* My status — always show upload option + existing statuses */}
         <section>

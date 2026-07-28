@@ -5,11 +5,20 @@ import { db } from '@/lib/db'
 
 /**
  * GET /api/music/rooms/[id] — Get a music room with its current state.
+ * Also auto-joins the user as a member so they can see the room.
  */
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const userId = (session.user as any).id
   const { id } = await params
+
+  // Auto-join the user as a member when they view the room
+  await db.musicRoomMember.upsert({
+    where: { roomId_userId: { roomId: id, userId } },
+    create: { roomId: id, userId },
+    update: {},
+  }).catch(() => {}) // ignore if already a member
 
   const room = await db.musicRoom.findUnique({
     where: { id },

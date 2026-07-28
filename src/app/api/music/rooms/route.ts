@@ -4,48 +4,25 @@ import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
 
 /**
- * GET /api/music/rooms — List all active music rooms the user can see.
+ * GET /api/music/rooms — List ALL music rooms (public to all users).
+ * Anyone can see and join any room — it's a shared listening experience.
  */
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
 
-  // Get rooms where I'm the host or a member
-  const [hostedRooms, memberRooms] = await Promise.all([
-    db.musicRoom.findMany({
-      where: { hostId: userId },
-      include: {
-        host: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
-        members: {
-          include: {
-            user: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
-          },
+  // Return ALL rooms — anyone can see and join them
+  const rooms = await db.musicRoom.findMany({
+    include: {
+      host: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
+      members: {
+        include: {
+          user: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
         },
       },
-      orderBy: { updatedAt: 'desc' },
-    }),
-    db.musicRoomMember.findMany({
-      where: { userId },
-      include: {
-        room: {
-          include: {
-            host: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
-            members: {
-              include: {
-                user: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
-              },
-            },
-          },
-        },
-      },
-    }),
-  ])
-
-  const rooms = [
-    ...hostedRooms,
-    ...memberRooms.map((m) => m.room),
-  ]
+    },
+    orderBy: { updatedAt: 'desc' },
+  })
 
   return NextResponse.json({ rooms })
 }
