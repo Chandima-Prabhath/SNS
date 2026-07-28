@@ -21,7 +21,7 @@ echo "╚═══════════════════════�
 echo ""
 
 # Check if running as root
-if [ "$EUID" -eq 0 ]; then
+if [ -n "$VIRTUAL_ENV" ] || [ "$EUID" -eq 0 ]; then
   PIP="pip3"
 else
   PIP="pip3 --user"
