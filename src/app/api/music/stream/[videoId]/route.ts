@@ -19,6 +19,55 @@ function ensureCacheDir() {
 }
 
 /**
+ * Ensure the bgutil PO Token provider HTTP server is running on port 4416.
+ *
+ * Without the PO Token provider, YouTube blocks downloads with "Sign in to
+ * confirm you're not a bot". We check if it's running and start it if not.
+ */
+let potProviderStarted = false
+async function ensurePotProvider() {
+  // Check if already running
+  try {
+    const res = await fetch('http://127.0.0.1:4416/health', { signal: AbortSignal.timeout(1000) })
+    if (res.ok) return // already running
+  } catch {
+    // not running — start it
+  }
+
+  if (potProviderStarted) return // already tried, don't retry every request
+  potProviderStarted = true
+
+  console.log('[music/stream] starting PO Token provider...')
+  try {
+    const { spawn } = await import('child_process')
+    const child = spawn('python3', ['-m', 'bgutil_ytdlp_pot_provider', '--port', '4416'], {
+      detached: true,
+      stdio: 'ignore',
+      env: getYtDlpEnv(),
+    })
+    child.unref()
+    console.log('[music/stream] PO Token provider started, waiting for it to be ready...')
+
+    // Wait up to 10 seconds for it to be ready
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 1000))
+      try {
+        const res = await fetch('http://127.0.0.1:4416/health', { signal: AbortSignal.timeout(500) })
+        if (res.ok) {
+          console.log('[music/stream] PO Token provider is ready')
+          return
+        }
+      } catch {
+        // still starting
+      }
+    }
+    console.warn('[music/stream] PO Token provider did not become ready in 10s')
+  } catch (e: any) {
+    console.error('[music/stream] failed to start PO Token provider:', e?.message)
+  }
+}
+
+/**
  * Get the environment for yt-dlp, ensuring Deno is in PATH.
  *
  * The Next.js process may not have Deno in its PATH (it was installed via
@@ -177,10 +226,14 @@ async function downloadAudio(videoId: string, outputPath: string): Promise<void>
     console.warn(`[music/stream] no cookies configured — YouTube may block downloads.`)
   }
 
+  // Ensure the PO Token provider is running (needed to avoid bot detection)
+  await ensurePotProvider()
+
   console.log(`[music/stream] downloading ${videoId}...`)
 
   // Build the command — minimal and foolproof.
-  // Do NOT use --extractor-args to force player_client. Let yt-dlp use defaults.
+  // Do NOT force player_client=android or web. Let yt-dlp use defaults.
+  // The default clients (tv, ios, web_safari, mweb) work with PO Tokens.
   const args = [
     ...(hasCookies ? ['--cookies', cookiesPath!] : []),
     '-f', 'ba/b',                    // best audio, fallback to best
@@ -192,6 +245,7 @@ async function downloadAudio(videoId: string, outputPath: string): Promise<void>
     '--no-progress',
     '--retries', '3',                // retry on network errors
     '--fragment-retries', '3',       // retry fragments
+    '--extractor-args', 'youtube:player_client=default,-android_sdkless',
     '-o', outputPath,
     url,
   ]
