@@ -292,6 +292,11 @@ export function MusicView() {
     // Join the music room's socket channel
     socket.emit('music:join', activeRoomId)
 
+    // Request the host's current state immediately after joining
+    setTimeout(() => {
+      socket.emit('music:request-sync', activeRoomId)
+    }, 500)
+
     const onSync = (data: {
       roomId: string
       state: string
@@ -306,7 +311,7 @@ export function MusicView() {
       const networkDelay = (Date.now() - data.serverTimestamp) / 1000
       const adjustedPosition = data.position + (data.state === 'playing' ? networkDelay : 0)
 
-      // Track changed — load the new track
+      // Track changed — load the new track and sync to host's position
       if (data.videoId && (!currentTrack || currentTrack.videoId !== data.videoId)) {
         const track: Track = data.trackInfo || {
           videoId: data.videoId,
@@ -319,6 +324,7 @@ export function MusicView() {
         setTimeout(() => {
           if (audioRef.current) {
             audioRef.current.src = `/api/music/stream/${data.videoId}`
+            // Set the position to match the host's current position
             audioRef.current.currentTime = adjustedPosition
             if (data.state === 'playing') {
               audioRef.current.play().catch(() => {})
@@ -327,7 +333,7 @@ export function MusicView() {
               setIsPlaying(false)
             }
           }
-        }, 100)
+        }, 200)
       } else if (audioRef.current && currentTrack) {
         // Same track — just sync position and state
         const drift = Math.abs(audioRef.current.currentTime - adjustedPosition)
@@ -348,13 +354,49 @@ export function MusicView() {
       }
     }
 
+    // When the host receives a sync request, broadcast current state
+    const onRequestSync = (data: { roomId: string; fromUserId: string }) => {
+      if (data.roomId !== activeRoomId) return
+      // Only the host responds to sync requests
+      if (currentTrack && socket) {
+        socket.emit('music:sync', {
+          roomId: activeRoomId,
+          state: isPlaying ? 'playing' : 'paused',
+          position: audioRef.current?.currentTime || 0,
+          videoId: currentTrack.videoId,
+          trackInfo: {
+            title: currentTrack.title,
+            artist: currentTrack.artist,
+            thumbnail: currentTrack.thumbnail,
+            durationSeconds: currentTrack.durationSeconds,
+          },
+        })
+      }
+    }
+
     socket.on('music:sync', onSync)
+    socket.on('music:request-sync', onRequestSync)
 
     return () => {
       socket.off('music:sync', onSync)
+      socket.off('music:request-sync', onRequestSync)
       socket.emit('music:leave', activeRoomId)
     }
   }, [socket, activeRoomId, currentTrack, isPlaying])
+
+  // Delete room
+  const deleteRoom = useMutation({
+    mutationFn: async (roomId: string) => {
+      const res = await fetch(`/api/music/rooms/${roomId}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('failed')
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['music-rooms'] })
+      if (activeRoomId) setActiveRoomId(null)
+      toast.success('Room deleted')
+    },
+    onError: () => toast.error('Failed to delete room'),
+  })
 
   const trendingTracks = trendingData?.tracks || []
   const rooms = roomsData?.rooms || []
@@ -403,7 +445,7 @@ export function MusicView() {
       </div>
 
       {/* Main content area */}
-      <div className="flex-1 overflow-y-auto pb-28">
+      <div className="flex-1 overflow-y-auto pb-40 lg:pb-28">
         <div className="max-w-5xl mx-auto p-4 md:p-6">
           <AnimatePresence mode="wait">
             {tab === 'browse' && (
@@ -525,37 +567,14 @@ export function MusicView() {
                         room={room}
                         isActive={activeRoomId === room.id}
                         onJoin={() => {
+                          // Just set the active room — the Socket.io sync
+                          // effect will join the socket channel and request
+                          // the host's current state automatically.
                           setActiveRoomId(room.id)
-                          // Fetch room state ONCE to get the initial sync point.
-                          // After this, all updates come via Socket.io in real-time.
-                          fetch(`/api/music/rooms/${room.id}`).then((r) => r.json()).then((data) => {
-                            if (data.room?.currentVideoId) {
-                              const track: Track = {
-                                videoId: data.room.currentVideoId,
-                                title: 'Now Playing',
-                                artist: '',
-                                thumbnail: null,
-                                durationSeconds: null,
-                              }
-                              setCurrentTrack(track)
-                              setTimeout(() => {
-                                if (audioRef.current) {
-                                  audioRef.current.src = `/api/music/stream/${data.room.currentVideoId}`
-                                  // Calculate how far into the track we should be
-                                  const lastSync = new Date(data.room.lastSyncAt).getTime()
-                                  const elapsed = data.room.currentState === 'playing'
-                                    ? (Date.now() - lastSync) / 1000
-                                    : 0
-                                  audioRef.current.currentTime = (data.room.currentPosition || 0) + elapsed
-                                  if (data.room.currentState === 'playing') {
-                                    audioRef.current.play().catch(() => {})
-                                    setIsPlaying(true)
-                                  }
-                                }
-                              }, 100)
-                            }
-                          })
+                          // Also call the API to auto-join as a member
+                          fetch(`/api/music/rooms/${room.id}`).catch(() => {})
                         }}
+                        onDelete={() => deleteRoom.mutate(room.id)}
                       />
                     ))}
                   </div>
@@ -675,7 +694,7 @@ export function MusicView() {
         </div>
       </div>
 
-      {/* Sticky bottom player bar */}
+      {/* Sticky bottom player bar — positioned above bottom nav on mobile */}
       <AnimatePresence>
         {currentTrack && (
           <motion.div
@@ -683,11 +702,46 @@ export function MusicView() {
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className="absolute bottom-0 left-0 right-0 z-20 bg-popover/95 backdrop-blur-2xl border-t border-border/50 shadow-2xl"
+            className="absolute bottom-14 lg:bottom-0 left-0 right-0 z-20 bg-popover/95 backdrop-blur-2xl border-t border-border/50 shadow-2xl"
           >
-            <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
+            {/* Mobile layout: compact — track info + play/pause only */}
+            <div className="lg:hidden px-3 py-2.5 flex items-center gap-3">
+              {currentTrack.thumbnail ? (
+                <img src={currentTrack.thumbnail} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
+              ) : (
+                <div className="w-10 h-10 rounded-lg gradient-primary flex items-center justify-center shrink-0">
+                  <MusicIcon className="w-4 h-4 text-primary-foreground" />
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-medium truncate">{currentTrack.title}</div>
+                <div className="text-[10px] text-muted-foreground truncate">{currentTrack.artist}</div>
+                {/* Seek bar below track info on mobile */}
+                <div className="flex items-center gap-1.5 mt-1">
+                  <span className="text-[8px] text-muted-foreground tabular-nums">{formatTime(position)}</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={currentTrack.durationSeconds || 300}
+                    value={position}
+                    onChange={handleSeek}
+                    className="flex-1 h-0.5 rounded-full bg-muted appearance-none cursor-pointer accent-primary"
+                  />
+                  <span className="text-[8px] text-muted-foreground tabular-nums">{formatTime(currentTrack.durationSeconds || 0)}</span>
+                </div>
+              </div>
+              <Button onClick={togglePlay} size="icon" className="rounded-full h-9 w-9 shrink-0 gradient-primary">
+                {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+              </Button>
+              <Button onClick={playNext} variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-foreground">
+                <SkipForward className="w-4 h-4" />
+              </Button>
+            </div>
+
+            {/* Desktop layout: full — track info + seek bar + controls + volume */}
+            <div className="hidden lg:flex max-w-5xl mx-auto px-4 py-2.5 items-center gap-4">
               {/* Track info */}
-              <div className="flex items-center gap-3 min-w-0 flex-1">
+              <div className="flex items-center gap-3 min-w-0 w-64 shrink-0">
                 {currentTrack.thumbnail ? (
                   <img src={currentTrack.thumbnail} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
                 ) : (
@@ -701,53 +755,46 @@ export function MusicView() {
                 </div>
               </div>
 
-              {/* Controls */}
-              <div className="flex items-center gap-2 shrink-0">
-                <Button
-                  onClick={playNext}
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 text-foreground hover:bg-accent"
-                >
-                  <SkipForward className="w-4 h-4" />
-                </Button>
-                <Button
-                  onClick={togglePlay}
-                  size="icon"
-                  className="rounded-full h-11 w-11 gradient-primary shadow-glow hover:scale-105 transition-transform"
-                >
-                  {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
-                </Button>
-                <Button
-                  onClick={() => { setCurrentTrack(null); setIsPlaying(false); if (audioRef.current) audioRef.current.pause() }}
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 text-foreground hover:bg-accent"
-                >
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-
-              {/* Seek bar */}
-              <div className="hidden md:flex items-center gap-2 shrink-0 w-48">
-                <span className="text-[10px] text-muted-foreground tabular-nums">
-                  {formatTime(position)}
-                </span>
-                <input
-                  type="range"
-                  min={0}
-                  max={currentTrack.durationSeconds || 300}
-                  value={position}
-                  onChange={handleSeek}
-                  className="flex-1 h-1 rounded-full bg-muted appearance-none cursor-pointer accent-primary"
-                />
-                <span className="text-[10px] text-muted-foreground tabular-nums">
-                  {formatTime(currentTrack.durationSeconds || 0)}
-                </span>
+              {/* Seek bar + controls (center, flexible) */}
+              <div className="flex-1 flex flex-col items-center gap-1.5">
+                <div className="flex items-center gap-3">
+                  <Button onClick={playNext} variant="ghost" size="icon" className="h-8 w-8 text-foreground hover:bg-accent">
+                    <Shuffle className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button onClick={playNext} variant="ghost" size="icon" className="h-8 w-8 text-foreground hover:bg-accent">
+                    <SkipForward className="w-4 h-4" />
+                  </Button>
+                  <Button onClick={togglePlay} size="icon" className="rounded-full h-10 w-10 gradient-primary shadow-glow hover:scale-105 transition-transform">
+                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                  </Button>
+                  <Button
+                    onClick={() => { setCurrentTrack(null); setIsPlaying(false); if (audioRef.current) audioRef.current.pause() }}
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-foreground hover:bg-accent"
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                  <Button onClick={() => setRepeat(!repeat)} variant="ghost" size="icon" className={cn('h-8 w-8 hover:bg-accent', repeat ? 'text-primary' : 'text-foreground')}>
+                    <Repeat className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2 w-full max-w-md">
+                  <span className="text-[10px] text-muted-foreground tabular-nums w-8 text-right">{formatTime(position)}</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={currentTrack.durationSeconds || 300}
+                    value={position}
+                    onChange={handleSeek}
+                    className="flex-1 h-1 rounded-full bg-muted appearance-none cursor-pointer accent-primary"
+                  />
+                  <span className="text-[10px] text-muted-foreground tabular-nums w-8">{formatTime(currentTrack.durationSeconds || 0)}</span>
+                </div>
               </div>
 
               {/* Volume */}
-              <div className="hidden lg:flex items-center gap-2 shrink-0 w-24">
+              <div className="flex items-center gap-2 shrink-0 w-28">
                 <Volume2 className="w-4 h-4 text-muted-foreground" />
                 <input
                   type="range"
@@ -868,48 +915,61 @@ function TrackCard({
 }
 
 // ─── Room Card ─────────────────────────────────────────────────────────────
-function RoomCard({ room, isActive, onJoin }: { room: Room; isActive: boolean; onJoin: () => void }) {
+function RoomCard({ room, isActive, onJoin, onDelete }: { room: Room; isActive: boolean; onJoin: () => void; onDelete?: () => void }) {
   const isPlaying = room.currentState === 'playing'
   return (
-    <button
-      onClick={onJoin}
+    <div
       className={cn(
-        'w-full flex items-center gap-3 p-3.5 rounded-2xl text-left transition-all border',
+        'w-full flex items-center gap-3 p-3.5 rounded-2xl transition-all border group',
         isActive
           ? 'bg-primary/10 border-primary/30 shadow-glow'
           : 'bg-card/50 border-border/30 hover:bg-accent/50 hover:border-primary/20'
       )}
     >
-      <div className={cn(
-        'w-12 h-12 rounded-xl flex items-center justify-center shrink-0 transition-all',
-        isPlaying ? 'bg-primary/20 text-primary pulse-glow' : 'bg-muted text-muted-foreground'
-      )}>
-        <Radio className={cn('w-5 h-5', isPlaying && 'animate-pulse')} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="font-medium text-sm truncate">{room.name}</div>
-        <div className="text-xs text-muted-foreground flex items-center gap-2">
-          <span>Hosted by {room.host?.displayName || 'Unknown'}</span>
-          <span>·</span>
-          <span className="flex items-center gap-1">
-            <Users className="w-3 h-3" />
-            {room.members.length}
-          </span>
-          {isPlaying && (
-            <>
-              <span>·</span>
-              <span className="text-status-online flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-status-online animate-pulse" />
-                Live
-              </span>
-            </>
-          )}
+      <button onClick={onJoin} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+        <div className={cn(
+          'w-12 h-12 rounded-xl flex items-center justify-center shrink-0 transition-all',
+          isPlaying ? 'bg-primary/20 text-primary pulse-glow' : 'bg-muted text-muted-foreground'
+        )}>
+          <Radio className={cn('w-5 h-5', isPlaying && 'animate-pulse')} />
         </div>
-      </div>
-      <div className="shrink-0 text-xs font-medium text-primary px-3 py-1.5 rounded-lg bg-primary/10">
-        {isActive ? 'In Room' : 'Join'}
-      </div>
-    </button>
+        <div className="flex-1 min-w-0">
+          <div className="font-medium text-sm truncate">{room.name}</div>
+          <div className="text-xs text-muted-foreground flex items-center gap-2">
+            <span>Hosted by {room.host?.displayName || 'Unknown'}</span>
+            <span>·</span>
+            <span className="flex items-center gap-1">
+              <Users className="w-3 h-3" />
+              {room.members.length}
+            </span>
+            {isPlaying && (
+              <>
+                <span>·</span>
+                <span className="text-status-online flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-status-online animate-pulse" />
+                  Live
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="shrink-0 text-xs font-medium text-primary px-3 py-1.5 rounded-lg bg-primary/10">
+          {isActive ? 'In Room' : 'Join'}
+        </div>
+      </button>
+      {onDelete && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            if (confirm(`Delete room "${room.name}"?`)) onDelete()
+          }}
+          className="shrink-0 p-2 rounded-lg text-red-400 opacity-0 group-hover:opacity-100 hover:bg-red-500/10 transition-all"
+          title="Delete room"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+      )}
+    </div>
   )
 }
 

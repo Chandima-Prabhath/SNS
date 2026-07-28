@@ -450,6 +450,13 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
     // room members. Members apply the state with drift compensation.
     socket.on('music:join', (roomId: string) => {
       socket.join(`music:${roomId}`)
+      // Notify the room that someone joined — the host should respond with
+      // a sync broadcast so the new member gets the current state.
+      socket.to(`music:${roomId}`).emit('music:member-joined', {
+        roomId,
+        userId,
+        username,
+      })
     })
 
     socket.on('music:leave', (roomId: string) => {
@@ -457,17 +464,27 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
     })
 
     // Broadcast sync events to all room members.
-    // The host sends: { roomId, state, position, videoId?, timestamp }
+    // The host sends: { roomId, state, position, videoId?, trackInfo? }
     // We include the server's receive timestamp for drift compensation.
     socket.on('music:sync', (payload: {
       roomId: string
       state: string
       position: number
       videoId?: string
+      trackInfo?: any
     }) => {
       io.to(`music:${payload.roomId}`).emit('music:sync', {
         ...payload,
         serverTimestamp: Date.now(),
+      })
+    })
+
+    // Request sync — a member who just joined asks the host for the current
+    // state. The host should respond with a music:sync broadcast.
+    socket.on('music:request-sync', (roomId: string) => {
+      socket.to(`music:${roomId}`).emit('music:request-sync', {
+        roomId,
+        fromUserId: userId,
       })
     })
 
