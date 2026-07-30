@@ -599,20 +599,21 @@ function TtsDialog({
     if (!previewBlob || sending) return
     setSending(true)
     try {
-      // Upload the collected Blob to /api/upload. This route saves the file
-      // synchronously to public/uploads/ and only returns the URL after the
-      // file is fully written to disk. This guarantees the URL is immediately
-      // playable — no race condition, no 0-length audio.
+      // Upload the collected Blob to /api/upload.
       const formData = new FormData()
       formData.append('file', previewBlob, `tts-${Date.now()}.wav`)
+      console.log('[tts] uploading blob, size=', previewBlob.size, 'type=', previewBlob.type)
       const uploadRes = await fetch('/api/upload', {
         method: 'POST',
         body: formData,
       })
       if (!uploadRes.ok) {
-        throw new Error('Failed to upload voice message')
+        const errText = await uploadRes.text().catch(() => 'unknown')
+        console.error('[tts] upload failed:', uploadRes.status, errText)
+        throw new Error(`Upload failed (${uploadRes.status}): ${errText.slice(0, 100)}`)
       }
       const data = await uploadRes.json()
+      console.log('[tts] upload success, url=', data.url)
 
       // Revoke the blob URL — the uploaded file URL is now the source of truth
       if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
@@ -621,8 +622,9 @@ function TtsDialog({
       setText('')
       setPreviewUrl(null)
       setPreviewBlob(null)
-    } catch {
-      toast.error('Failed to send voice message')
+    } catch (e: any) {
+      console.error('[tts] send failed:', e)
+      toast.error(e?.message || 'Failed to send voice message')
     } finally {
       setSending(false)
     }
