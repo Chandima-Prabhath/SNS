@@ -566,3 +566,32 @@
     background: oklch(0.35 0.012 264);
   }
 }
+
+/* ─── Bot Builder: larger, easier-to-hit connection handles ─────────────── */
+/* ReactFlow handles are tiny by default — hard to hit on a touchpad.
+   This enlarges the invisible interaction zone to 36x36px (centered on
+   the visible 16px dot) so connections are easy to start/end. */
+.adoo-handle {
+  cursor: crosshair !important;
+}
+.adoo-handle::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: transparent;
+  z-index: 10;
+}
+/* Glow on hover so the user knows the handle is active */
+.adoo-handle:hover {
+  filter: drop-shadow(0 0 6px currentColor);
+  transform: scale(1.15);
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+.adoo-handle {
+  transition: transform 0.15s ease, filter 0.15s ease;
+}

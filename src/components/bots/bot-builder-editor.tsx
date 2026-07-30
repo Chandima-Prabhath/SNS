@@ -149,7 +149,8 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
         <Handle
           type="target"
           position={Position.Top}
-          style={{ background: def.color, width: 10, height: 10, border: 'none' }}
+          className="adoo-handle"
+          style={{ background: def.color, width: 16, height: 16, border: '3px solid #1e1f22', borderRadius: '50%' }}
         />
       )}
 
@@ -206,7 +207,8 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
               type="source"
               position={Position.Bottom}
               id="true"
-              style={{ background: '#34D399', width: 10, height: 10, border: 'none' }}
+              className="adoo-handle"
+              style={{ background: '#34D399', width: 16, height: 16, border: '3px solid #1e1f22', borderRadius: '50%' }}
             />
           </div>
           <div className="flex flex-col items-center">
@@ -215,7 +217,8 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
               type="source"
               position={Position.Bottom}
               id="false"
-              style={{ background: '#F87171', width: 10, height: 10, border: 'none' }}
+              className="adoo-handle"
+              style={{ background: '#F87171', width: 16, height: 16, border: '3px solid #1e1f22', borderRadius: '50%' }}
             />
           </div>
         </div>
@@ -228,7 +231,8 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
                 type="source"
                 position={Position.Right}
                 id={`case_${i}`}
-                style={{ background: '#FB7185', width: 8, height: 8, border: 'none' }}
+                className="adoo-handle"
+                style={{ background: '#FB7185', width: 14, height: 14, border: '2px solid #1e1f22', borderRadius: '50%' }}
               />
             </div>
           ))}
@@ -238,7 +242,8 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
               type="source"
               position={Position.Right}
               id="default"
-              style={{ background: '#64748B', width: 8, height: 8, border: 'none' }}
+              className="adoo-handle"
+              style={{ background: '#64748B', width: 14, height: 14, border: '2px solid #1e1f22', borderRadius: '50%' }}
             />
           </div>
         </div>
@@ -248,14 +253,16 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
           <Handle
             type="source"
             position={Position.Bottom}
-            style={{ background: def.color, width: 10, height: 10, border: 'none' }}
+            className="adoo-handle"
+            style={{ background: def.color, width: 16, height: 16, border: '3px solid #1e1f22', borderRadius: '50%' }}
           />
         </div>
       ) : !isStop ? (
         <Handle
           type="source"
           position={Position.Bottom}
-          style={{ background: def.color, width: 10, height: 10, border: 'none' }}
+          className="adoo-handle"
+          style={{ background: def.color, width: 16, height: 16, border: '3px solid #1e1f22', borderRadius: '50%' }}
         />
       ) : null}
     </div>

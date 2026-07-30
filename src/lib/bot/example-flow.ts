@@ -4,32 +4,57 @@
  * A demo bot that uses every node type in a logical, interconnected flow.
  * Used by the "Load Example" button in the bot builder.
  *
- * Each node's `data` block includes `type` because the editor's CustomNode
- * component reads `data.type` to determine how to render the node (ReactFlow
- * sets n.type to 'custom' for all custom nodes, so we can't use that).
+ * Layout: main flow runs vertically down the center. Each switch case
+ * branches into its own column (joke, AI, game, quit, default) so the
+ * connections are clean and the flow direction is obvious. Loop-back
+ * edges curve from the bottom of each branch back up to the menu.
  */
 
 import type { BotFlow } from './flow-types'
 
+// Column X positions (280px apart for clean separation)
+const X = {
+  joke: 40,       // far left
+  ai: 320,        // center-left
+  main: 600,      // center (main flow)
+  game: 880,      // center-right
+  quit: 1160,     // right
+  default: 1440,  // far right
+}
+
+// Row Y positions (140px apart for readability)
+const Y = {
+  trigger: 40,
+  counter: 180,
+  format: 320,
+  message: 460,
+  typing: 600,
+  choice: 740,
+  delay: 900,
+  switch: 1040,
+  branch1: 1240,  // first row of branch nodes
+  branch2: 1400,  // second row
+  branch3: 1560,  // third row
+  branch4: 1720,  // fourth row
+}
+
 export const EXAMPLE_BOT_FLOW: BotFlow = {
   nodes: [
-    // ── TRIGGER ──────────────────────────────────────────────────────
+    // ══ MAIN FLOW (center column) ══════════════════════════════════════
     {
       id: 'trigger-1',
       type: 'trigger',
-      position: { x: 400, y: 50 },
+      position: { x: X.main, y: Y.trigger },
       data: {
         type: 'trigger',
         triggerType: 'any_message',
         label: 'Trigger',
       },
     },
-
-    // ── COUNTER (track interactions) ─────────────────────────────────
     {
       id: 'counter-1',
       type: 'counter',
-      position: { x: 400, y: 180 },
+      position: { x: X.main, y: Y.counter },
       data: {
         type: 'counter',
         variable: 'interactionCount',
@@ -38,12 +63,10 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
         label: 'Count Interactions',
       },
     },
-
-    // ── FORMAT STRING (build greeting) ───────────────────────────────
     {
       id: 'format-1',
       type: 'format_string',
-      position: { x: 400, y: 310 },
+      position: { x: X.main, y: Y.format },
       data: {
         type: 'format_string',
         text: '👋 Hi {{sender}}! This is your interaction #{{interactionCount}}. What would you like to do?',
@@ -51,36 +74,30 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
         label: 'Build Greeting',
       },
     },
-
-    // ── MESSAGE (send greeting) ──────────────────────────────────────
     {
       id: 'message-greeting',
       type: 'message',
-      position: { x: 400, y: 440 },
+      position: { x: X.main, y: Y.message },
       data: {
         type: 'message',
         text: '{{greeting}}',
         label: 'Send Greeting',
       },
     },
-
-    // ── TYPING (natural pause) ───────────────────────────────────────
     {
       id: 'typing-1',
       type: 'typing',
-      position: { x: 400, y: 570 },
+      position: { x: X.main, y: Y.typing },
       data: {
         type: 'typing',
         seconds: 1,
         label: 'Typing Pause',
       },
     },
-
-    // ── WAIT CHOICE (buttons) ────────────────────────────────────────
     {
       id: 'choice-1',
       type: 'wait_choice',
-      position: { x: 400, y: 700 },
+      position: { x: X.main, y: Y.choice },
       data: {
         type: 'wait_choice',
         prompt: 'Choose an option:',
@@ -89,24 +106,20 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
         label: 'Main Menu',
       },
     },
-
-    // ── DELAY (small pause before routing) ───────────────────────────
     {
       id: 'delay-1',
       type: 'delay',
-      position: { x: 400, y: 860 },
+      position: { x: X.main, y: Y.delay },
       data: {
         type: 'delay',
         seconds: 1,
         label: 'Pause Before Routing',
       },
     },
-
-    // ── SWITCH (route based on choice) ───────────────────────────────
     {
       id: 'switch-1',
       type: 'switch_case',
-      position: { x: 400, y: 990 },
+      position: { x: X.main, y: Y.switch },
       data: {
         type: 'switch_case',
         switchVariable: 'userChoice',
@@ -115,11 +128,11 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       },
     },
 
-    // ══ JOKE PATH ════════════════════════════════════════════════════
+    // ══ JOKE BRANCH (far left) ═════════════════════════════════════════
     {
       id: 'message-joke',
       type: 'message',
-      position: { x: 100, y: 1180 },
+      position: { x: X.joke, y: Y.branch1 },
       data: {
         type: 'message',
         text: '😂 Why do programmers prefer dark mode? Because light attracts bugs!',
@@ -127,11 +140,11 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       },
     },
 
-    // ══ AI PATH ══════════════════════════════════════════════════════
+    // ══ AI BRANCH (center-left) ════════════════════════════════════════
     {
       id: 'ai-1',
       type: 'ai_generate',
-      position: { x: 300, y: 1180 },
+      position: { x: X.ai, y: Y.branch1 },
       data: {
         type: 'ai_generate',
         aiPrompt: 'The user said: "{{userChoice}}". Greet them and tell them a fun fact in one sentence.',
@@ -146,7 +159,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
     {
       id: 'format-ai',
       type: 'format_string',
-      position: { x: 300, y: 1310 },
+      position: { x: X.ai, y: Y.branch2 },
       data: {
         type: 'format_string',
         text: '🤖 AI says: {{aiResponse}}',
@@ -157,7 +170,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
     {
       id: 'message-ai',
       type: 'message',
-      position: { x: 300, y: 1440 },
+      position: { x: X.ai, y: Y.branch3 },
       data: {
         type: 'message',
         text: '{{aiFormatted}}',
@@ -165,11 +178,11 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       },
     },
 
-    // ══ GAME PATH (random branch) ════════════════════════════════════
+    // ══ GAME BRANCH (center-right) — random split ══════════════════════
     {
       id: 'random-1',
       type: 'random',
-      position: { x: 500, y: 1180 },
+      position: { x: X.game, y: Y.branch1 },
       data: {
         type: 'random',
         label: 'Random Game',
@@ -178,7 +191,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
     {
       id: 'message-game1',
       type: 'message',
-      position: { x: 450, y: 1380 },
+      position: { x: X.game - 80, y: Y.branch2 },
       data: {
         type: 'message',
         text: '🎮 You rolled a dice: it landed on 4! Lucky number.',
@@ -188,7 +201,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
     {
       id: 'message-game2',
       type: 'message',
-      position: { x: 600, y: 1380 },
+      position: { x: X.game + 80, y: Y.branch2 },
       data: {
         type: 'message',
         text: "🎮 You flipped a coin: it's HEADS! You win!",
@@ -196,11 +209,11 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       },
     },
 
-    // ══ QUIT PATH ════════════════════════════════════════════════════
+    // ══ QUIT BRANCH (right) ═══════════════════════════════════════════
     {
       id: 'log-quit',
       type: 'log',
-      position: { x: 700, y: 1180 },
+      position: { x: X.quit, y: Y.branch1 },
       data: {
         type: 'log',
         logMessage: 'User {{sender}} quit after {{interactionCount}} interactions.',
@@ -211,7 +224,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
     {
       id: 'setvar-reset',
       type: 'set_var',
-      position: { x: 700, y: 1310 },
+      position: { x: X.quit, y: Y.branch2 },
       data: {
         type: 'set_var',
         variable: 'interactionCount',
@@ -222,7 +235,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
     {
       id: 'message-goodbye',
       type: 'message',
-      position: { x: 700, y: 1440 },
+      position: { x: X.quit, y: Y.branch3 },
       data: {
         type: 'message',
         text: '👋 Goodbye, {{sender}}! Your counter has been reset. Send any message to start again.',
@@ -232,30 +245,28 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
     {
       id: 'stop-1',
       type: 'stop',
-      position: { x: 700, y: 1570 },
+      position: { x: X.quit, y: Y.branch4 },
       data: {
         type: 'stop',
         label: 'Stop',
       },
     },
 
-    // ══ DEFAULT PATH (invalid choice — shouldn't happen with buttons, but handles typed input) ══
+    // ══ DEFAULT BRANCH (far right) — invalid choice handling ═══════════
     {
       id: 'message-invalid',
       type: 'message',
-      position: { x: 900, y: 1180 },
+      position: { x: X.default, y: Y.branch1 },
       data: {
         type: 'message',
         text: "🤔 I didn't understand that. Please pick one of the options below.",
         label: 'Invalid Choice',
       },
     },
-
-    // ══ API CALL (bonus — fetch a public API as a demo) ══════════════
     {
       id: 'api-1',
       type: 'api_call',
-      position: { x: 900, y: 1440 },
+      position: { x: X.default, y: Y.branch2 },
       data: {
         type: 'api_call',
         url: 'https://official-joke-api.appspot.com/random_joke',
@@ -264,12 +275,10 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
         label: 'Fetch Joke API',
       },
     },
-
-    // ══ SEND MEDIA (bonus — send an image) ══════════════════════════
     {
       id: 'media-1',
       type: 'send_media',
-      position: { x: 900, y: 1570 },
+      position: { x: X.default, y: Y.branch3 },
       data: {
         type: 'send_media',
         mediaUrl: 'https://emojicdn.elk.sh/%F0%9F%8E%89',
@@ -280,7 +289,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
     },
   ],
   edges: [
-    // Main flow
+    // Main flow (top to bottom)
     { id: 'e1', source: 'trigger-1', target: 'counter-1' },
     { id: 'e2', source: 'counter-1', target: 'format-1' },
     { id: 'e3', source: 'format-1', target: 'message-greeting' },
@@ -289,33 +298,33 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
     { id: 'e6', source: 'choice-1', target: 'delay-1' },
     { id: 'e7', source: 'delay-1', target: 'switch-1' },
 
-    // Switch cases
+    // Switch cases — fan out to 5 columns
     { id: 'e8', source: 'switch-1', target: 'message-joke', sourceHandle: 'case_0' },
     { id: 'e9', source: 'switch-1', target: 'ai-1', sourceHandle: 'case_1' },
     { id: 'e10', source: 'switch-1', target: 'random-1', sourceHandle: 'case_2' },
     { id: 'e11', source: 'switch-1', target: 'log-quit', sourceHandle: 'case_3' },
     { id: 'e12', source: 'switch-1', target: 'message-invalid', sourceHandle: 'default' },
 
-    // Joke path — loops back to choice
+    // Joke branch — loops back to menu
     { id: 'e13', source: 'message-joke', target: 'choice-1' },
 
-    // AI path
+    // AI branch
     { id: 'e14', source: 'ai-1', target: 'format-ai' },
     { id: 'e15', source: 'format-ai', target: 'message-ai' },
     { id: 'e16', source: 'message-ai', target: 'choice-1' },
 
-    // Random game paths — both loop back to choice
+    // Game branch — random splits to 2, both loop back
     { id: 'e17', source: 'random-1', target: 'message-game1', sourceHandle: null },
     { id: 'e18', source: 'random-1', target: 'message-game2', sourceHandle: null },
     { id: 'e19', source: 'message-game1', target: 'choice-1' },
     { id: 'e20', source: 'message-game2', target: 'choice-1' },
 
-    // Quit path
+    // Quit branch — terminates
     { id: 'e21', source: 'log-quit', target: 'setvar-reset' },
     { id: 'e22', source: 'setvar-reset', target: 'message-goodbye' },
     { id: 'e23', source: 'message-goodbye', target: 'stop-1' },
 
-    // Default path — also loops back to choice
+    // Default branch — also loops back to menu
     { id: 'e24', source: 'message-invalid', target: 'api-1' },
     { id: 'e25', source: 'api-1', target: 'media-1' },
     { id: 'e26', source: 'media-1', target: 'choice-1' },
