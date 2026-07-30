@@ -16,6 +16,8 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useMusicStore, type Track } from '@/stores/useMusicStore'
 import { useMusicPlayer } from '@/components/music/global-music-player'
+import { InviteDialog } from '@/components/ui/invite-dialog'
+import { useConfirm } from '@/hooks/useConfirm'
 import { SpotlightCard, GlassSurface, GradientText, BorderGlow, ShinyText, StarBorder } from '@/components/reactbits'
 
 interface Room {
@@ -81,6 +83,9 @@ export function MusicView() {
   const [newPlaylistName, setNewPlaylistName] = useState('')
   const [showNewPlaylistInput, setShowNewPlaylistInput] = useState(false)
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState<Track | null>(null)
+  const [showCreateRoom, setShowCreateRoom] = useState(false)
+  const [newRoomName, setNewRoomName] = useState('')
+  const [inviteTarget, setInviteTarget] = useState<{ type: 'call' | 'music'; roomId?: string; roomName?: string } | null>(null)
 
   // ── DB-backed liked songs (react-query) ──────────────────────────────
   const { data: likedData } = useQuery({
@@ -305,7 +310,7 @@ export function MusicView() {
     refetchInterval: 10000,
   })
 
-  // Create room
+  // Create room — optimistic update (room appears instantly)
   const createRoom = useMutation({
     mutationFn: async (name: string) => {
       const res = await fetch('/api/music/rooms', {
@@ -317,20 +322,32 @@ export function MusicView() {
       return res.json()
     },
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ['music-rooms'] })
+      // Add the new room to the cache immediately (optimistic)
+      qc.setQueryData(['music-rooms'], (old: any) => {
+        const newRoom = { ...data.room }
+        return { rooms: [newRoom, ...(old?.rooms || [])] }
+      })
       setActiveRoomId(data.room.id)
       setTab('rooms')
       toast.success('Room created')
     },
+    onError: () => toast.error('Failed to create room'),
   })
 
-  // Delete room
+  // Delete room — optimistic update
   const deleteRoom = useMutation({
     mutationFn: async (roomId: string) => {
       const res = await fetch(`/api/music/rooms/${roomId}`, {
         method: 'DELETE',
       })
       if (!res.ok) throw new Error('failed')
+    },
+    onMutate: async (roomId) => {
+      // Optimistic update — remove from cache immediately
+      qc.setQueryData(['music-rooms'], (old: any) => {
+        if (!old) return old
+        return { ...old, rooms: old.rooms.filter((r: any) => r.id !== roomId) }
+      })
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['music-rooms'] })
@@ -598,10 +615,7 @@ export function MusicView() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => {
-                      const name = prompt('Room name?')
-                      if (name?.trim()) createRoom.mutate(name)
-                    }}
+                    onClick={() => { setShowCreateRoom(true); setNewRoomName('') }}
                   >
                     <Plus className="w-4 h-4 mr-1" />
                     Create Room
@@ -634,34 +648,7 @@ export function MusicView() {
                           // Also call the API to auto-join as a member
                           fetch(`/api/music/rooms/${room.id}`).catch(() => {})
                         }}
-                        onInvite={async () => {
-                          const username = prompt('Enter the username of the person to invite:')
-                          if (!username?.trim()) return
-                          try {
-                            const searchRes = await fetch(`/api/users?search=${encodeURIComponent(username.trim())}`)
-                            if (!searchRes.ok) throw new Error('Failed to search users')
-                            const searchData = await searchRes.json()
-                            const targetUser = searchData.users?.find((u: any) => u.username === username.trim())
-                            if (!targetUser) {
-                              toast.error(`User "${username}" not found`)
-                              return
-                            }
-                            const res = await fetch('/api/invites', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                targetUserId: targetUser.id,
-                                type: 'music',
-                                targetId: room.id,
-                                roomName: room.name,
-                              }),
-                            })
-                            if (!res.ok) throw new Error('Failed to send invite')
-                            toast.success(`Invitation sent to ${targetUser.displayName}`)
-                          } catch (e: any) {
-                            toast.error(e.message || 'Failed to send invite')
-                          }
-                        }}
+                        onInvite={() => setInviteTarget({ type: 'music', roomId: room.id, roomName: room.name })}
                         onDelete={() => deleteRoom.mutate(room.id)}
                       />
                     ))}
@@ -1172,6 +1159,79 @@ export function MusicView() {
             </div>
           </div>
         )}
+
+        {/* ── Create Room dialog ─────────────────────────────────────────── */}
+        {showCreateRoom && (
+          <div
+            className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setShowCreateRoom(false)}
+          >
+            <div
+              className="bg-card rounded-2xl border border-border/50 shadow-2xl max-w-sm w-full overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-4 border-b border-border/30">
+                <h3 className="font-semibold text-sm">Create Listening Room</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Invite friends to listen together</p>
+              </div>
+              <div className="p-4">
+                <Input
+                  value={newRoomName}
+                  onChange={(e) => setNewRoomName(e.target.value)}
+                  placeholder="Room name..."
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newRoomName.trim()) {
+                      createRoom.mutate(newRoomName)
+                      setShowCreateRoom(false)
+                    }
+                    if (e.key === 'Escape') setShowCreateRoom(false)
+                  }}
+                />
+              </div>
+              <div className="flex gap-2 p-3 border-t border-border/30">
+                <Button variant="ghost" size="sm" className="flex-1" onClick={() => setShowCreateRoom(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  className="flex-1"
+                  disabled={!newRoomName.trim() || createRoom.isPending}
+                  onClick={() => {
+                    if (newRoomName.trim()) {
+                      createRoom.mutate(newRoomName)
+                      setShowCreateRoom(false)
+                    }
+                  }}
+                >
+                  {createRoom.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Invite to Room dialog ──────────────────────────────────────── */}
+        <InviteDialog
+          open={!!inviteTarget}
+          onOpenChange={(open) => { if (!open) setInviteTarget(null) }}
+          inviteType={inviteTarget?.type || 'music'}
+          inviteContext={inviteTarget?.roomName ? `music room "${inviteTarget.roomName}"` : undefined}
+          onSendInvite={async (targetUserId) => {
+            if (!inviteTarget) return
+            const res = await fetch('/api/invites', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                targetUserId,
+                type: inviteTarget.type,
+                targetId: inviteTarget.roomId,
+                roomName: inviteTarget.roomName,
+              }),
+            })
+            if (!res.ok) throw new Error('Failed to send invite')
+          }}
+        />
       </div>
     </div>
   )
@@ -1452,6 +1512,7 @@ function RoomCard({
   onDelete?: () => void
   onInvite?: () => void
 }) {
+  const confirm = useConfirm()
   const isPlaying = room.currentState === 'playing'
   return (
     <div className="relative group">
@@ -1525,9 +1586,10 @@ function RoomCard({
         )}
         {onDelete && (
           <button
-            onClick={(e) => {
+            onClick={async (e) => {
               e.stopPropagation()
-              if (confirm(`Delete room "${room.name}"?`)) onDelete()
+              const ok = await confirm({ title: `Delete room "${room.name}"?`, message: 'This cannot be undone.', confirmLabel: 'Delete', variant: 'danger' })
+              if (ok) onDelete()
             }}
             className="shrink-0 p-2.5 rounded-full text-red-400 opacity-0 group-hover:opacity-100 hover:bg-red-500/10 hover:text-red-300 transition-all"
             title="Delete room"

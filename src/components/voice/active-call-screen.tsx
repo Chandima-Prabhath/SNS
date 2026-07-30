@@ -8,6 +8,7 @@ import { Mic, MicOff, PhoneOff, Volume2, VolumeX, Users, Wifi, Cloud, Shield, Vi
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { InviteDialog } from '@/components/ui/invite-dialog'
 
 interface ActiveCallScreenProps {
   callName: string
@@ -26,6 +27,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
   const [audioLevels, setAudioLevels] = useState<Record<string, number>>({})
   const [speakerOn, setSpeakerOn] = useState(true)
   const [leaving, setLeaving] = useState(false)
+  const [showInvite, setShowInvite] = useState(false)
   const startTimeRef = useRef<number>(Date.now())
   const localVideoRef = useRef<HTMLVideoElement>(null)
 
@@ -71,37 +73,9 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
     finally { setLeaving(false); onLeave() }
   }
 
-  // Invite a user to the current call — opens a prompt for their username
-  const handleInvite = async () => {
-    const username = prompt('Enter the username of the person to invite:')
-    if (!username?.trim()) return
-    try {
-      // Find the user by username
-      const searchRes = await fetch(`/api/users?search=${encodeURIComponent(username.trim())}`)
-      if (!searchRes.ok) throw new Error('Failed to search users')
-      const searchData = await searchRes.json()
-      const targetUser = searchData.users?.find((u: any) => u.username === username.trim())
-      if (!targetUser) {
-        toast.error(`User "${username}" not found`)
-        return
-      }
-      // Send the invite
-      const res = await fetch('/api/invites', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetUserId: targetUser.id,
-          type: 'call',
-          targetId: callId,
-          channelId,
-          isVideo: isVideoCall,
-        }),
-      })
-      if (!res.ok) throw new Error('Failed to send invite')
-      toast.success(`Invitation sent to ${targetUser.displayName}`)
-    } catch (e: any) {
-      toast.error(e.message || 'Failed to send invite')
-    }
+  // Invite a user to the current call — opens the InviteDialog
+  const handleInvite = () => {
+    setShowInvite(true)
   }
 
   const handleSpeaker = async () => {
@@ -136,6 +110,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
   // ─── Video call layout ───
   if (isVideoCall) {
     return (
+      <>
       <motion.div
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         className="fixed inset-0 z-[70] bg-black flex flex-col"
@@ -197,11 +172,27 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
           </div>
         </div>
       </motion.div>
-    )
-  }
+      <InviteDialog
+        open={showInvite}
+        onOpenChange={setShowInvite}
+        inviteType="call"
+        inviteContext={isVideoCall ? 'video call' : 'voice call'}
+        onSendInvite={async (targetUserId) => {
+          const res = await fetch('/api/invites', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ targetUserId, type: 'call', targetId: callId, channelId, isVideo: isVideoCall }),
+          })
+          if (!res.ok) throw new Error('Failed to send invite')
+        }}
+      />
+    </>
+  )
+}
 
   // ─── Voice call layout — premium phone-call style ───
   return (
+    <>
     <motion.div
       initial={{ opacity: 0, scale: 1.02 }}
       animate={{ opacity: 1, scale: 1 }}
@@ -382,6 +373,21 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
         </div>
       </div>
     </motion.div>
+    <InviteDialog
+      open={showInvite}
+      onOpenChange={setShowInvite}
+      inviteType="call"
+      inviteContext={isVideoCall ? 'video call' : 'voice call'}
+      onSendInvite={async (targetUserId) => {
+        const res = await fetch('/api/invites', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetUserId, type: 'call', targetId: callId, channelId, isVideo: isVideoCall }),
+        })
+        if (!res.ok) throw new Error('Failed to send invite')
+      }}
+    />
+    </>
   )
 }
 

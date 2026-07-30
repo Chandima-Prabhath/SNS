@@ -83,9 +83,6 @@ function BotBuilderContent() {
           <h1 className="font-semibold text-sm truncate">{bot.name}</h1>
           <p className="text-[11px] text-muted-foreground truncate">@{bot.username} · Bot Builder</p>
         </div>
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground px-2 py-1 rounded-md bg-muted/50">
-          Developer Mode
-        </span>
       </header>
 
       <div className="flex-1 min-h-0">

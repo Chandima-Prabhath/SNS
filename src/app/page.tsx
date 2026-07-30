@@ -6,6 +6,7 @@ import { ThemeProvider } from 'next-themes'
 import { useState, useEffect } from 'react'
 import { AppShell } from '@/components/layout/app-shell'
 import { useAppStore } from '@/stores/useAppStore'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 
 export default function Home() {
   const [qc] = useState(
@@ -46,6 +47,7 @@ export default function Home() {
       <SessionProvider>
         <QueryClientProvider client={qc}>
           <AppShell />
+          <ConfirmDialog />
         </QueryClientProvider>
       </SessionProvider>
     </ThemeProvider>
