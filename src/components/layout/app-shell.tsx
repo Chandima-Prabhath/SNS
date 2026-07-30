@@ -14,16 +14,21 @@ import { IncomingCallOverlay } from '@/components/voice/incoming-call-overlay'
 import { CallController } from '@/components/voice/call-controller'
 import { FirefoxBanner } from '@/components/voice/firefox-banner'
 import { UpdateBanner } from '@/components/layout/update-banner'
+import { OfflineBanner } from '@/components/layout/offline-banner'
 import { useAppStore } from '@/stores/useAppStore'
 import { useSocket } from '@/hooks/useSocket'
 import { useNotifications } from '@/hooks/useNotifications'
 import { usePermissionManager } from '@/hooks/usePermissionManager'
+import { useOfflineSession, getCachedSession } from '@/hooks/useOfflineSession'
 import { Toaster } from '@/components/ui/sonner'
 import { Loader2 } from 'lucide-react'
 
 export function AppShell() {
   const { status } = useSession()
   const view = useAppStore((s) => s.view)
+
+  // Cache the session for offline use
+  useOfflineSession()
 
   useSocket()
   useNotifications()
@@ -37,13 +42,21 @@ export function AppShell() {
     )
   }
 
+  // If next-auth says unauthenticated, check if we're offline and have a
+  // cached session — if so, let the user in with cached data.
   if (status === 'unauthenticated') {
-    return (
-      <>
-        <AuthScreen />
-        <Toaster />
-      </>
-    )
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine
+    const cached = getCachedSession()
+    if (!isOffline || !cached) {
+      return (
+        <>
+          <AuthScreen />
+          <Toaster />
+        </>
+      )
+    }
+    // Offline with cached session — fall through to the main app
+    console.log('[offline] using cached session, app is in offline mode')
   }
 
   return (
@@ -51,6 +64,7 @@ export function AppShell() {
       <GlobalMusicPlayer>
         <FirefoxBanner />
         <UpdateBanner />
+        <OfflineBanner />
         <div className="h-dvh flex flex-col bg-background overflow-hidden">
           <div className="flex-1 flex min-h-0 overflow-hidden">
             {/* ServerRail is the single primary sidebar on desktop.

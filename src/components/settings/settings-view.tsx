@@ -120,6 +120,8 @@ export function SettingsView() {
           <Button
             variant="outline"
             onClick={async () => {
+              // Clear the cached session so offline mode doesn't let them back in
+              try { localStorage.removeItem('adoo-session-cache') } catch {}
               await signOut({ callbackUrl: '/', redirect: false })
               window.location.replace('/')
             }}

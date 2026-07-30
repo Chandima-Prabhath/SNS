@@ -1,29 +1,33 @@
 /**
- * Adoo Service Worker v5
- * - App shell caching (versioned cache name — bump on every deploy)
- * - Network-first navigations (so new HTML is always fetched)
- * - Cache-first for static assets
- * - SKIP_WAITING message handler for update activation
+ * Adoo Service Worker v6
+ * - App shell caching (versioned)
+ * - Network-first navigations with offline fallback
+ * - Cache-first for static assets (_next, rnnoise)
+ * - Cache-first for uploads (images, audio)
+ * - Stale-while-revalidate for API GET requests (enables offline reading)
+ * - SKIP_WAITING message handler
  * - Push notifications
  *
- * The cache version is bumped on every deploy so that the activate event
- * cleans up old caches. This is critical for the update flow — when the
- * new SW activates, it purges the old v4 cache and replaces it with v5.
+ * Offline support:
+ *   When the network is down, the SW serves cached API responses so the user
+ *   can still read messages, see channels, and browse music history. POST
+ *   requests (sending messages, etc.) will fail gracefully.
  */
 
-const CACHE_NAME = 'adoo-v5'
+const CACHE_NAME = 'adoo-v6'
+const API_CACHE = 'adoo-api-v6'
 const APP_SHELL = ['/', '/manifest.json', '/icon.svg']
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).catch(() => {}))
-  // Don't skipWaiting automatically — let the user trigger it via the UpdateBanner
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).catch(() => {})
+  )
 })
 
 self.addEventListener('activate', (event) => {
-  // Clean up ALL old caches (any cache name that doesn't match CACHE_NAME)
   event.waitUntil(
     caches.keys().then((keys) => Promise.all(
-      keys.filter((k) => k !== CACHE_NAME).map((k) => {
+      keys.filter((k) => k !== CACHE_NAME && k !== API_CACHE).map((k) => {
         console.log('[sw] deleting old cache:', k)
         return caches.delete(k)
       })
@@ -31,11 +35,15 @@ self.addEventListener('activate', (event) => {
   )
 })
 
-// Handle SKIP_WAITING message from the UpdateBanner
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     console.log('[sw] received SKIP_WAITING, activating...')
     self.skipWaiting()
+  }
+  if (event.data?.type === 'close-notification') {
+    self.registration.getNotifications({ tag: event.data.tag }).then((notifications) => {
+      notifications.forEach((n) => n.close())
+    })
   }
 })
 
@@ -43,7 +51,9 @@ self.addEventListener('fetch', (event) => {
   const req = event.request
   if (req.method !== 'GET') return
 
-  // Navigations → network-first
+  const url = new URL(req.url)
+
+  // ─── Navigations → network-first with offline fallback ────────────────
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req).then((res) => {
@@ -55,8 +65,8 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // Static assets → cache-first (but NOT uploads or API)
-  if (req.url.includes('/_next/') || req.url.includes('/rnnoise')) {
+  // ─── Static assets → cache-first ──────────────────────────────────────
+  if (url.pathname.includes('/_next/') || url.pathname.includes('/rnnoise') || url.pathname.includes('/sw.js') || url.pathname.includes('/manifest.json')) {
     event.respondWith(
       caches.match(req).then((cached) => {
         if (cached) return cached
@@ -72,14 +82,12 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // Uploaded images → cache-first with 404 protection
-  // Cache successful responses but NEVER cache 404s
-  if (req.url.includes('/uploads/')) {
+  // ─── Uploaded files → cache-first with 404 protection ─────────────────
+  if (url.pathname.includes('/uploads/')) {
     event.respondWith(
       caches.match(req).then((cached) => {
         if (cached) return cached
         return fetch(req).then((res) => {
-          // Only cache successful responses
           if (res.ok) {
             const copy = res.clone()
             caches.open(CACHE_NAME).then((cache) => cache.put(req, copy))
@@ -87,12 +95,67 @@ self.addEventListener('fetch', (event) => {
           return res
         })
       })
+    )
+    return
+  }
+
+  // ─── Music stream → cache-first (cached songs play offline) ───────────
+  if (url.pathname.includes('/api/music/stream/')) {
+    event.respondWith(
+      caches.match(req).then((cached) => {
+        if (cached) return cached
+        return fetch(req).then((res) => {
+          if (res.ok || res.status === 206) {
+            const copy = res.clone()
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy))
+          }
+          return res
+        }).catch(() => {
+          // Offline — return cached version if available
+          return caches.match(req).then((r) => r || new Response('Offline', { status: 503 }))
+        })
+      })
+    )
+    return
+  }
+
+  // ─── API GET requests → stale-while-revalidate ────────────────────────
+  // This enables offline reading: if the network is down, serve cached API
+  // responses (messages, channels, users, etc.). When the network is up,
+  // serve cached immediately AND fetch fresh data in the background.
+  if (url.pathname.startsWith('/api/') && !url.pathname.includes('/api/tts') && !url.pathname.includes('/api/music/stream') && !url.pathname.includes('/api/upload') && !url.pathname.includes('/api/music/debug')) {
+    event.respondWith(
+      caches.open(API_CACHE).then((cache) =>
+        cache.match(req).then((cached) => {
+          // Always fetch fresh data in the background (revalidate)
+          const fetchPromise = fetch(req).then((res) => {
+            // Only cache successful JSON responses
+            if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+              const copy = res.clone()
+              cache.put(req, copy)
+            }
+            return res
+          }).catch(() => {
+            // Network failed — if we have cached data, it's already returned
+            // If no cached data, return a 503
+            if (!cached) {
+              return new Response(JSON.stringify({ error: 'offline' }), {
+                status: 503,
+                headers: { 'Content-Type': 'application/json' }
+              })
+            }
+          })
+
+          // Return cached immediately if available, otherwise wait for network
+          return cached || fetchPromise
+        })
+      )
     )
     return
   }
 })
 
-// Push — background notifications
+// ─── Push notifications ─────────────────────────────────────────────────
 self.addEventListener('push', (event) => {
   let payload = {}
   try {
@@ -123,7 +186,6 @@ self.addEventListener('push', (event) => {
         { action: 'accept', title: 'Accept' },
         { action: 'decline', title: 'Decline' },
       ],
-      // Build a deep-link URL so the app opens to the right place
       data: { callId, type, channelId, from, url: `/?view=voice&callId=${callId}` },
     }
   }
@@ -134,7 +196,6 @@ self.addEventListener('push', (event) => {
       tag: `msg-${channelId}`,
       requireInteraction: false,
       vibrate: [100],
-      // Deep-link to the specific chat
       data: { callId, type, channelId, from, url: `/?view=chats&channel=${channelId}` },
     }
   }
@@ -142,7 +203,7 @@ self.addEventListener('push', (event) => {
   event.waitUntil(self.registration.showNotification(title || 'Adoo', options))
 })
 
-// Notification click — open app with deep-link URL
+// ─── Notification click ─────────────────────────────────────────────────
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   const { action, notification } = event
@@ -151,29 +212,18 @@ self.addEventListener('notificationclick', (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-      // Focus existing tab and navigate
       for (const client of clients) {
         if ('focus' in client) {
           client.postMessage({ type: 'notification_click', action, ...data })
-          // Navigate the existing client to the target URL
           if ('navigate' in client) {
             client.navigate(targetUrl)
           }
           return client.focus()
         }
       }
-      // Open new tab with the deep-link URL
       if (self.clients.openWindow) {
         return self.clients.openWindow(targetUrl)
       }
     })
   )
-})
-
-self.addEventListener('message', (event) => {
-  if (event.data?.type === 'close-notification') {
-    self.registration.getNotifications({ tag: event.data.tag }).then((notifications) => {
-      notifications.forEach((n) => n.close())
-    })
-  }
 })
