@@ -19,6 +19,7 @@ import {
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { useConfirm } from '@/hooks/useConfirm'
 
 interface MessageComposerProps {
   channelId: string
@@ -860,6 +861,7 @@ function TtsDialog({
  */
 function CustomVoicesTab({ onUseVoice }: { onUseVoice: (id: string) => void }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [name, setName] = useState('')
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -1070,8 +1072,9 @@ function CustomVoicesTab({ onUseVoice }: { onUseVoice: (id: string) => void }) {
                   Use
                 </button>
                 <button
-                  onClick={() => {
-                    if (confirm(`Delete "${v.name}"?`)) deleteVoice.mutate(v.id)
+                  onClick={async () => {
+                    const ok = await confirm({ title: `Delete "${v.name}"?`, confirmLabel: 'Delete', variant: 'danger' })
+                    if (ok) deleteVoice.mutate(v.id)
                   }}
                   className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/10 transition-colors"
                 >

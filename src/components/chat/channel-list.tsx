@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAppStore } from '@/stores/useAppStore'
 import { usePresence } from '@/hooks/usePresence'
+import { useConfirm } from '@/hooks/useConfirm'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -348,6 +349,7 @@ export function GroupSettingsDialog({
 
 function ChannelsTab({ groupId, channels }: { groupId: string; channels: any[] }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [name, setName] = useState('')
   const [type, setType] = useState<'text' | 'voice' | 'video'>('text')
 
@@ -405,8 +407,9 @@ function ChannelsTab({ groupId, channels }: { groupId: string; channels: any[] }
             )}
             <span className="flex-1 text-sm truncate">{ch.name}</span>
             <button
-              onClick={() => {
-                if (confirm(`Delete #${ch.name}?`)) deleteChannel.mutate(ch.id)
+              onClick={async () => {
+                const ok = await confirm({ title: `Delete #${ch.name}?`, confirmLabel: 'Delete', variant: 'danger' })
+                if (ok) deleteChannel.mutate(ch.id)
               }}
               className="text-red-400 hover:text-red-300 text-xs"
             >
@@ -459,6 +462,7 @@ function ChannelsTab({ groupId, channels }: { groupId: string; channels: any[] }
 
 function MembersTab({ groupId, myRole }: { groupId: string; myRole: 'owner' | 'admin' }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const { data: members } = useQuery({
     queryKey: ['group-members', groupId],
     queryFn: async () => {
@@ -552,8 +556,9 @@ function MembersTab({ groupId, myRole }: { groupId: string; myRole: 'owner' | 'a
                   </button>
                 )}
                 <button
-                  onClick={() => {
-                    if (confirm(`Remove ${m.user?.displayName} from the group?`)) {
+                  onClick={async () => {
+                    const ok = await confirm({ title: `Remove ${m.user?.displayName}?`, message: 'They will be removed from this group.', confirmLabel: 'Remove', variant: 'danger' })
+                    if (ok) {
                       kickMember.mutate(m.userId)
                     }
                   }}

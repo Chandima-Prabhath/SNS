@@ -31,6 +31,7 @@ import {
 import { signOut } from 'next-auth/react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { useConfirm } from '@/hooks/useConfirm'
 import { motion, AnimatePresence } from 'framer-motion'
 import { generateAvatarCandidates, AVATAR_STYLES } from '@/lib/avatar'
 import { SpotlightCard, GlassSurface, GradientText, ShinyText } from '@/components/reactbits'
@@ -393,6 +394,7 @@ function BotsSection() {
 
 function BotsList({ onEditBot }: { onEditBot: (bot: any) => void }) {
   const { bots, isLoading, create, update, remove } = useBots()
+  const confirm = useConfirm()
   const [createOpen, setCreateOpen] = useState(false)
   const [name, setName] = useState('')
   const [username, setUsername] = useState('')
@@ -479,7 +481,10 @@ function BotsList({ onEditBot }: { onEditBot: (bot: any) => void }) {
                   {bot.enabled ? 'Disable' : 'Enable'}
                 </Button>
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-red-500"
-                  onClick={() => { if (confirm(`Delete bot @${bot.username}?`)) { remove(bot.id).then(() => toast.success('Deleted')) } }}>
+                  onClick={async () => {
+                    const ok = await confirm({ title: `Delete bot @${bot.username}?`, message: 'This will permanently delete the bot and all its conversation sessions.', confirmLabel: 'Delete', variant: 'danger' })
+                    if (ok) { remove(bot.id).then(() => toast.success('Deleted')) }
+                  }}>
                   <Trash2 className="w-4 h-4" />
                 </Button>
               </div>

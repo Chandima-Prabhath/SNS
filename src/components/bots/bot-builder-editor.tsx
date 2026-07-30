@@ -49,6 +49,7 @@ import { validateFlow, getFlowSummary, type ValidationIssue } from '@/lib/bot/fl
 import { debugRunFlow, formatTraceEvent, type DebugResult, type MockInput } from '@/lib/bot/flow-debug'
 import { EXAMPLE_BOT_FLOW } from '@/lib/bot/example-flow'
 import { cn } from '@/lib/utils'
+import { useConfirm } from '@/hooks/useConfirm'
 
 // ─── Icon registry ───────────────────────────────────────────────────────────
 const ICONS: Record<string, typeof Zap> = {
@@ -292,6 +293,7 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
   const [rightTab, setRightTab] = useState<'inspector' | 'issues' | 'debug'>('inspector')
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const confirm = useConfirm()
 
   // ── Initial nodes/edges ──────────────────────────────────────────────
   // FIX: previously the .map() overwrote data.type with ReactFlow's type
@@ -566,8 +568,9 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
     [selectedNodes, selectedNodeId, selectedEdgeId, copySelected, paste, duplicateSelected, selectAll, deleteSelected] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
-  const clearAll = () => {
-    if (!confirm('Clear the entire flow? This cannot be undone.')) return
+  const clearAll = async () => {
+    const ok = await confirm({ title: 'Clear the entire flow?', message: 'This cannot be undone.', confirmLabel: 'Clear', variant: 'danger' })
+    if (!ok) return
     setNodes([])
     setEdges([])
     setSelectedNodeId(null)
@@ -635,7 +638,8 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
         if (!flow.nodes || !flow.edges || !Array.isArray(flow.nodes) || !Array.isArray(flow.edges)) {
           throw new Error('Invalid flow file: missing nodes or edges')
         }
-        if (!confirm('Import this flow? It will replace the current canvas (you still need to Save to persist).')) return
+        const ok = await confirm({ title: 'Import this flow?', message: 'It will replace the current canvas. You still need to Save to persist.', confirmLabel: 'Import' })
+        if (!ok) return
         setNodes(flow.nodes.map((n) => ({
           id: n.id,
           type: 'custom',
@@ -664,8 +668,9 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
   }
 
   // ── Load example flow ───────────────────────────────────────────────
-  const handleLoadExample = () => {
-    if (!confirm('Load the example "Smart Assistant" bot? It will replace the current canvas (you still need to Save to persist).')) return
+  const handleLoadExample = async () => {
+    const ok = await confirm({ title: 'Load the example "Smart Assistant" bot?', message: 'It will replace the current canvas. You still need to Save to persist.', confirmLabel: 'Load Example' })
+    if (!ok) return
     const flow = EXAMPLE_BOT_FLOW
     setNodes(flow.nodes.map((n) => ({
       id: n.id,

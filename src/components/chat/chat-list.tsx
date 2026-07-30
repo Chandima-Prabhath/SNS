@@ -29,6 +29,7 @@ import { GroupSettingsDialog } from './channel-list'
 import { useCall } from '@/hooks/useCall'
 import { unlockAudio } from '@/lib/call-manager'
 import { useContextMenu } from '@/components/ui/context-menu-provider'
+import { useConfirm } from '@/hooks/useConfirm'
 
 interface ChannelInfo {
   id: string
@@ -100,6 +101,7 @@ export function ChatList() {
   const isViewingDms = selectedGroupId === 'dm'
   const setServerRailOpen = useAppStore((s) => s.setServerRailOpen)
   const ctxMenu = useContextMenu()
+  const confirm = useConfirm()
   const qc = useQueryClient()
 
   // Show a context menu for a chat row — supports right-click (desktop) and
@@ -135,10 +137,15 @@ export function ChatList() {
         label: row.isDm ? 'Delete conversation' : 'Leave channel',
         icon: <Trash2 className="w-4 h-4" />,
         variant: 'danger',
-        onClick: () => {
+        onClick: async () => {
           if (row.isDm) {
-            if (confirm('Delete this conversation? ALL messages will be permanently deleted for both users.')) {
-              // For DMs, delete the channel entirely (messages + channel + memberships)
+            const ok = await confirm({
+              title: 'Delete conversation?',
+              message: 'ALL messages will be permanently deleted for both users.',
+              confirmLabel: 'Delete',
+              variant: 'danger',
+            })
+            if (ok) {
               fetch(`/api/channels/${row.channel.id}`, {
                 method: 'DELETE',
               }).then(() => {
@@ -148,7 +155,12 @@ export function ChatList() {
               }).catch(() => toast.error('Failed to delete'))
             }
           } else {
-            if (confirm(`Leave #${row.channel.name}?`)) {
+            const ok = await confirm({
+              title: `Leave #${row.channel.name}?`,
+              confirmLabel: 'Leave',
+              variant: 'danger',
+            })
+            if (ok) {
               fetch(`/api/channels/${row.channel.id}/members`, {
                 method: 'DELETE',
               }).then(() => {
