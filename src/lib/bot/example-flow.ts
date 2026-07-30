@@ -36,6 +36,7 @@ const Y = {
   branch2: 1400,  // second row
   branch3: 1560,  // third row
   branch4: 1720,  // fourth row
+  branch5: 1880,  // fifth row (TTS)
 }
 
 export const EXAMPLE_BOT_FLOW: BotFlow = {
@@ -177,6 +178,17 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
         label: 'Send AI Response',
       },
     },
+    {
+      id: 'tts-1',
+      type: 'tts',
+      position: { x: X.ai, y: Y.branch5 },
+      data: {
+        type: 'tts',
+        ttsText: '{{aiResponse}}',
+        ttsVoice: 'alba',
+        label: 'Speak AI Response',
+      },
+    },
 
     // ══ GAME BRANCH (center-right) — random split ══════════════════════
     {
@@ -311,7 +323,8 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
     // AI branch
     { id: 'e14', source: 'ai-1', target: 'format-ai' },
     { id: 'e15', source: 'format-ai', target: 'message-ai' },
-    { id: 'e16', source: 'message-ai', target: 'choice-1' },
+    { id: 'e16', source: 'message-ai', target: 'tts-1' },
+    { id: 'e16b', source: 'tts-1', target: 'choice-1' },
 
     // Game branch — random splits to 2, both loop back
     { id: 'e17', source: 'random-1', target: 'message-game1', sourceHandle: null },

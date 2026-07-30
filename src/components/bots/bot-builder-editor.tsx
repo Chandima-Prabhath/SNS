@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState, useEffect } from 'react'
+import { useCallback, useMemo, useState, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   ReactFlow,
@@ -10,6 +10,7 @@ import {
   addEdge,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   type Connection,
   type Node,
   type Edge,
@@ -17,6 +18,7 @@ import {
   Handle,
   Position,
   MarkerType,
+  SelectionMode,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { Button } from '@/components/ui/button'
@@ -227,27 +229,29 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
           </div>
         </div>
       ) : isSwitch ? (
-        <div className="px-3 pb-2 pt-1 space-y-1">
+        <div className="px-3 pb-2 pt-1 space-y-1.5">
           {((data.cases as string[]) || []).map((c, i) => (
-            <div key={i} className="flex items-center justify-between">
-              <span className="text-[10px] text-white/50 truncate flex-1 mr-2">{c || `(case ${i})`}</span>
+            <div key={i} className="flex items-center gap-2">
+              <span className="text-[10px] font-mono text-white/40 shrink-0 w-10">case_{i}</span>
+              <span className="text-[10px] text-white/70 truncate flex-1 px-1.5 py-0.5 rounded bg-white/5">{c || `(empty)`}</span>
               <Handle
                 type="source"
                 position={Position.Right}
                 id={`case_${i}`}
                 className="adoo-handle"
-                style={{ background: '#FB7185', width: 14, height: 14, border: '2px solid #1e1f22', borderRadius: '50%' }}
+                style={{ background: '#FB7185', width: 16, height: 16, border: '3px solid #1e1f22', borderRadius: '50%', position: 'relative' }}
               />
             </div>
           ))}
-          <div className="flex items-center justify-between pt-1 border-t border-white/10">
-            <span className="text-[10px] text-white/40 italic">default</span>
+          <div className="flex items-center gap-2 pt-1.5 border-t border-white/10">
+            <span className="text-[10px] font-mono text-white/40 shrink-0 w-10">default</span>
+            <span className="text-[10px] text-white/40 italic flex-1 px-1.5 py-0.5 rounded bg-white/5">fallback</span>
             <Handle
               type="source"
               position={Position.Right}
               id="default"
               className="adoo-handle"
-              style={{ background: '#64748B', width: 14, height: 14, border: '2px solid #1e1f22', borderRadius: '50%' }}
+              style={{ background: '#64748B', width: 16, height: 16, border: '3px solid #1e1f22', borderRadius: '50%', position: 'relative' }}
             />
           </div>
         </div>
@@ -287,6 +291,7 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
   const [rightTab, setRightTab] = useState<'inspector' | 'issues' | 'debug'>('inspector')
+  const [showShortcuts, setShowShortcuts] = useState(false)
 
   // ── Initial nodes/edges ──────────────────────────────────────────────
   // FIX: previously the .map() overwrote data.type with ReactFlow's type
@@ -384,24 +389,181 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
     setSelectedEdgeId(null)
   }
 
-  // Keyboard shortcuts: Delete/Backspace deletes the selected node or edge.
-  // ReactFlow's built-in `deleteKeyCode` only handles nodes, so we wire up
-  // edges manually here.
+  // ── Clipboard for copy/paste ─────────────────────────────────────────
+  const clipboardRef = useRef<{ nodes: Node[]; edges: Edge[] } | null>(null)
+
+  // Get all currently selected nodes (supports multi-select)
+  const selectedNodes = useMemo(() => nodes.filter((n) => n.selected), [nodes])
+  const selectedEdges = useMemo(
+    () => edges.filter((e) => e.selected || (selectedNodeId && (e.source === selectedNodeId || e.target === selectedNodeId))),
+    [edges, selectedNodeId]
+  )
+
+  // Duplicate selected nodes (Ctrl+D)
+  const duplicateSelected = useCallback(() => {
+    if (selectedNodes.length === 0) return
+    const newNodes: Node[] = []
+    const newEdges: Edge[] = []
+    const idMap = new Map<string, string>()
+
+    // Create copies of each selected node, offset by 40px
+    for (const n of selectedNodes) {
+      const newId = `${(n.data as any)?.type || 'node'}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      idMap.set(n.id, newId)
+      newNodes.push({
+        ...n,
+        id: newId,
+        position: { x: n.position.x + 40, y: n.position.y + 40 },
+        selected: true,
+        data: { ...n.data },
+      })
+    }
+
+    // Copy edges between duplicated nodes
+    for (const e of edges) {
+      const newSource = idMap.get(e.source)
+      const newTarget = idMap.get(e.target)
+      if (newSource && newTarget) {
+        newEdges.push({
+          ...e,
+          id: `e-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          source: newSource,
+          target: newTarget,
+          selected: false,
+        })
+      }
+    }
+
+    // Deselect original nodes, add the copies
+    setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), ...newNodes])
+    setEdges((eds) => [...eds, ...newEdges])
+  }, [selectedNodes, edges, setNodes, setEdges])
+
+  // Copy selected nodes to clipboard (Ctrl+C)
+  const copySelected = useCallback(() => {
+    if (selectedNodes.length === 0) return
+    const connectedEdges = edges.filter((e) =>
+      selectedNodes.some((n) => n.id === e.source) &&
+      selectedNodes.some((n) => n.id === e.target)
+    )
+    clipboardRef.current = { nodes: selectedNodes, edges: connectedEdges }
+    toast.success(`Copied ${selectedNodes.length} node${selectedNodes.length > 1 ? 's' : ''}`)
+  }, [selectedNodes, edges])
+
+  // Paste from clipboard (Ctrl+V)
+  const paste = useCallback(() => {
+    if (!clipboardRef.current || clipboardRef.current.nodes.length === 0) return
+    const { nodes: clipNodes, edges: clipEdges } = clipboardRef.current
+    const idMap = new Map<string, string>()
+    const newNodes: Node[] = []
+    const newEdges: Edge[] = []
+
+    for (const n of clipNodes) {
+      const newId = `${(n.data as any)?.type || 'node'}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      idMap.set(n.id, newId)
+      newNodes.push({
+        ...n,
+        id: newId,
+        position: { x: n.position.x + 60, y: n.position.y + 60 },
+        selected: true,
+        data: { ...n.data },
+      })
+    }
+
+    for (const e of clipEdges) {
+      const newSource = idMap.get(e.source)
+      const newTarget = idMap.get(e.target)
+      if (newSource && newTarget) {
+        newEdges.push({
+          ...e,
+          id: `e-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          source: newSource,
+          target: newTarget,
+          selected: false,
+        })
+      }
+    }
+
+    setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), ...newNodes])
+    setEdges((eds) => [...eds, ...newEdges])
+    toast.success(`Pasted ${newNodes.length} node${newNodes.length > 1 ? 's' : ''}`)
+  }, [clipboardRef, setNodes, setEdges])
+
+  // Select all nodes (Ctrl+A)
+  const selectAll = useCallback(() => {
+    setNodes((nds) => nds.map((n) => ({ ...n, selected: true })))
+  }, [setNodes])
+
+  // Delete all selected nodes (handles multi-select Delete)
+  const deleteSelected = useCallback(() => {
+    const toDelete = nodes.filter((n) => n.selected).map((n) => n.id)
+    if (toDelete.length === 0) {
+      if (selectedNodeId) deleteNode(selectedNodeId)
+      else if (selectedEdgeId) deleteEdge(selectedEdgeId)
+      return
+    }
+    setNodes((nds) => nds.filter((n) => !n.selected))
+    setEdges((eds) => eds.filter((e) => !toDelete.includes(e.source) && !toDelete.includes(e.target)))
+    setSelectedNodeId(null)
+  }, [nodes, selectedNodeId, selectedEdgeId, setNodes, setEdges]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keyboard shortcuts: Delete, Ctrl+C/V/D/A
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key !== 'Delete' && e.key !== 'Backspace') return
       // Don't intercept if the user is typing in an input/textarea
       const target = e.target as HTMLElement
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
-      if (selectedNodeId) {
+
+      const mod = e.metaKey || e.ctrlKey
+
+      // Ctrl/Cmd+C — copy
+      if (mod && e.key === 'c' && !e.shiftKey) {
+        // Let the browser handle text selection in inputs, but for canvas
+        // we handle it ourselves
+        if (selectedNodes.length > 0) {
+          e.preventDefault()
+          copySelected()
+        }
+        return
+      }
+
+      // Ctrl/Cmd+V — paste
+      if (mod && e.key === 'v' && !e.shiftKey) {
         e.preventDefault()
-        deleteNode(selectedNodeId)
-      } else if (selectedEdgeId) {
+        paste()
+        return
+      }
+
+      // Ctrl/Cmd+D — duplicate
+      if (mod && e.key === 'd') {
         e.preventDefault()
-        deleteEdge(selectedEdgeId)
+        duplicateSelected()
+        return
+      }
+
+      // Ctrl/Cmd+A — select all
+      if (mod && e.key === 'a') {
+        e.preventDefault()
+        selectAll()
+        return
+      }
+
+      // Delete/Backspace — delete selected
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        deleteSelected()
+        return
+      }
+
+      // Escape — deselect all
+      if (e.key === 'Escape') {
+        setNodes((nds) => nds.map((n) => ({ ...n, selected: false })))
+        setSelectedNodeId(null)
+        setSelectedEdgeId(null)
+        return
       }
     },
-    [selectedNodeId, selectedEdgeId] // eslint-disable-line react-hooks/exhaustive-deps
+    [selectedNodes, selectedNodeId, selectedEdgeId, copySelected, paste, duplicateSelected, selectAll, deleteSelected] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   const clearAll = () => {
@@ -668,6 +830,12 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
              'Valid'}
           </button>
           <div className="flex-1" />
+          {/* Multi-select info */}
+          {selectedNodes.length > 1 && (
+            <span className="text-xs text-primary">
+              {selectedNodes.length} nodes selected
+            </span>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -675,6 +843,16 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
             onClick={() => setRightTab('debug')}
           >
             <Bug className="w-3.5 h-3.5 mr-1" /> Test Run
+          </Button>
+          {/* Shortcuts help button */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs text-white/40 hover:text-white/60"
+            onClick={() => setShowShortcuts(true)}
+            title="Keyboard shortcuts"
+          >
+            <Keyboard className="w-3.5 h-3.5" />
           </Button>
         </div>
 
@@ -723,6 +901,15 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
               style: { stroke: '#5865F2', strokeWidth: 2 },
               markerEnd: { type: MarkerType.ArrowClosed, color: '#5865F2' },
             }}
+            // Multi-select: Shift+drag on canvas creates a selection box.
+            // Ctrl/Cmd+click adds nodes to the selection.
+            selectionOnDrag
+            panOnDrag={[1]}  // pan only with middle mouse button or right-click
+            selectionMode={SelectionMode.Partial}
+            multiSelectionKeyCode={['Meta', 'Control', 'Shift']}
+            deleteKeyCode={null}  // we handle Delete ourselves in onKeyDown
+            zoomOnScroll={true}
+            panOnScroll={false}
           >
             <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#ffffff10" />
             <Controls className="!bg-[#2b2d31] !border-white/10" />
@@ -792,6 +979,56 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
           <DebugPanel flow={currentFlow} bot={bot} />
         )}
       </div>
+
+      {/* Shortcuts help overlay */}
+      {showShortcuts && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center"
+          onClick={() => setShowShortcuts(false)}
+        >
+          <div
+            className="bg-[#2b2d31] rounded-2xl border border-white/10 p-6 max-w-md w-full mx-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-semibold text-white/80 flex items-center gap-2">
+                <Keyboard className="w-4 h-4 text-primary" /> Keyboard Shortcuts
+              </h2>
+              <button
+                onClick={() => setShowShortcuts(false)}
+                className="text-white/40 hover:text-white/60 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-2 text-xs">
+              {[
+                { keys: ['Ctrl/Cmd', 'C'], desc: 'Copy selected nodes' },
+                { keys: ['Ctrl/Cmd', 'V'], desc: 'Paste copied nodes' },
+                { keys: ['Ctrl/Cmd', 'D'], desc: 'Duplicate selected nodes' },
+                { keys: ['Ctrl/Cmd', 'A'], desc: 'Select all nodes' },
+                { keys: ['Del', 'Backspace'], desc: 'Delete selected nodes/edges' },
+                { keys: ['Esc'], desc: 'Deselect everything' },
+                { keys: ['Shift', 'Drag'], desc: 'Box-select multiple nodes' },
+                { keys: ['Ctrl/Cmd', 'Click'], desc: 'Add to selection' },
+                { keys: ['Scroll'], desc: 'Zoom in/out' },
+                { keys: ['Drag canvas'], desc: 'Pan (or use middle mouse)' },
+              ].map((s, i) => (
+                <div key={i} className="flex items-center justify-between py-1.5 border-b border-white/5 last:border-0">
+                  <span className="text-white/60">{s.desc}</span>
+                  <div className="flex gap-1">
+                    {s.keys.map((k, j) => (
+                      <kbd key={j} className="px-1.5 py-0.5 bg-white/10 rounded text-[10px] text-white/70 font-mono">
+                        {k}
+                      </kbd>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
