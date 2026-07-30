@@ -119,30 +119,51 @@ export async function POST(req: Request) {
       )
     }
 
-    // Buffer the full response from the TTS server, save to disk, and
-    // return a URL. This is simpler and more reliable than streaming —
-    // streaming through Next.js Route Handlers + Cloudflare Tunnel can
-    // cause the response to be cut off or buffered, resulting in empty
-    // audio files in production.
-    const audioBuffer = Buffer.from(await ttsRes.arrayBuffer())
+    // Stream the TTS server's response directly to the client AND save to
+    // disk in the background. The TTS server uses StreamingResponse — it
+    // sends the WAV header immediately and streams audio chunks as they're
+    // generated. By piping through, the client can start playing audio
+    // within ~200ms via Web Audio API.
+    //
+    // The background save writes the full audio to disk so the client can
+    // upload it as a message when sending.
+    const [streamForClient, streamForDisk] = ttsRes.body.tee()
 
-    const uploadDir = path.join(process.cwd(), 'public', 'uploads')
-    if (!existsSync(uploadDir)) {
-      await mkdir(uploadDir, { recursive: true })
-    }
+    // Save to disk in the background
+    const savedFilename = `tts-${crypto.randomUUID()}.wav`
+    const savedPath = path.join(process.cwd(), 'public', 'uploads', savedFilename)
+    ;(async () => {
+      try {
+        if (!existsSync(path.dirname(savedPath))) {
+          await mkdir(path.dirname(savedPath), { recursive: true })
+        }
+        const chunks: Uint8Array[] = []
+        const reader = streamForDisk.getReader()
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (value) chunks.push(value)
+        }
+        const buffer = Buffer.concat(chunks)
+        await writeFile(savedPath, buffer)
+        console.log(`[tts] background save complete: ${savedFilename} (${buffer.length} bytes) in ${Date.now() - ttsStartTime}ms total`)
+      } catch (e) {
+        console.error('[tts] background save failed:', e)
+      }
+    })()
 
-    const filename = `tts-${crypto.randomUUID()}.wav`
-    const filePath = path.join(uploadDir, filename)
-    await writeFile(filePath, audioBuffer)
-
-    console.log(`[tts] saved ${filename} (${audioBuffer.length} bytes) in ${Date.now() - ttsStartTime}ms total`)
-
-    return NextResponse.json({
-      url: `/uploads/${filename}`,
-      type: 'audio',
-      text: truncatedText,
-      voice: customVoiceId ? 'custom' : voice,
-      size: audioBuffer.length,
+    // Return the stream to the client immediately — they can start playing
+    // via Web Audio API while generation continues.
+    // Include the saved filename in a header so the client can use it
+    // directly instead of uploading a blob.
+    return new Response(streamForClient, {
+      status: 200,
+      headers: {
+        'Content-Type': 'audio/wav',
+        'Cache-Control': 'no-store',
+        'X-Tts-Filename': savedFilename,
+        'X-Tts-Url': `/uploads/${savedFilename}`,
+      },
     })
   } catch (e: any) {
     console.error('[tts] error:', e)

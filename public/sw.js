@@ -14,8 +14,8 @@
  *   requests (sending messages, etc.) will fail gracefully.
  */
 
-const CACHE_NAME = 'adoo-v7'
-const API_CACHE = 'adoo-api-v7'
+const CACHE_NAME = 'adoo-v8'
+const API_CACHE = 'adoo-api-v8'
 const APP_SHELL = ['/', '/manifest.json', '/icon.svg']
 
 self.addEventListener('install', (event) => {
@@ -82,18 +82,20 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // ─── Uploaded files → cache-first with 404 protection ─────────────────
+  // ─── Uploaded files → network-first (always try network, cache on success) ──
+  // This prevents stale/empty cached responses for newly uploaded files.
   if (url.pathname.includes('/uploads/')) {
     event.respondWith(
-      caches.match(req).then((cached) => {
-        if (cached) return cached
-        return fetch(req).then((res) => {
-          if (res.ok) {
-            const copy = res.clone()
-            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy))
-          }
-          return res
-        })
+      fetch(req).then((res) => {
+        // Only cache successful responses with content
+        if (res.ok && res.headers.get('content-length') !== '0') {
+          const copy = res.clone()
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy))
+        }
+        return res
+      }).catch(() => {
+        // Offline — serve from cache
+        return caches.match(req).then((r) => r || new Response('Offline', { status: 503 }))
       })
     )
     return
