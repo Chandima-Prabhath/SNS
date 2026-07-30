@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
+import { SessionProvider } from 'next-auth/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { ThemeProvider } from 'next-themes'
 import { BotBuilderEditor } from '@/components/bots/bot-builder-editor'
 import type { BotFlow } from '@/lib/bot/flow-types'
 import { Button } from '@/components/ui/button'
@@ -12,8 +15,12 @@ import { toast } from 'sonner'
  * Standalone bot builder page — opens in a full-width tab without the app
  * shell, sidebar, or bottom nav. This gives the canvas maximum space and
  * makes the builder usable on mobile.
+ *
+ * Because it's a standalone route (not rendered through the main page.tsx
+ * which sets up providers), we wrap it in SessionProvider + QueryClientProvider
+ * + ThemeProvider here so the editor's useQuery hooks work.
  */
-export default function BotBuilderPage() {
+function BotBuilderContent() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const [bot, setBot] = useState<any>(null)
@@ -50,7 +57,6 @@ export default function BotBuilderPage() {
       })
       if (!res.ok) throw new Error('failed')
       toast.success('Bot flow saved')
-      // Update local state so subsequent edits don't lose the saved flow
       setInitialFlow(flow)
     } catch {
       toast.error('Failed to save flow')
@@ -69,7 +75,6 @@ export default function BotBuilderPage() {
 
   return (
     <div className="h-dvh flex flex-col bg-background">
-      {/* Top bar — bot name + back to app */}
       <header className="shrink-0 h-14 flex items-center gap-3 px-4 border-b border-border/50 bg-card/50 backdrop-blur-xl">
         <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => router.push('/')} title="Back to app">
           <ArrowLeft className="w-4 h-4" />
@@ -83,10 +88,34 @@ export default function BotBuilderPage() {
         </span>
       </header>
 
-      {/* Editor fills the rest */}
       <div className="flex-1 min-h-0">
-        <BotBuilderEditor initialFlow={initialFlow} onSave={handleSave} />
+        <BotBuilderEditor initialFlow={initialFlow} onSave={handleSave} bot={bot} />
       </div>
     </div>
+  )
+}
+
+export default function BotBuilderPage() {
+  const [qc] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            refetchOnWindowFocus: false,
+            retry: 1,
+            staleTime: 30_000,
+          },
+        },
+      })
+  )
+
+  return (
+    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+      <SessionProvider>
+        <QueryClientProvider client={qc}>
+          <BotBuilderContent />
+        </QueryClientProvider>
+      </SessionProvider>
+    </ThemeProvider>
   )
 }

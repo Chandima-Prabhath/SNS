@@ -30,12 +30,17 @@ export type NodeType =
   | 'input'
   | 'wait_choice'
   | 'condition'
+  | 'switch_case'
   | 'set_var'
+  | 'counter'
+  | 'format_string'
   | 'delay'
   | 'stop'
   | 'api_call'
   | 'random'
   | 'ai_generate'
+  | 'send_media'
+  | 'log'
 
 export type NodeCategory = 'trigger' | 'output' | 'input' | 'logic' | 'advanced'
 
@@ -113,6 +118,38 @@ export interface FlowNodeData {
   aiMaxTokens?: number
   // (also uses variableName to store the generated response)
 
+  // ── switch_case ──
+  /** Variable to switch on. */
+  switchVariable?: string
+  /** Case values — each gets its own outgoing handle (case_0, case_1, ...). */
+  cases?: string[]
+  // (uses 'default' handle for unmatched values)
+
+  // ── counter ──
+  // (uses `variable` to hold the counter name)
+  /** Amount to increment by (negative = decrement). */
+  increment?: number
+  /** Starting value when the variable doesn't exist yet. */
+  startValue?: number
+
+  // ── format_string ──
+  // (uses `text` as the template with {{var}} placeholders)
+  // (uses `variableName` to store the result)
+
+  // ── send_media ──
+  /** URL of the media to send (image/video/audio). */
+  mediaUrl?: string
+  /** Caption text. Supports {{var}} interpolation. */
+  caption?: string
+  /** Media type: image, video, audio. */
+  mediaType?: 'image' | 'video' | 'audio'
+
+  // ── log ──
+  /** Message to log. Supports {{var}} interpolation. */
+  logMessage?: string
+  /** Log level. */
+  logLevel?: 'info' | 'warn' | 'error'
+
   // ── UI metadata (not used by engine) ──
   label?: string
 }
@@ -162,8 +199,31 @@ export interface BotExecutionResult {
   /** Final variable state (caller persists this). */
   variables: Record<string, string>
 
+  /** Execution trace — ordered list of events for debugging. */
+  trace?: TraceEvent[]
+
   error?: string
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Execution trace — emitted by the engine for debugging/test-runs
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type TraceEvent =
+  | { type: 'flow_start'; timestamp: number; triggerNodeId?: string; input: { body: string; sender: string; command?: string } }
+  | { type: 'node_enter'; timestamp: number; nodeId: string; nodeType: NodeType; nodeLabel: string }
+  | { type: 'node_exit'; timestamp: number; nodeId: string; durationMs: number }
+  | { type: 'message_sent'; timestamp: number; nodeId: string; text: string }
+  | { type: 'variable_set'; timestamp: number; nodeId: string; variable: string; value: string }
+  | { type: 'condition_eval'; timestamp: number; nodeId: string; variable: string; value: string; operator: string; compareTo: string; result: boolean }
+  | { type: 'branch_taken'; timestamp: number; nodeId: string; handle: string; targetNodeId: string }
+  | { type: 'ai_call'; timestamp: number; nodeId: string; model: string; prompt: string; responseLength: number; durationMs: number }
+  | { type: 'api_call'; timestamp: number; nodeId: string; url: string; method: string; status: number; durationMs: number }
+  | { type: 'paused'; timestamp: number; nodeId: string; variableName: string }
+  | { type: 'resumed'; timestamp: number; nodeId: string; inputText: string }
+  | { type: 'error'; timestamp: number; nodeId?: string; message: string }
+  | { type: 'flow_end'; timestamp: number; reason: 'stop' | 'no_edge' | 'max_steps' | 'error'; sentCount: number }
+  | { type: 'log'; timestamp: number; nodeId: string; level: 'info' | 'warn' | 'error'; message: string }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Engine
@@ -204,6 +264,10 @@ function interpolate(text: string, ctx: BotExecutionContext): string {
  *   - the flow ends naturally (no outgoing edge),
  *   - the flow pauses at an INPUT/WAIT_CHOICE node,
  *   - MAX_STEPS is exceeded.
+ *
+ * Emits trace events for debugging — each node entry/exit, variable change,
+ * message sent, condition evaluation, branch taken, and error is recorded.
+ * The caller can pass these to the UI for a test-run visualization.
  */
 export async function executeBotFlow(
   flow: BotFlow,
@@ -213,6 +277,8 @@ export async function executeBotFlow(
   let sentCount = 0
   let steps = 0
   let currentNode: FlowNode | undefined
+  const trace: TraceEvent[] = []
+  const now = () => Date.now()
 
   // ── Helpers (declared early so the resume block can use them) ─────────
   const edgesFrom = (nodeId: string, handle?: string | null) =>
@@ -233,35 +299,44 @@ export async function executeBotFlow(
   if (resume) {
     const inputNode = flow.nodes.find((n) => n.id === resume.nodeId)
     if (!inputNode) {
-      return { sentCount: 0, paused: false, variables: ctx.variables, error: 'resume target not found' }
+      trace.push({ type: 'error', timestamp: now(), message: 'resume target not found' })
+      return { sentCount: 0, paused: false, variables: ctx.variables, trace, error: 'resume target not found' }
     }
-    // Assign the awaited reply to the variable BEFORE walking past the input node.
     ctx.variables[resume.inputVariable] = resume.inputText
-    // Skip past the input node — start from the NEXT node, not the input node itself.
-    // Otherwise the engine would re-enter the input case and re-send the prompt.
+    trace.push({ type: 'resumed', timestamp: now(), nodeId: inputNode.id, inputText: resume.inputText })
+    trace.push({ type: 'variable_set', timestamp: now(), nodeId: inputNode.id, variable: resume.inputVariable, value: resume.inputText })
     currentNode = followEdge(inputNode.id, null)
     if (!currentNode) {
-      // No outgoing edge from the input node — flow ends here.
-      return { sentCount, paused: false, variables: ctx.variables }
+      trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+      return { sentCount, paused: false, variables: ctx.variables, trace }
     }
   } else {
     const trigger = flow.nodes.find((n) => n.type === 'trigger')
     if (!trigger) {
-      return { sentCount: 0, paused: false, variables: ctx.variables, error: 'No trigger node found' }
+      trace.push({ type: 'error', timestamp: now(), message: 'No trigger node found' })
+      return { sentCount: 0, paused: false, variables: ctx.variables, trace, error: 'No trigger node found' }
     }
+
+    trace.push({
+      type: 'flow_start',
+      timestamp: now(),
+      triggerNodeId: trigger.id,
+      input: { body: ctx.body, sender: ctx.senderName, command: ctx.command },
+    })
 
     // Trigger matching
     const tt = trigger.data.triggerType || 'any_message'
     if (tt === 'command' && trigger.data.command) {
       if (!ctx.command || ctx.command !== trigger.data.command.replace(/^\//, '')) {
-        return { sentCount: 0, paused: false, variables: ctx.variables }
+        trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+        return { sentCount: 0, paused: false, variables: ctx.variables, trace }
       }
     } else if (tt === 'mention') {
       if (!ctx.isMention) {
-        return { sentCount: 0, paused: false, variables: ctx.variables }
+        trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+        return { sentCount: 0, paused: false, variables: ctx.variables, trace }
       }
     }
-    // any_message: always proceeds
 
     currentNode = trigger
   }
@@ -269,13 +344,22 @@ export async function executeBotFlow(
   // ── Walk the graph ────────────────────────────────────────────────────
   while (currentNode && steps < MAX_STEPS) {
     steps++
+    const nodeStartTime = now()
+    const nodeLabel = currentNode.data?.label || currentNode.type
+
+    trace.push({
+      type: 'node_enter',
+      timestamp: nodeStartTime,
+      nodeId: currentNode.id,
+      nodeType: currentNode.type,
+      nodeLabel,
+    })
 
     switch (currentNode.type) {
       // ── TRIGGER ────────────────────────────────────────────────────────
       case 'trigger':
-        // Just follow the next edge
         currentNode = followEdge(currentNode.id, null)
-        continue
+        break
 
       // ── OUTPUT: message ────────────────────────────────────────────────
       case 'message': {
@@ -283,18 +367,35 @@ export async function executeBotFlow(
         if (text.trim()) {
           await ctx.reply(text)
           sentCount++
+          trace.push({ type: 'message_sent', timestamp: now(), nodeId: currentNode.id, text })
         }
         currentNode = followEdge(currentNode.id, null)
-        continue
+        break
+      }
+
+      // ── OUTPUT: send_media ─────────────────────────────────────────────
+      case 'send_media': {
+        const url = interpolate(currentNode.data.mediaUrl || '', ctx)
+        const caption = interpolate(currentNode.data.caption || '', ctx)
+        if (url.trim()) {
+          // ctx.reply is text-only; we log it but the actual media send
+          // would need an extended reply API. For now, send the URL as text.
+          const text = caption ? `${caption}\n${url}` : url
+          await ctx.reply(text)
+          sentCount++
+          trace.push({ type: 'message_sent', timestamp: now(), nodeId: currentNode.id, text })
+        }
+        currentNode = followEdge(currentNode.id, null)
+        break
       }
 
       // ── OUTPUT: typing ─────────────────────────────────────────────────
       case 'typing': {
         const seconds = currentNode.data.seconds || 1
         if (ctx.setTyping) await ctx.setTyping(seconds)
-        else await new Promise((r) => setTimeout(r, seconds * 1000))
+        else await new Promise((r) => setTimeout(r, Math.min(seconds, 2) * 1000))
         currentNode = followEdge(currentNode.id, null)
-        continue
+        break
       }
 
       // ── INPUT: pause and wait for next message ────────────────────────
@@ -303,14 +404,16 @@ export async function executeBotFlow(
         if (prompt.trim()) {
           await ctx.reply(prompt)
           sentCount++
+          trace.push({ type: 'message_sent', timestamp: now(), nodeId: currentNode.id, text: prompt })
         }
-        // PAUSE — caller persists this; on next message, caller resumes with
-        // the input node's id and variableName.
+        trace.push({ type: 'paused', timestamp: now(), nodeId: currentNode.id, variableName: currentNode.data.variableName || 'reply' })
+        trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
         return {
           sentCount,
           paused: true,
           pausedAtNodeId: currentNode.id,
           variables: ctx.variables,
+          trace,
         }
       }
 
@@ -324,12 +427,16 @@ export async function executeBotFlow(
         if (text.trim()) {
           await ctx.reply(text)
           sentCount++
+          trace.push({ type: 'message_sent', timestamp: now(), nodeId: currentNode.id, text })
         }
+        trace.push({ type: 'paused', timestamp: now(), nodeId: currentNode.id, variableName: currentNode.data.variableName || 'choice' })
+        trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
         return {
           sentCount,
           paused: true,
           pausedAtNodeId: currentNode.id,
           variables: ctx.variables,
+          trace,
         }
       }
 
@@ -350,24 +457,109 @@ export async function executeBotFlow(
           case 'not_exists':   met = !varValue; break
         }
 
+        trace.push({
+          type: 'condition_eval',
+          timestamp: now(),
+          nodeId: currentNode.id,
+          variable: varName,
+          value: varValue,
+          operator: op,
+          compareTo: cmp,
+          result: met,
+        })
+
         const handle = met ? 'true' : 'false'
         const next = followEdge(currentNode.id, handle)
         if (next) {
+          trace.push({ type: 'branch_taken', timestamp: now(), nodeId: currentNode.id, handle, targetNodeId: next.id })
           currentNode = next
-          continue
+        } else {
+          // No matching branch — fall through to default edge if any
+          const fallback = followEdge(currentNode.id, null)
+          if (fallback) {
+            trace.push({ type: 'branch_taken', timestamp: now(), nodeId: currentNode.id, handle: 'default', targetNodeId: fallback.id })
+            currentNode = fallback
+          } else {
+            trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+            currentNode = undefined
+          }
         }
-        // No matching branch — fall through to default edge if any, else end
-        currentNode = followEdge(currentNode.id, null)
-        continue
+        break
+      }
+
+      // ── LOGIC: switch_case (multi-branch) ─────────────────────────────
+      case 'switch_case': {
+        const varName = currentNode.data.switchVariable || ''
+        const varValue = ctx.variables[varName] || ''
+        const cases = currentNode.data.cases || []
+
+        const matchIdx = cases.findIndex((c) => c === varValue)
+        const handle = matchIdx >= 0 ? `case_${matchIdx}` : 'default'
+
+        trace.push({
+          type: 'condition_eval',
+          timestamp: now(),
+          nodeId: currentNode.id,
+          variable: varName,
+          value: varValue,
+          operator: 'switch',
+          compareTo: matchIdx >= 0 ? cases[matchIdx] : '(default)',
+          result: matchIdx >= 0,
+        })
+
+        const next = followEdge(currentNode.id, handle)
+        if (next) {
+          trace.push({ type: 'branch_taken', timestamp: now(), nodeId: currentNode.id, handle, targetNodeId: next.id })
+          currentNode = next
+        } else {
+          const fallback = followEdge(currentNode.id, null)
+          if (fallback) {
+            trace.push({ type: 'branch_taken', timestamp: now(), nodeId: currentNode.id, handle: 'default', targetNodeId: fallback.id })
+            currentNode = fallback
+          } else {
+            trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+            currentNode = undefined
+          }
+        }
+        break
       }
 
       // ── LOGIC: set_var ────────────────────────────────────────────────
       case 'set_var': {
         const name = currentNode.data.variable || ''
         const val = interpolate(currentNode.data.value || '', ctx)
-        if (name) ctx.variables[name] = val
+        if (name) {
+          ctx.variables[name] = val
+          trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: name, value: val })
+        }
         currentNode = followEdge(currentNode.id, null)
-        continue
+        break
+      }
+
+      // ── LOGIC: counter (increment/decrement a numeric variable) ───────
+      case 'counter': {
+        const name = currentNode.data.variable || ''
+        const inc = currentNode.data.increment ?? 1
+        const startVal = currentNode.data.startValue ?? 0
+        const current = parseInt(ctx.variables[name] || '', 10)
+        const newVal = isNaN(current) ? startVal + inc : current + inc
+        ctx.variables[name] = String(newVal)
+        trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: name, value: String(newVal) })
+        currentNode = followEdge(currentNode.id, null)
+        break
+      }
+
+      // ── LOGIC: format_string (template a string with variables) ──────
+      case 'format_string': {
+        const template = currentNode.data.text || ''
+        const result = interpolate(template, ctx)
+        const vname = currentNode.data.variableName
+        if (vname) {
+          ctx.variables[vname] = result
+          trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: vname, value: result })
+        }
+        currentNode = followEdge(currentNode.id, null)
+        break
       }
 
       // ── LOGIC: delay ──────────────────────────────────────────────────
@@ -375,15 +567,26 @@ export async function executeBotFlow(
         const s = Math.max(0, Math.min(60, currentNode.data.seconds || 1))
         await new Promise((r) => setTimeout(r, s * 1000))
         currentNode = followEdge(currentNode.id, null)
-        continue
+        break
+      }
+
+      // ── LOGIC: log (debug logging — shows in trace, no user output) ───
+      case 'log': {
+        const msg = interpolate(currentNode.data.logMessage || '', ctx)
+        const level = currentNode.data.logLevel || 'info'
+        trace.push({ type: 'log', timestamp: now(), nodeId: currentNode.id, level, message: msg })
+        currentNode = followEdge(currentNode.id, null)
+        break
       }
 
       // ── LOGIC: stop ───────────────────────────────────────────────────
       case 'stop':
-        return { sentCount, paused: false, variables: ctx.variables }
+        trace.push({ type: 'flow_end', timestamp: now(), reason: 'stop', sentCount })
+        return { sentCount, paused: false, variables: ctx.variables, trace }
 
       // ── ADVANCED: api_call ────────────────────────────────────────────
       case 'api_call': {
+        const callStart = now()
         try {
           const url = interpolate(currentNode.data.url || '', ctx)
           const method = currentNode.data.method || 'GET'
@@ -392,32 +595,41 @@ export async function executeBotFlow(
           const res = await fetch(url, { method, headers, body })
           const text = await res.text()
           const vname = currentNode.data.variableName
-          if (vname) ctx.variables[vname] = text.slice(0, 4000)
-        } catch {
-          // Silent failure — flow continues
+          if (vname) {
+            ctx.variables[vname] = text.slice(0, 4000)
+            trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: vname, value: text.slice(0, 200) + (text.length > 200 ? '…' : '') })
+          }
+          trace.push({ type: 'api_call', timestamp: now(), nodeId: currentNode.id, url, method, status: res.status, durationMs: now() - callStart })
+        } catch (e: any) {
+          trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: `API call failed: ${e?.message || e}` })
         }
         currentNode = followEdge(currentNode.id, null)
-        continue
+        break
       }
 
       // ── ADVANCED: random ──────────────────────────────────────────────
       case 'random': {
         const allEdges = edgesFrom(currentNode.id, undefined)
         if (allEdges.length === 0) {
+          trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
           currentNode = undefined
-          continue
+          break
         }
         const pick = allEdges[Math.floor(Math.random() * allEdges.length)]
-        currentNode = flow.nodes.find((n) => n.id === pick.target)
-        continue
+        const target = flow.nodes.find((n) => n.id === pick.target)
+        if (target) {
+          trace.push({ type: 'branch_taken', timestamp: now(), nodeId: currentNode.id, handle: pick.sourceHandle || 'random', targetNodeId: target.id })
+          currentNode = target
+        } else {
+          currentNode = undefined
+        }
+        break
       }
 
       // ── ADVANCED: ai_generate ──────────────────────────────────────────
-      // Calls a local Ollama instance (http://localhost:11434) to generate
-      // text from a prompt. The response is stored in `variableName` and
-      // the flow continues to the next node.
       case 'ai_generate': {
         const vname = currentNode.data.variableName || 'aiResponse'
+        const callStart = now()
         try {
           const model = currentNode.data.aiModel || 'gemma3:270m'
           const prompt = interpolate(currentNode.data.aiPrompt || '', ctx)
@@ -427,53 +639,59 @@ export async function executeBotFlow(
           const temperature = currentNode.data.aiTemperature ?? 0.7
           const maxTokens = currentNode.data.aiMaxTokens ?? 256
 
-          // Ollama API: POST /api/generate
-          // Docs: https://github.com/ollama/ollama/blob/main/docs/api.md
           const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434'
           const res = await fetch(`${ollamaUrl}/api/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              model,
-              prompt,
-              system: systemPrompt,
-              stream: false,
-              options: {
-                temperature,
-                num_predict: maxTokens,
-              },
+              model, prompt, system: systemPrompt, stream: false,
+              options: { temperature, num_predict: maxTokens },
             }),
           })
 
           if (!res.ok) {
             const errText = await res.text().catch(() => 'unknown error')
-            console.error(`[bot:ai_generate] Ollama error ${res.status}:`, errText)
+            const errMsg = `Ollama error ${res.status}: ${errText.slice(0, 100)}`
             ctx.variables[vname] = `[AI error: ${res.status}]`
+            trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: errMsg })
+            trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: vname, value: ctx.variables[vname] })
+            trace.push({ type: 'ai_call', timestamp: now(), nodeId: currentNode.id, model, prompt: prompt.slice(0, 100), responseLength: 0, durationMs: now() - callStart })
           } else {
             const data = await res.json()
             const generated: string = data.response || ''
             ctx.variables[vname] = generated.slice(0, 4000)
+            trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: vname, value: generated.slice(0, 200) + (generated.length > 200 ? '…' : '') })
+            trace.push({ type: 'ai_call', timestamp: now(), nodeId: currentNode.id, model, prompt: prompt.slice(0, 100), responseLength: generated.length, durationMs: now() - callStart })
           }
         } catch (e: any) {
-          console.error('[bot:ai_generate] failed:', e?.message || e)
           ctx.variables[vname] = `[AI error: ${e?.message || 'unavailable'}]`
+          trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: `AI generate failed: ${e?.message || e}` })
+          trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: vname, value: ctx.variables[vname] })
         }
         currentNode = followEdge(currentNode.id, null)
-        continue
+        break
       }
 
       default:
-        // Unknown node type — stop to avoid runaway loops
-        return { sentCount, paused: false, variables: ctx.variables, error: `unknown node type: ${currentNode.type}` }
+        trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: `unknown node type: ${currentNode.type}` })
+        return { sentCount, paused: false, variables: ctx.variables, trace, error: `unknown node type: ${currentNode.type}` }
+    }
+
+    // Record node exit
+    if (currentNode) {
+      trace.push({ type: 'node_exit', timestamp: now(), nodeId: currentNode.id, durationMs: 0 })
     }
   }
 
   if (steps >= MAX_STEPS) {
     await ctx.reply('⚠️ Bot flow exceeded maximum steps (possible infinite loop).')
-    return { sentCount, paused: false, variables: ctx.variables, error: 'max steps' }
+    trace.push({ type: 'error', timestamp: now(), message: 'max steps exceeded' })
+    trace.push({ type: 'flow_end', timestamp: now(), reason: 'max_steps', sentCount })
+    return { sentCount, paused: false, variables: ctx.variables, trace, error: 'max steps' }
   }
 
-  return { sentCount, paused: false, variables: ctx.variables }
+  trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+  return { sentCount, paused: false, variables: ctx.variables, trace }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -514,6 +732,12 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
     icon: 'Send', color: '#34D399', bg: '#34D3991A',
     handles: 'single',
   },
+  send_media: {
+    type: 'send_media', label: 'Send Media', category: 'output',
+    description: 'Sends an image, video, or audio file',
+    icon: 'Image', color: '#4ADE80', bg: '#4ADE801A',
+    handles: 'single',
+  },
   typing: {
     type: 'typing', label: 'Typing Pause', category: 'output',
     description: 'Shows a typing indicator for a moment',
@@ -534,9 +758,15 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
   },
   condition: {
     type: 'condition', label: 'Condition', category: 'logic',
-    description: 'Branches based on a variable comparison',
+    description: 'Branches based on a variable comparison (true/false)',
     icon: 'GitBranch', color: '#FBBF24', bg: '#FBBF241A',
     handles: 'true_false',
+  },
+  switch_case: {
+    type: 'switch_case', label: 'Switch', category: 'logic',
+    description: 'Multi-branch based on exact variable value match',
+    icon: 'Split', color: '#FB7185', bg: '#FB71851A',
+    handles: 'multi',
   },
   set_var: {
     type: 'set_var', label: 'Set Variable', category: 'logic',
@@ -544,10 +774,28 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
     icon: 'Variable', color: '#FCD34D', bg: '#FCD34D1A',
     handles: 'single',
   },
+  counter: {
+    type: 'counter', label: 'Counter', category: 'logic',
+    description: 'Increments or decrements a numeric variable',
+    icon: 'Hash', color: '#FACC15', bg: '#FACC151A',
+    handles: 'single',
+  },
+  format_string: {
+    type: 'format_string', label: 'Format String', category: 'logic',
+    description: 'Builds a string from a template with {{variables}}',
+    icon: 'Braces', color: '#E0E7FF', bg: '#E0E7FF1A',
+    handles: 'single',
+  },
   delay: {
     type: 'delay', label: 'Delay', category: 'logic',
     description: 'Waits for N seconds before continuing',
     icon: 'Clock', color: '#F59E0B', bg: '#F59E0B1A',
+    handles: 'single',
+  },
+  log: {
+    type: 'log', label: 'Log', category: 'logic',
+    description: 'Debug log — shows in the trace panel, no user output',
+    icon: 'Terminal', color: '#94A3B8', bg: '#94A3B81A',
     handles: 'single',
   },
   stop: {
@@ -593,6 +841,8 @@ export function defaultNodeData(type: NodeType): FlowNodeData {
       return { triggerType: 'any_message', label: 'Trigger' }
     case 'message':
       return { text: 'Hello {{sender}}!', label: 'Send Message' }
+    case 'send_media':
+      return { mediaUrl: '', caption: '', mediaType: 'image', label: 'Send Media' }
     case 'typing':
       return { seconds: 2, label: 'Typing Pause' }
     case 'input':
@@ -601,10 +851,18 @@ export function defaultNodeData(type: NodeType): FlowNodeData {
       return { prompt: 'Pick one:', options: ['Yes', 'No'], variableName: 'choice', label: 'Wait for Choice' }
     case 'condition':
       return { variable: '', operator: 'exists', value: '', label: 'Condition' }
+    case 'switch_case':
+      return { switchVariable: '', cases: ['yes', 'no'], label: 'Switch' }
     case 'set_var':
       return { variable: '', value: '', label: 'Set Variable' }
+    case 'counter':
+      return { variable: 'count', increment: 1, startValue: 0, label: 'Counter' }
+    case 'format_string':
+      return { text: 'Hello {{name}}!', variableName: 'formatted', label: 'Format String' }
     case 'delay':
       return { seconds: 1, label: 'Delay' }
+    case 'log':
+      return { logMessage: 'Debug: {{body}}', logLevel: 'info', label: 'Log' }
     case 'stop':
       return { label: 'Stop' }
     case 'api_call':

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   ReactFlow,
@@ -34,17 +34,24 @@ import {
   Zap, Send, Loader, Keyboard, MousePointerClick,
   GitBranch, Variable, Clock, Square, Webhook, Shuffle,
   Save, Trash2, Plus, X, AlertTriangle, Info, Sparkles,
+  Image as ImageIcon, Split, Hash, Braces, Terminal,
+  Bug, CheckCircle2, Play, ChevronRight, Activity,
 } from 'lucide-react'
 import {
   type BotFlow, type FlowNode, type NodeType, type NodeCategory,
   NODE_DEFS, CATEGORY_ORDER, CATEGORY_LABELS, defaultNodeData,
 } from '@/lib/bot/flow-types'
+import { validateFlow, getFlowSummary, type ValidationIssue } from '@/lib/bot/flow-validation'
+import { debugRunFlow, formatTraceEvent, type DebugResult, type MockInput } from '@/lib/bot/flow-debug'
+import { cn } from '@/lib/utils'
 
 // ─── Icon registry ───────────────────────────────────────────────────────────
 const ICONS: Record<string, typeof Zap> = {
   Zap, Send, Loader, Keyboard, MousePointerClick,
   GitBranch, Variable, Clock, Square, Webhook, Shuffle,
   Sparkles,
+  Image: ImageIcon,
+  Split, Hash, Braces, Terminal,
 }
 
 // ─── Custom Node Component ───────────────────────────────────────────────────
@@ -62,6 +69,7 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
   const isStop = nodeType === 'stop'
   const isCondition = nodeType === 'condition'
   const isRandom = nodeType === 'random'
+  const isSwitch = nodeType === 'switch_case'
 
   // ── Build preview content per node type ──────────────────────────────
   let preview: { label: string; value: string } | null = null
@@ -107,6 +115,21 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
       break
     case 'ai_generate':
       preview = { label: 'Asks AI', value: data.aiPrompt ? (data.aiPrompt.length > 40 ? data.aiPrompt.slice(0, 40) + '…' : data.aiPrompt) : '(no prompt)' }
+      break
+    case 'send_media':
+      preview = { label: 'Sends', value: data.mediaUrl || '(no url)' }
+      break
+    case 'switch_case':
+      preview = { label: 'Switch on', value: data.switchVariable || '(no var)' }
+      break
+    case 'counter':
+      preview = { label: 'Incr', value: `${data.variable || 'count'} by ${data.increment ?? 1}` }
+      break
+    case 'format_string':
+      preview = { label: 'Formats', value: data.text || '(no template)' }
+      break
+    case 'log':
+      preview = { label: 'Logs', value: data.logMessage ? (data.logMessage.length > 40 ? data.logMessage.slice(0, 40) + '…' : data.logMessage) : '(no message)' }
       break
   }
 
@@ -193,6 +216,29 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
             />
           </div>
         </div>
+      ) : isSwitch ? (
+        <div className="px-3 pb-2 pt-1 space-y-1">
+          {((data.cases as string[]) || []).map((c, i) => (
+            <div key={i} className="flex items-center justify-between">
+              <span className="text-[10px] text-white/50 truncate flex-1 mr-2">{c || `(case ${i})`}</span>
+              <Handle
+                type="source"
+                position={Position.Right}
+                id={`case_${i}`}
+                style={{ background: '#FB7185', width: 8, height: 8, border: 'none' }}
+              />
+            </div>
+          ))}
+          <div className="flex items-center justify-between pt-1 border-t border-white/10">
+            <span className="text-[10px] text-white/40 italic">default</span>
+            <Handle
+              type="source"
+              position={Position.Right}
+              id="default"
+              style={{ background: '#64748B', width: 8, height: 8, border: 'none' }}
+            />
+          </div>
+        </div>
       ) : isRandom ? (
         <div className="px-3 pb-2 pt-1 text-center">
           <span className="text-[10px] text-white/40 mb-1 block">All outgoing edges are random picks</span>
@@ -220,11 +266,13 @@ const nodeTypes = { custom: CustomNode }
 interface BotBuilderEditorProps {
   initialFlow?: BotFlow
   onSave: (flow: BotFlow) => void
+  bot?: any
 }
 
-export function BotBuilderEditor({ initialFlow, onSave }: BotBuilderEditorProps) {
+export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
+  const [rightTab, setRightTab] = useState<'inspector' | 'issues' | 'debug'>('inspector')
 
   // ── Initial nodes/edges ──────────────────────────────────────────────
   // FIX: previously the .map() overwrote data.type with ReactFlow's type
@@ -370,21 +418,35 @@ export function BotBuilderEditor({ initialFlow, onSave }: BotBuilderEditorProps)
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null
 
-  // ── Validation warnings ──────────────────────────────────────────────
-  const warnings = useMemo(() => {
-    const w: string[] = []
-    const triggerCount = nodes.filter((n) => n.data.type === 'trigger').length
-    if (triggerCount === 0) w.push('No trigger node — the bot will never start.')
-    if (triggerCount > 1) w.push('Multiple trigger nodes — only the first one will be used.')
+  // ── Build current flow object (used by validation + debug) ──────────
+  const currentFlow: BotFlow = useMemo(() => ({
+    nodes: nodes.map((n) => ({
+      id: n.id,
+      type: (n.data as any).type as NodeType,
+      position: n.position,
+      data: { ...n.data } as any,
+    })),
+    edges: edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      sourceHandle: e.sourceHandle || null,
+      label: typeof e.label === 'string' ? e.label : undefined,
+    })),
+  }), [nodes, edges])
 
-    // Orphaned nodes (no incoming or outgoing edges, except trigger)
-    const connected = new Set<string>()
-    edges.forEach((e) => { connected.add(e.source); connected.add(e.target) })
-    const orphans = nodes.filter((n) => n.data.type !== 'trigger' && !connected.has(n.id))
-    if (orphans.length > 0) w.push(`${orphans.length} node(s) are not connected to the flow.`)
+  // ── Validation ──────────────────────────────────────────────────────
+  const validationIssues = useMemo(() => validateFlow(currentFlow), [currentFlow])
+  const summary = useMemo(() => getFlowSummary(currentFlow), [currentFlow])
+  const errorCount = validationIssues.filter((i) => i.severity === 'error').length
+  const warningCount = validationIssues.filter((i) => i.severity === 'warning').length
 
-    return w
-  }, [nodes, edges])
+  // Auto-switch to issues tab when there are errors and user hasn't selected a node
+  useEffect(() => {
+    if (errorCount > 0 && !selectedNodeId && rightTab === 'inspector') {
+      setRightTab('issues')
+    }
+  }, [errorCount, selectedNodeId, rightTab])
 
   return (
     <div className="flex h-full bg-[#1e1f22]">
@@ -467,27 +529,39 @@ export function BotBuilderEditor({ initialFlow, onSave }: BotBuilderEditorProps)
               Node selected — press <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-[10px]">Del</kbd> to remove
             </span>
           )}
-          {!selectedNodeId && !selectedEdgeId && warnings.length > 0 && (
-            <div className="flex items-center gap-1.5 text-xs text-amber-400">
-              <AlertTriangle className="w-3.5 h-3.5" />
-              <span>{warnings.length} warning{warnings.length !== 1 ? 's' : ''}</span>
-            </div>
-          )}
+          {/* Validation badge */}
+          <button
+            onClick={() => setRightTab('issues')}
+            className={cn(
+              'flex items-center gap-1.5 text-xs px-2 py-1 rounded-md transition-colors',
+              errorCount > 0 ? 'bg-red-500/20 text-red-400' :
+              warningCount > 0 ? 'bg-amber-500/20 text-amber-400' :
+              'bg-emerald-500/20 text-emerald-400'
+            )}
+          >
+            {errorCount > 0 ? <AlertTriangle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+            {errorCount > 0 ? `${errorCount} error${errorCount !== 1 ? 's' : ''}` :
+             warningCount > 0 ? `${warningCount} warning${warningCount !== 1 ? 's' : ''}` :
+             'Valid'}
+          </button>
           <div className="flex-1" />
-          <span className="text-[10px] text-white/30">
-            Click an edge to select · <kbd className="px-1 py-0.5 bg-white/10 rounded">Del</kbd> to delete
-          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => setRightTab('debug')}
+          >
+            <Bug className="w-3.5 h-3.5 mr-1" /> Test Run
+          </Button>
         </div>
 
-        {/* Warnings strip */}
-        {warnings.length > 0 && (
-          <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 space-y-1">
-            {warnings.map((w, i) => (
-              <div key={i} className="flex items-start gap-2 text-xs text-amber-300">
-                <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
-                <span>{w}</span>
-              </div>
-            ))}
+        {/* Error strip — show only errors (not warnings) inline */}
+        {errorCount > 0 && (
+          <div className="bg-red-500/10 border-b border-red-500/20 px-4 py-2">
+            <div className="flex items-start gap-2 text-xs text-red-300">
+              <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+              <span>{validationIssues.filter((i) => i.severity === 'error')[0]?.message}</span>
+            </div>
           </div>
         )}
 
@@ -541,16 +615,58 @@ export function BotBuilderEditor({ initialFlow, onSave }: BotBuilderEditorProps)
         </div>
       </div>
 
-      {/* ─── RIGHT: inspector ──────────────────────────────────────────── */}
-      <div className="w-72 shrink-0 bg-[#2b2d31] border-l border-white/5 flex flex-col">
-        {selectedNode ? (
-          <NodeInspectorPanel
-            node={selectedNode}
-            onUpdate={(patch) => updateNodeData(selectedNode.id, patch)}
-            onDelete={() => deleteNode(selectedNode.id)}
-          />
-        ) : (
-          <EmptyInspector />
+      {/* ─── RIGHT: tabbed panel (Inspector / Issues / Debug) ──────────── */}
+      <div className="w-80 shrink-0 bg-[#2b2d31] border-l border-white/5 flex flex-col">
+        {/* Tab bar */}
+        <div className="shrink-0 flex border-b border-white/5">
+          <button
+            onClick={() => setRightTab('inspector')}
+            className={cn(
+              'flex-1 py-2.5 text-xs font-medium transition-colors',
+              rightTab === 'inspector' ? 'text-white border-b-2 border-primary bg-white/5' : 'text-white/40 hover:text-white/60'
+            )}
+          >
+            Inspector
+          </button>
+          <button
+            onClick={() => setRightTab('issues')}
+            className={cn(
+              'flex-1 py-2.5 text-xs font-medium transition-colors flex items-center justify-center gap-1.5',
+              rightTab === 'issues' ? 'text-white border-b-2 border-primary bg-white/5' : 'text-white/40 hover:text-white/60'
+            )}
+          >
+            Issues
+            {errorCount > 0 && <span className="bg-red-500/30 text-red-400 px-1.5 rounded-full text-[10px]">{errorCount}</span>}
+            {warningCount > 0 && errorCount === 0 && <span className="bg-amber-500/30 text-amber-400 px-1.5 rounded-full text-[10px]">{warningCount}</span>}
+          </button>
+          <button
+            onClick={() => setRightTab('debug')}
+            className={cn(
+              'flex-1 py-2.5 text-xs font-medium transition-colors flex items-center justify-center gap-1.5',
+              rightTab === 'debug' ? 'text-white border-b-2 border-primary bg-white/5' : 'text-white/40 hover:text-white/60'
+            )}
+          >
+            <Bug className="w-3 h-3" /> Debug
+          </button>
+        </div>
+
+        {/* Tab content */}
+        {rightTab === 'inspector' && (
+          selectedNode ? (
+            <NodeInspectorPanel
+              node={selectedNode}
+              onUpdate={(patch) => updateNodeData(selectedNode.id, patch)}
+              onDelete={() => deleteNode(selectedNode.id)}
+            />
+          ) : (
+            <EmptyInspector summary={summary} />
+          )
+        )}
+        {rightTab === 'issues' && (
+          <IssuesPanel issues={validationIssues} onSelectNode={(id) => { setSelectedNodeId(id); setRightTab('inspector') }} />
+        )}
+        {rightTab === 'debug' && (
+          <DebugPanel flow={currentFlow} bot={bot} />
         )}
       </div>
     </div>
@@ -558,11 +674,45 @@ export function BotBuilderEditor({ initialFlow, onSave }: BotBuilderEditorProps)
 }
 
 // ─── Empty inspector state ───────────────────────────────────────────────────
-function EmptyInspector() {
+function EmptyInspector({ summary }: { summary: ReturnType<typeof getFlowSummary> }) {
   return (
-    <div className="p-4 flex flex-col h-full">
-      <h3 className="text-sm font-semibold text-white/80 mb-3">Inspector</h3>
-      <div className="flex-1 flex flex-col items-center justify-center text-center px-4">
+    <div className="p-4 flex flex-col h-full overflow-y-auto">
+      <h3 className="text-sm font-semibold text-white/80 mb-3">Flow Overview</h3>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 gap-2 mb-4">
+        <div className="bg-white/5 rounded-lg p-3">
+          <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">Nodes</div>
+          <div className="text-xl font-bold text-white/80">{summary.nodeCount}</div>
+        </div>
+        <div className="bg-white/5 rounded-lg p-3">
+          <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">Edges</div>
+          <div className="text-xl font-bold text-white/80">{summary.edgeCount}</div>
+        </div>
+        <div className="bg-white/5 rounded-lg p-3">
+          <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">Max Depth</div>
+          <div className="text-xl font-bold text-white/80">{summary.maxDepth}</div>
+        </div>
+        <div className="bg-white/5 rounded-lg p-3">
+          <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">Pausing</div>
+          <div className="text-xl font-bold text-white/80">{summary.pausingNodes}</div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 mb-3 text-xs">
+        {summary.hasTrigger ? (
+          <span className="text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Has trigger</span>
+        ) : (
+          <span className="text-red-400 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No trigger</span>
+        )}
+        {summary.hasStop ? (
+          <span className="text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Has stop</span>
+        ) : (
+          <span className="text-white/30 flex items-center gap-1"><Info className="w-3 h-3" /> No stop</span>
+        )}
+      </div>
+
+      <div className="flex-1 flex flex-col items-center justify-center text-center px-4 py-6">
         <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mb-3">
           <Info className="w-5 h-5 text-white/30" />
         </div>
@@ -571,6 +721,7 @@ function EmptyInspector() {
           Click a node on the canvas to edit its settings, or click a node type on the left to add one.
         </p>
       </div>
+
       <div className="border-t border-white/5 pt-3 space-y-2">
         <h4 className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-2">Quick Tips</h4>
         <ul className="text-[11px] text-white/40 space-y-1.5 leading-relaxed">
@@ -578,8 +729,247 @@ function EmptyInspector() {
           <li>• <span className="text-red-400">Input</span> nodes pause the bot and wait for the user's next message.</li>
           <li>• Use <code className="text-white/60">{`{{varName}}`}</code> in text to insert variables.</li>
           <li>• <span className="text-amber-400">Condition</span> nodes have two outputs: TRUE and FALSE.</li>
+          <li>• <span className="text-purple-400">AI Generate</span> calls your local Ollama LLM.</li>
+          <li>• Use <Bug className="w-3 h-3 inline" /> Test Run to debug without saving.</li>
         </ul>
       </div>
+    </div>
+  )
+}
+
+// ─── Issues Panel ────────────────────────────────────────────────────────────
+function IssuesPanel({
+  issues,
+  onSelectNode,
+}: {
+  issues: ValidationIssue[]
+  onSelectNode: (nodeId: string) => void
+}) {
+  if (issues.length === 0) {
+    return (
+      <div className="p-4 flex flex-col h-full">
+        <div className="flex-1 flex flex-col items-center justify-center text-center">
+          <div className="w-12 h-12 rounded-full bg-emerald-500/10 flex items-center justify-center mb-3">
+            <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+          </div>
+          <p className="text-sm text-white/60 font-medium">No issues found</p>
+          <p className="text-xs text-white/30 mt-1">Your flow looks good! Run a test to verify behavior.</p>
+        </div>
+      </div>
+    )
+  }
+
+  const severityConfig = {
+    error: { color: '#F87171', bg: '#F871711A', icon: AlertTriangle, label: 'Error' },
+    warning: { color: '#FBBF24', bg: '#FBBF241A', icon: AlertTriangle, label: 'Warning' },
+    info: { color: '#60A5FA', bg: '#60A5FA1A', icon: Info, label: 'Info' },
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto p-3 space-y-2">
+      {issues.map((issue, i) => {
+        const cfg = severityConfig[issue.severity]
+        const Icon = cfg.icon
+        return (
+          <button
+            key={i}
+            onClick={() => issue.nodeId && onSelectNode(issue.nodeId)}
+            disabled={!issue.nodeId}
+            className={cn(
+              'w-full text-left p-3 rounded-lg border transition-colors',
+              issue.nodeId ? 'hover:bg-white/5 cursor-pointer' : 'cursor-default'
+            )}
+            style={{ borderColor: `${cfg.color}30`, background: cfg.bg }}
+          >
+            <div className="flex items-start gap-2">
+              <Icon className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: cfg.color }} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: cfg.color }}>
+                    {cfg.label}
+                  </span>
+                  <span className="text-[10px] text-white/30">·</span>
+                  <span className="text-[10px] text-white/40">{issue.category}</span>
+                </div>
+                <p className="text-xs text-white/80 leading-relaxed">{issue.message}</p>
+                {issue.fix && (
+                  <p className="text-[11px] text-white/40 mt-1 italic">→ {issue.fix}</p>
+                )}
+              </div>
+            </div>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── Debug Panel (Test Run) ──────────────────────────────────────────────────
+function DebugPanel({ flow, bot }: { flow: BotFlow; bot?: any }) {
+  const [mockBody, setMockBody] = useState('Hello bot!')
+  const [mockSender, setMockSender] = useState('TestUser')
+  const [mockCommand, setMockCommand] = useState('')
+  const [mockMention, setMockMention] = useState(false)
+  const [running, setRunning] = useState(false)
+  const [result, setResult] = useState<DebugResult | null>(null)
+
+  const handleRun = async () => {
+    setRunning(true)
+    setResult(null)
+    try {
+      const input: MockInput = {
+        body: mockBody,
+        senderName: mockSender,
+        command: mockCommand || undefined,
+        isMention: mockMention,
+        args: mockCommand ? mockBody.split(/\s+/) : [],
+      }
+      const res = await debugRunFlow(flow, input)
+      setResult(res)
+    } catch (e: any) {
+      console.error('[debug] run failed:', e)
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div>
+        <h3 className="text-sm font-semibold text-white/80 mb-1 flex items-center gap-2">
+          <Bug className="w-4 h-4 text-primary" /> Test Run
+        </h3>
+        <p className="text-[11px] text-white/40">Simulate a message and trace the flow execution. No DB writes.</p>
+      </div>
+
+      {/* Mock input form */}
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label className="text-white/60 text-xs">Sender name</Label>
+          <Input
+            value={mockSender}
+            onChange={(e) => setMockSender(e.target.value)}
+            className="bg-[#1e1f22] border-white/10 text-white text-xs"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-white/60 text-xs">Message body</Label>
+          <Textarea
+            value={mockBody}
+            onChange={(e) => setMockBody(e.target.value)}
+            rows={2}
+            className="bg-[#1e1f22] border-white/10 text-white text-xs resize-none"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1.5">
+            <Label className="text-white/60 text-xs">Command (optional)</Label>
+            <Input
+              value={mockCommand}
+              onChange={(e) => setMockCommand(e.target.value.replace(/^\//, ''))}
+              placeholder="hello"
+              className="bg-[#1e1f22] border-white/10 text-white text-xs font-mono"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-white/60 text-xs">Mentioned</Label>
+            <button
+              onClick={() => setMockMention(!mockMention)}
+              className={cn(
+                'w-full h-9 rounded-md border text-xs transition-colors',
+                mockMention ? 'bg-primary/20 border-primary/30 text-primary' : 'bg-[#1e1f22] border-white/10 text-white/40'
+              )}
+            >
+              {mockMention ? '@mentioned' : 'not mentioned'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <Button onClick={handleRun} disabled={running} size="sm" className="w-full">
+        {running ? (
+          <><Loader className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Running…</>
+        ) : (
+          <><Play className="w-3.5 h-3.5 mr-1.5" /> Run Test</>
+        )}
+      </Button>
+
+      {/* Results */}
+      {result && (
+        <div className="space-y-3">
+          {/* Summary */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-white/5 rounded-lg p-2 text-center">
+              <div className="text-[10px] uppercase text-white/40">Messages</div>
+              <div className="text-lg font-bold text-emerald-400">{result.messages.length}</div>
+            </div>
+            <div className="bg-white/5 rounded-lg p-2 text-center">
+              <div className="text-[10px] uppercase text-white/40">Steps</div>
+              <div className="text-lg font-bold text-white/80">{result.trace?.filter((t) => t.type === 'node_enter').length || 0}</div>
+            </div>
+            <div className="bg-white/5 rounded-lg p-2 text-center">
+              <div className="text-[10px] uppercase text-white/40">Errors</div>
+              <div className="text-lg font-bold text-red-400">{result.trace?.filter((t) => t.type === 'error').length || 0}</div>
+            </div>
+          </div>
+
+          {/* Status */}
+          {result.paused && (
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2 text-xs text-amber-300 flex items-center gap-2">
+              <Activity className="w-3.5 h-3.5" /> Flow paused — waiting for user reply
+            </div>
+          )}
+          {result.error && (
+            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2 text-xs text-red-300">
+              {result.error}
+            </div>
+          )}
+
+          {/* Messages sent */}
+          {result.messages.length > 0 && (
+            <div>
+              <h4 className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-2">Bot Messages</h4>
+              <div className="space-y-1.5">
+                {result.messages.map((msg, i) => (
+                  <div key={i} className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-2 text-xs text-white/80">
+                    {msg}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Variables */}
+          {Object.keys(result.variables).length > 0 && (
+            <div>
+              <h4 className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-2">Final Variables</h4>
+              <div className="bg-[#1e1f22] rounded-lg p-2 space-y-1">
+                {Object.entries(result.variables).map(([k, v]) => (
+                  <div key={k} className="flex items-center gap-2 text-xs">
+                    <code className="text-primary shrink-0">{`{{${k}}}`}</code>
+                    <span className="text-white/30">=</span>
+                    <span className="text-white/70 truncate">{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Trace */}
+          {result.trace && result.trace.length > 0 && (
+            <div>
+              <h4 className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-2">Execution Trace</h4>
+              <div className="bg-[#1e1f22] rounded-lg p-2 max-h-64 overflow-y-auto space-y-0.5">
+                {result.trace.map((event, i) => (
+                  <div key={i} className="text-[10px] text-white/50 font-mono leading-relaxed">
+                    {formatTraceEvent(event, flow)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -949,7 +1339,224 @@ function NodeInspectorBody({
     return <AiGenerateInspector data={data} onUpdate={onUpdate} />
   }
 
+  // ── SEND_MEDIA ───────────────────────────────────────────────────────
+  if (nodeType === 'send_media') {
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Media URL</Label>
+          <Input
+            value={data.mediaUrl || ''}
+            onChange={(e) => onUpdate({ mediaUrl: e.target.value })}
+            placeholder="/api/uploads/photo.jpg or https://…"
+            className={inputCls + ' font-mono text-xs'}
+          />
+          <p className="text-xs text-white/40">Upload via the chat composer first, then paste the URL here.</p>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Media type</Label>
+          <Select value={data.mediaType || 'image'} onValueChange={(v) => onUpdate({ mediaType: v })}>
+            <SelectTrigger className={inputCls}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="image">Image</SelectItem>
+              <SelectItem value="video">Video</SelectItem>
+              <SelectItem value="audio">Audio</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Caption (optional)</Label>
+          <Textarea
+            value={data.caption || ''}
+            onChange={(e) => onUpdate({ caption: e.target.value })}
+            placeholder="Check this out, {{sender}}!"
+            rows={2}
+            className={inputCls + ' resize-none'}
+          />
+          <VariableHelp />
+        </div>
+      </div>
+    )
+  }
+
+  // ── SWITCH_CASE ──────────────────────────────────────────────────────
+  if (nodeType === 'switch_case') {
+    return <SwitchCaseInspector data={data} onUpdate={onUpdate} />
+  }
+
+  // ── COUNTER ──────────────────────────────────────────────────────────
+  if (nodeType === 'counter') {
+    return (
+      <div className="space-y-4">
+        <VariableNameField
+          value={data.variable || ''}
+          onChange={(v) => onUpdate({ variable: v })}
+          label="Counter variable"
+          placeholder="count"
+        />
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-2">
+            <Label className="text-white/60 text-xs">Increment by</Label>
+            <Input
+              type="number"
+              value={data.increment ?? 1}
+              onChange={(e) => onUpdate({ increment: parseInt(e.target.value, 10) || 1 })}
+              className={inputCls}
+            />
+            <p className="text-xs text-white/40">Use negative to decrement</p>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-white/60 text-xs">Start value</Label>
+            <Input
+              type="number"
+              value={data.startValue ?? 0}
+              onChange={(e) => onUpdate({ startValue: parseInt(e.target.value, 10) || 0 })}
+              className={inputCls}
+            />
+            <p className="text-xs text-white/40">Used if var is unset</p>
+          </div>
+        </div>
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-white/60">
+          <p className="font-semibold text-amber-400 mb-1">Counter</p>
+          <p>Increments <code className="text-white/80">{`{{${data.variable || 'count'}}}`}</code> by {data.increment ?? 1} each time this node runs. If the variable doesn't exist yet, it starts at {data.startValue ?? 0}.</p>
+        </div>
+      </div>
+    )
+  }
+
+  // ── FORMAT_STRING ────────────────────────────────────────────────────
+  if (nodeType === 'format_string') {
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Template</Label>
+          <Textarea
+            value={data.text || ''}
+            onChange={(e) => onUpdate({ text: e.target.value })}
+            placeholder="Hello {{name}}, you have {{count}} messages"
+            rows={3}
+            className={inputCls + ' resize-none'}
+          />
+          <VariableHelp />
+        </div>
+        <VariableNameField
+          value={data.variableName || ''}
+          onChange={(v) => onUpdate({ variableName: v })}
+          label="Save result as"
+          placeholder="formatted"
+        />
+        <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-lg p-3 text-xs text-white/60">
+          <p className="font-semibold text-indigo-400 mb-1">Format String</p>
+          <p>Builds a string by interpolating <code className="text-white/80">{`{{variables}}`}</code> into a template. Useful for composing messages before sending them.</p>
+        </div>
+      </div>
+    )
+  }
+
+  // ── LOG ──────────────────────────────────────────────────────────────
+  if (nodeType === 'log') {
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Log message</Label>
+          <Textarea
+            value={data.logMessage || ''}
+            onChange={(e) => onUpdate({ logMessage: e.target.value })}
+            placeholder="Debug: user={{sender}} body={{body}}"
+            rows={3}
+            className={inputCls + ' resize-none font-mono text-xs'}
+          />
+          <VariableHelp />
+        </div>
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Level</Label>
+          <Select value={data.logLevel || 'info'} onValueChange={(v) => onUpdate({ logLevel: v })}>
+            <SelectTrigger className={inputCls}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="info">Info</SelectItem>
+              <SelectItem value="warn">Warning</SelectItem>
+              <SelectItem value="error">Error</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="bg-slate-500/10 border border-slate-500/20 rounded-lg p-3 text-xs text-white/60">
+          <p className="font-semibold text-slate-400 mb-1">Log Node</p>
+          <p>Doesn't send anything to the user — only shows in the <Bug className="w-3 h-3 inline" /> Debug trace. Use it to inspect variable values during a test run.</p>
+        </div>
+      </div>
+    )
+  }
+
   return null
+}
+
+// ─── Switch Case inspector ───────────────────────────────────────────────────
+function SwitchCaseInspector({
+  data,
+  onUpdate,
+}: {
+  data: any
+  onUpdate: (patch: Record<string, any>) => void
+}) {
+  const inputCls = 'bg-[#1e1f22] border-white/10 text-white placeholder:text-white/30'
+  const cases: string[] = data.cases || []
+
+  const addCase = () => {
+    onUpdate({ cases: [...cases, ''] })
+  }
+  const updateCase = (i: number, value: string) => {
+    const next = [...cases]
+    next[i] = value
+    onUpdate({ cases: next })
+  }
+  const removeCase = (i: number) => {
+    onUpdate({ cases: cases.filter((_, idx) => idx !== i) })
+  }
+
+  return (
+    <div className="space-y-4">
+      <VariableNameField
+        value={data.switchVariable || ''}
+        onChange={(v) => onUpdate({ switchVariable: v })}
+        label="Variable to switch on"
+        placeholder="choice"
+      />
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <Label className="text-white/60 text-xs">Cases ({cases.length})</Label>
+          <Button onClick={addCase} variant="ghost" size="sm" className="h-6 text-xs">
+            <Plus className="w-3 h-3 mr-1" /> Add
+          </Button>
+        </div>
+        <div className="space-y-1.5">
+          {cases.map((c, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              <span className="text-[10px] text-white/40 font-mono shrink-0 w-12">case_{i}</span>
+              <Input
+                value={c}
+                onChange={(e) => updateCase(i, e.target.value)}
+                placeholder="value to match"
+                className={inputCls + ' text-xs flex-1'}
+              />
+              <button
+                onClick={() => removeCase(i)}
+                className="text-red-400 hover:text-red-300 p-1 shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-white/40">
+          Each case gets its own output handle. Connect them to different branches. Unmatched values go to the <code className="text-white/60">default</code> handle.
+        </p>
+      </div>
+      <div className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-3 text-xs text-white/60">
+        <p className="font-semibold text-rose-400 mb-1">Switch</p>
+        <p>Reads <code className="text-white/80">{`{{${data.switchVariable || 'var'}}}`}</code> and follows the matching case handle. If none match, follows the default handle.</p>
+      </div>
+    </div>
+  )
 }
 
 // ─── AI Generate inspector (separate component — uses useQuery) ──────────────
