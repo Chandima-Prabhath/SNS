@@ -1,254 +1,381 @@
-# SNS — Friends Social
+# Adoo — Friends Social
 
-A private social web app for you and your friends. Built to be lean, modular, and easy to maintain — no bloat.
+A modern, feature-rich social media web app designed for small friend groups (8–15 people). Built with Next.js 16, Socket.io, WebRTC, Prisma, and a cinematic 3D theme. Deployable on a single port behind Cloudflare Tunnel.
 
-## What's inside
+---
 
-- **Direct messages & group chat** — text, replies, edit, soft-delete, read receipts, typing indicators, media attachments
-- **WhatsApp-style status** — 24h ephemeral stories with viewer list and privacy tiers
-- **Telegram-style bots** — extensible command + mention framework. Drop a file in `src/lib/bot/bots/`, register, done.
-- **Voice calls** — WebRTC mesh with Google's free STUN. Cloudflare TURN groundwork is wired but disabled by default (just add credentials to `.env`).
-- **Admin panel** — manage users, channels, bots, view system status
-- **Presence** — online/idle/dnd/offline with custom status
-- **Dark mode by default** — clean, minimal, mobile-first
+## ✨ Features
 
-## Tech stack
+### 💬 Chat System
+- **DM & Group Channels** — Discord-style server rail with groups, text/voice/video channels
+- **Real-time messaging** via Socket.io with typing indicators, read receipts, and presence
+- **Message replies, editing, deletion** with soft-delete tombstones
+- **Media sharing** — images and videos with client-side compression
+- **Custom context menus** — right-click or long-press for reply/copy/edit/delete
+- **Smart scroll** — auto-scrolls to bottom on new messages, respects manual scroll position
+- **Deleted user handling** — shows "Deleted User" for accounts that no longer exist
 
-| Layer | Choice | Why |
-|-------|--------|-----|
-| Framework | Next.js 16 (App Router) | Server actions, RSC, simple deploys |
-| Language | TypeScript everywhere | Catch bugs at compile time |
-| DB | Prisma + SQLite | Zero-config dev. Swap `DATABASE_URL` for Postgres in prod |
-| Realtime | Socket.io (mounted inside Next.js) | Standard, well-understood, dumb relay pattern |
-| Auth | NextAuth.js (Credentials + JWT) | Simple, no external OAuth needed for a private app |
-| State | Zustand (client) + TanStack Query (server) | Minimal boilerplate, great caching |
-| UI | Tailwind 4 + shadcn/ui | Modern, accessible, easy to theme |
-| Voice | WebRTC P2P mesh | Works for ≤6 participants. SFU-ready signaling for later. |
+### 🎵 Musical — Synced Music Streaming
+- **YouTube Music search & trending** via `youtubei.js`
+- **Audio extraction** via `yt-dlp` + `ffmpeg` with disk caching and HTTP Byte-Range streaming
+- **Listening rooms** — host-authoritative synced playback with real-time Socket.io sync
+  - Drift compensation (>1.5s threshold)
+  - Network delay adjustment using server timestamps
+  - Full queue broadcasting
+  - Join sync — new members get the host's current position instantly
+- **Queue management** — shuffle, repeat, autoplay (YouTube recommendations)
+- **Global persistent player** — draggable floating mini-player that persists across all tabs
+- **Collapsible** — tap to expand full controls, tap to collapse to a floating circle
+- **Related tracks** — autoplay uses YouTube's "Up Next" recommendations
 
-## Architecture: single-port (Cloudflare Tunnel–friendly)
+### 📞 Voice & Video Calls
+- **WebRTC mesh topology** with perfect negotiation pattern
+- **DM calls** — ring the partner directly (rings via Socket.io + push notification)
+- **Voice/video channels** — persistent channel calls (join/leave anytime)
+- **VP8 codec preference** for Firefox Android compatibility
+- **RNNoise neural noise suppression** via AudioWorklet
+- **Screen sharing** (desktop only)
+- **Call sounds** — synthesized via Web Audio API (ringback, incoming, connected, ended)
+- **TURN providers** — Google STUN (always), Metered TURN (private), Cloudflare TURN (optional)
+- **P2P/TURN indicator** — shows connection type during calls
+- **Call history** with incoming/outgoing/missed indicators
+- **Distinct voice vs video call UIs** — voice has avatar with pulsing rings + audio waveform; video has full-screen grid
 
-**Everything runs on port 3090.** The Next.js app and the Socket.io realtime service share one HTTP server, so you only need to tunnel one port.
+### 📸 Status Stories
+- **24-hour ephemeral stories** with image/video support
+- **Client-side image compression** — Canvas API, 1280px max, 82% JPEG quality
+- **Viewer list and privacy tiers** (all/include/exclude)
+- **Animated progress bars** via requestAnimationFrame
+- **Auto-advance** with 5-second timer per story
 
+### 🤖 Bot System
+- **Visual bot builder** — standalone full-screen tab at `/bot-builder/[id]`
+- **12 node types** across 5 categories:
+  - **Triggers**: Trigger (any message / command / mention)
+  - **Output**: Send Message, Typing Pause
+  - **Input**: Wait for Reply, Wait for Choice (pauses flow, stores reply in variable)
+  - **Logic**: Condition (TRUE/FALSE branches), Set Variable, Delay, Stop
+  - **Advanced**: API Call, Random Branch
+- **Pause/resume engine** — input nodes pause flow execution, persist state to `ConversationSession`, and resume on the user's next message
+- **Variable interpolation** — `{{sender}}`, `{{body}}`, `{{args}}`, `{{varName}}`
+- **Session management** — bot sessions cleared on flow save to prevent stale state
+- **Bundled bots** — echo, help, poll, remind (code-based) + visual (flow-based)
+- **Bot dispatch** — deduplicated per-message, supports commands, mentions, and visual bot triggers
+
+### 🗣️ TTS Voice Messages (Pocket TTS)
+- **AI voice generation** via Kyutai Pocket TTS
+- **10+ pre-built voices** (Alba, Charles, Jane, Michael, Vera, Paul, etc.)
+- **Custom voice cloning** — record or upload a voice clip, create a custom voice model
+- **Safetensors optimization** — voices are exported to `.safetensors` format for fast inference (10x+ faster than raw audio)
+- **WAV conversion** — non-WAV audio (webm/mp3) is converted to WAV via ffmpeg before sending to Pocket TTS
+- **Audio message rendering** — gradient icon + audio player in chat
+
+### 🔔 Notifications
+- **Rich toast notifications** — sender avatar, channel/group context, mention badges
+- **Click-to-open** — clicking a notification navigates to the conversation
+- **Web push notifications** via VAPID + service worker (for background notifications)
+- **Call notifications** — shows caller name and call type (voice/video)
+- **Message sound** — subtle notification sound on new messages
+
+### 📱 PWA & Offline
+- **Service Worker v5** — app shell caching, network-first navigations
+- **Update banner** — detects new builds via version polling (not just SW changes)
+  - Polls `/api/version` every 60 seconds (compares Next.js BUILD_ID)
+  - Also checks SW updates and on tab visibility change
+  - Shows "Update available" banner with reload button
+- **Manifest** with display_override, launch_handler, shortcuts
+- **Custom context menus** — browser right-click disabled globally, replaced with app-specific menus
+
+### 🎨 Theme & UI/UX
+- **Cinematic 3D dark theme** — deep navy-black base, electric blurple accents
+- **React Bits components** — SpotlightCard, GlassSurface, GradientText, ShinyText, BorderGlow, StarBorder
+- **Glassmorphism** — layered frosted glass surfaces with inner highlights and diffuse shadows
+- **Animated aurora mesh** background on every screen
+- **Mesh gradient** backgrounds for hero/empty states
+- **Glow effects** — primary, success, danger glows
+- **Spring animations** via Framer Motion
+- **Discord-style server rail** — single sidebar with DMs, server icons, bottom nav, user avatar
+- **Mobile slide-out drawer** for server rail
+- **Responsive** — mobile-first with bottom nav, desktop with server rail
+
+### ⚙️ Admin & Group Management
+- **Discord-like groups** with text, voice, and video channels
+- **Group roles** — owner, admin, member (via `GroupMember` model)
+- **Channel management** — create, delete, rename channels (owner/admin)
+- **Member management** — promote/demote admins, kick members (owner)
+- **Invite system** — invite codes with easy copy from group settings
+- **Admin panel** — manage users, groups, bots
+
+---
+
+## 🏗️ Architecture
+
+### Tech Stack
+| Layer | Technology |
+|-------|-----------|
+| Framework | Next.js 16 (App Router, Turbopack) |
+| Language | TypeScript |
+| Database | Prisma + SQLite (PostgreSQL migration path) |
+| Realtime | Socket.io (same port as Next.js) |
+| WebRTC | Custom CallManager (singleton, perfect negotiation) |
+| State | Zustand (app, call, music stores) |
+| Server State | TanStack Query |
+| UI | Tailwind CSS 4 + shadcn/ui (OKLCH color space) |
+| Animation | Framer Motion |
+| Fonts | Geist Sans + Geist Mono |
+| Audio | Web Audio API (call sounds), RNNoise (noise suppression) |
+| Music | youtubei.js (metadata), yt-dlp + ffmpeg (extraction) |
+| TTS | Pocket TTS (Kyutai) with safetensors voice cloning |
+| PWA | Service Worker v5, VAPID web push |
+
+### Single-Port Architecture
+Next.js and Socket.io share port 3090 via a custom `server.ts`. This enables Cloudflare Tunnel hosting on a single port — no multi-port tunneling needed.
+
+### Project Structure
 ```
-                    Cloudflare Tunnel
-                          │
-                          ▼
-              ┌────────────────────────┐
-              │   Next.js app (port 3090) │
-              │   ├── HTTP routes /api/*    │
-              │   ├── Pages /               │
-              │   └── Socket.io /api/socket │  ← same process, same port
-              └────────────────────────┘
-```
-
-This is implemented via a custom Next.js server in `server.ts`:
-
-```ts
-import next from 'next'
-import { createServer } from 'http'
-import { attachRealtime } from './src/lib/realtime-server'
-
-const app = next({ dev, hostname, port: 3090 })
-const handle = app.getRequestHandler()
-
-await app.prepare()
-const httpServer = createServer((req, res) => handle(req, res, parse(req.url, true)))
-attachRealtime(httpServer)  // ← Socket.io attaches to the same httpServer
-httpServer.listen(3090)
-```
-
-The browser connects to Socket.io via `io({ path: '/api/socket', withCredentials: true })` — same origin, cookies sent automatically, no CORS, no port juggling.
-
-## Project structure
-
-```
-prisma/schema.prisma         # All data models (single source of truth)
-server.ts                    # Custom Next.js server — mounts Socket.io on same port
 src/
-  app/
-    page.tsx                 # Single-page app shell (root route)
-    api/                     # REST API routes
-      auth/                  # NextAuth + register + me
-      channels/[id]/         # messages, members, read receipts
-      groups/                # create, join, start DM
-      bots/                  # CRUD + dispatch
-      stories/               # CRUD + view tracking
-      calls/                 # voice call lifecycle + ICE config
-      admin/                 # admin-only endpoints
-      upload/                # media upload
-      seed/                  # one-click default group setup
-  components/
-    auth/                    # login/register screen
-    layout/                  # sidebar + app shell
-    chat/                    # channel list, message list, composer
-    status/                  # WhatsApp-style stories
-    voice/                   # voice channels + WebRTC UI
-    bots/                    # bot management UI
-    settings/                # profile + privacy
-    admin/                   # admin panel
-  hooks/                     # useSocket, useChannel, usePresence, useVoiceCall, useStories, useBots
-  stores/                    # Zustand stores (app state, call state)
-  lib/
-    db.ts                    # Prisma client
-    auth.ts                  # NextAuth config (JWT, role refresh)
-    socket.ts                # socket.io client singleton (path: /api/socket)
-    webrtc.ts                # VoiceCallManager (mesh, signaling, mute)
-    turn.ts                  # Cloudflare TURN credential signer
-    chat-utils.ts            # DM creation, channel membership helpers
-    realtime-server.ts       # Socket.io server (auth via NextAuth JWT cookie)
-    bot/
-      framework.ts           # dispatcher, registry, BotContext
-      index.ts               # registers all bundled bots
-      bots/                  # echo, help, poll, remind (sample bots)
+├── app/
+│   ├── api/                    # API routes (42 endpoints)
+│   │   ├── auth/               # NextAuth (register, me, [...nextauth])
+│   │   ├── bots/               # Bot CRUD + flow management
+│   │   ├── calls/              # Call lifecycle, ICE servers, history, pending
+│   │   ├── channels/           # Channel CRUD, messages, members, read receipts
+│   │   ├── groups/             # Group CRUD, channels, members
+│   │   ├── music/              # Search, trending, stream, rooms, related, debug
+│   │   ├── stories/            # Story CRUD
+│   │   ├── tts/                # TTS generation + custom voice management
+│   │   ├── users/              # User profile management
+│   │   ├── version/            # Build version (for update detection)
+│   │   └── admin/              # Admin-only endpoints
+│   ├── bot-builder/[id]/       # Standalone bot builder page (full-screen)
+│   ├── layout.tsx              # Root layout with ContextMenuProvider
+│   └── page.tsx                # App entry (AppShell)
+├── components/
+│   ├── auth/                   # Login/signup screen
+│   ├── bots/                   # Bot builder editor (React Flow)
+│   ├── chat/                   # Chat view, message list, composer, server rail
+│   ├── layout/                 # App shell, navigation, update banner
+│   ├── music/                  # Music view, global music player
+│   ├── reactbits/              # React Bits components (pure CSS)
+│   ├── settings/               # Settings view (profile, privacy, bots, admin)
+│   ├── status/                 # Status stories view
+│   ├── ui/                     # shadcn/ui components
+│   └── voice/                  # Call screens, controller, incoming overlay
+├── hooks/                      # React hooks (socket, channel, calls, etc.)
+├── lib/                        # Core libraries
+│   ├── bot/                    # Bot framework + flow engine
+│   ├── avatar.ts               # DiceBear avatar generation
+│   ├── call-manager.ts         # WebRTC singleton
+│   ├── call-sounds.ts          # Web Audio API call sounds
+│   ├── chat-utils.ts           # Channel utilities
+│   ├── db.ts                   # Prisma client
+│   ├── image-compress.ts       # Canvas-based image compression
+│   ├── push.ts                 # VAPID web push
+│   ├── realtime-server.ts      # Socket.io server (chat, presence, calls, music sync)
+│   ├── turn.ts                 # TURN provider configuration
+│   └── youtube.ts              # youtubei.js cached instance + utilities
+├── stores/                     # Zustand stores
+│   ├── useAppStore.ts          # View, active channel, selected group, reply state
+│   ├── useCallStore.ts         # Call state
+│   └── useMusicStore.ts        # Music playback state
+└── scripts/
+    ├── backfill-group-members.ts  # Backfill GroupMember for existing groups
+    └── setup-ytdlp.sh             # Install yt-dlp, Deno, EJS, PO Token provider
 ```
 
-## Local development
+### Database Schema
+| Model | Purpose |
+|-------|---------|
+| User | Users with roles (owner/admin/member), presence, privacy prefs |
+| Group | Groups (isDm flag for DMs) |
+| GroupMember | Group-level roles (owner/admin/member) |
+| Channel | Text/voice/video channels within groups |
+| ChannelMember | Channel-level membership |
+| Message | Messages with polymorphic sender, replies, media, soft-delete |
+| MessageReadReceipt | Read receipts |
+| Bot | Bot definitions with flow JSON |
+| ConversationSession | Bot conversation state (pause/resume) |
+| Story | 24h ephemeral stories |
+| StoryViewer / StoryAudience | Story viewers and privacy |
+| VoiceCall | Call records (DM + channel) |
+| CallParticipant | Call participants |
+| MusicRoom | Synced music rooms |
+| MusicRoomMember | Music room members |
+| CustomVoice | User-created TTS voice models (with safetensors) |
+| UserSetting | Per-user settings |
+| Account / Session / VerificationToken | NextAuth |
 
+### Real-time Events (Socket.io)
+| Event | Direction | Purpose |
+|-------|-----------|---------|
+| `channel:join/leave` | Client→Server | Subscribe to channel messages |
+| `channel:message` | Bidirectional | Real-time message relay |
+| `channel:message-edit/delete` | Bidirectional | Message edits and deletions |
+| `channel:typing` | Bidirectional | Typing indicators |
+| `call:offer/answer/ice-candidate` | Peer→Peer | WebRTC signaling |
+| `call:ring` | Client→Client | DM call ringing |
+| `call:peer-joined/left` | Server→Client | Call participant changes |
+| `music:join/leave` | Client→Server | Join music room socket channel |
+| `music:sync` | Host→Members | Broadcast playback state (track, position, play/pause, queue) |
+| `music:request-sync` | Member→Host | Request current state (on join) |
+| `music:member-joined` | Server→Room | Notify room of new member |
+| `presence:set/request` | Bidirectional | Online/idle/dnd/offline status |
+| `notify` | Server→Client | Push notification to other devices |
+
+---
+
+## 🚀 Setup
+
+### Prerequisites
+- Node.js 18+ (or Bun)
+- Python 3.11+ (for yt-dlp and Pocket TTS)
+- ffmpeg
+
+### Installation
 ```bash
-# 1. Clone and install
+# Clone
 git clone https://github.com/Chandima-Prabhath/SNS.git
 cd SNS
-bun install           # installs dependencies (auto-runs `prisma generate` via postinstall)
 
-# 2. Set up your environment
-cp .env.example .env  # copy the template
-# Edit .env and fill in your values (NEXTAUTH_SECRET, TURN creds, etc.)
+# Install dependencies
+npm install
 
-# 3. Create the database
-bun run db:push       # creates the SQLite database from the Prisma schema
+# Copy env file and fill in values
+cp .env.example .env
 
-# 4. Start the dev server
-bun run dev           # starts Next.js + Socket.io on http://localhost:3090
+# Generate Prisma client and push schema
+npx prisma db push
+
+# Run development
+npm run dev
+
+# Production build
+npm run build
+npm start
 ```
 
-Open `http://localhost:3090`, sign up, then click "Seed default group" to bootstrap the Friends group with `general`, `memes`, and `voice-hangout` channels.
+### Environment Variables
+See `.env.example` for all variables. Key ones:
 
-> **Important**: Never commit your real `.env` file. It's in `.gitignore` by default. The `.env.example` template is tracked — copy it to `.env` and fill in your own values.
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | SQLite or PostgreSQL URL |
+| `NEXTAUTH_SECRET` | Yes | `openssl rand -base64 32` |
+| `NEXTAUTH_URL` | Yes | Your domain (e.g. `https://sns.example.com`) |
+| `PORT` | Yes | Server port (default: 3090) |
+| `VAPID_PUBLIC_KEY` | Optional | Web push notifications |
+| `VAPID_PRIVATE_KEY` | Optional | Web push notifications |
+| `TTS_URL` | Optional | Pocket TTS server URL (default: `http://localhost:8000`) |
+| `YTDLP_COOKIES_PATH` | Optional | Path to cookies.txt for yt-dlp |
+| `METERED_TURN_USERNAME` | Optional | Private TURN credentials |
+| `METERED_TURN_CREDENTIAL` | Optional | Private TURN credentials |
 
-## Production deployment
+### Musical Feature Setup (yt-dlp)
+YouTube has aggressive anti-bot measures. Run the setup script:
+```bash
+chmod +x scripts/setup-ytdlp.sh
+./scripts/setup-ytdlp.sh
+```
+This installs:
+- **yt-dlp** (latest, with `[default]` extras including `yt-dlp-ejs`)
+- **Deno** (JS runtime for YouTube signature extraction)
+- **bgutil-ytdlp-pot-provider** (PO Token generator, auto-started on port 4416)
+- **ffmpeg** (audio conversion)
 
-Since this is a small friend-group app, you can run the production build on the same machine:
+For cookies (recommended): export from a private browser window using "Get cookies.txt LOCALLY" extension, save as `cookies.txt`, and set `YTDLP_COOKIES_PATH=./cookies.txt` in `.env`.
+
+### Pocket TTS Setup
+1. Install Pocket TTS: `pip install pocket-tts[default]`
+2. Start the server: `pocket-tts serve --port 8000`
+3. Set `TTS_URL=http://localhost:8000` in `.env`
+
+Custom voices are exported to `.safetensors` format automatically for fast inference.
+
+### Cloudflare Tunnel
+```bash
+# Install cloudflared
+cloudflared tunnel --url http://localhost:3090
+```
+
+---
+
+## 🧪 Development
 
 ```bash
-# 1. Set production environment variables in .env
-NEXTAUTH_URL=https://sns.1911915.xyz    # your domain
-NEXTAUTH_SECRET=openssl-rand-base64-32  # generate a strong secret
-NODE_ENV=production
-PORT=3090
+# Development with hot reload
+npm run dev
 
-# 2. Build the production bundle
-bun run build    # creates .next/standalone/ with all files + prisma client
+# Type check
+npx tsc --noEmit
 
-# 3. Run the production server
-bun run start    # starts Next.js + Socket.io on port 3090 (production mode)
+# Lint
+npm run lint
 
-# 4. Point your Cloudflare Tunnel at http://localhost:3090
+# Build
+npm run build
+
+# Database
+npx prisma db push      # Push schema changes
+npx prisma studio       # Visual database browser
+npx prisma generate     # Regenerate client
 ```
 
-The production build:
-- Compiles Next.js into a standalone bundle (`.next/standalone/`)
-- Copies `server.ts`, `src/`, `public/`, `prisma/`, and `package.json` into standalone
-- Runs `prisma generate` inside standalone (so the Prisma client works)
-- Uses the same single-port architecture (Next.js + Socket.io on port 3090)
-- Serves the built static assets efficiently
+---
 
-**Notes:**
-- Keep `NEXTAUTH_SECRET` the same between dev and prod (rotating it invalidates sessions)
-- For more than ~20 users, switch `DATABASE_URL` to PostgreSQL
-- The `.env` file is read from the project root in both dev and prod
+## 📦 Production Deployment
 
-> **If you see `Cannot find module '@prisma/client-XXXXXXXX'`**: it means the Prisma client wasn't generated. Run `bun run db:generate` (or `bun run setup` from scratch). The `postinstall` script handles this automatically after `bun install`, but if you cloned with `--no-install` or skipped it, you'll need to run it manually.
+```bash
+# Build
+npm run build
 
-## Cloudflare Tunnel configuration
+# Start (uses custom server.ts with Socket.io on same port)
+npm start
 
-Point your tunnel at `http://localhost:3090` — both HTTP and WebSocket traffic go through the same connection.
-
-```yaml
-# cloudflared config
-ingress:
-  - hostname: sns.1911915.xyz
-    service: http://localhost:3090
-    originRequest:
-      noTLSVerify: true
-      http2Origin: false
-  - service: http_status:404
+# Or use the start/stop scripts
+./start.sh
+./stop.sh
 ```
 
-WebSocket support is built-in — no extra config needed.
+### Update Detection
+The app uses a dual update detection mechanism:
+1. **Service Worker** — detects SW file changes
+2. **Version polling** — polls `/api/version` every 60 seconds, compares `BUILD_ID`
 
-## Enabling Cloudflare TURN (free, optional)
+When an update is detected, users see an "Update available" banner. Clicking "Update" reloads the page.
 
-Voice calls work without TURN (Google STUN alone handles ~70% of cases). When friends are behind strict NATs (mobile carriers, corporate Wi-Fi), TURN relays the audio.
+---
 
-To enable:
+## 🔮 Future Plans
 
-1. Cloudflare Dashboard → **Realtime & Calls** → **Create TURN App**
-2. Copy the **Key ID** and **Key Secret** (keep secret server-side only)
-3. Add to `.env`:
-   ```
-   CLOUDFLARE_TURN_KEY_ID=your_key_id
-   CLOUDFLARE_TURN_KEY_SECRET=your_key_secret
-   CLOUDFLARE_TURN_URL=turn:turn.cloudflare.com:3478?transport=udp
-   ```
-4. Restart the server. The `/api/calls/ice-servers` endpoint will start returning time-limited TURN credentials (HMAC-SHA1 signed server-side per call).
+### Planned Features
+- **Disappearing messages** — TTL-based message expiration (schema field exists, UI not built)
+- **Message search** — full-text search across channels
+- **Voice messages** — record and send voice clips (beyond TTS)
+- **Music playlists** — save and share curated playlists
+- **Group video calls** — multi-party video via SFU
+- **File sharing** — documents, PDFs, archives
+- **Custom themes** — user-selectable color schemes
+- **Keyboard shortcuts** — navigate without mouse
+- **E2E encryption** — optional encrypted DMs
+- **Mobile apps** — React Native or Capacitor wrapper
 
-You can verify TURN status in the Admin Panel → System tab.
+### Tech Debt & Improvements
+- Migrate from SQLite to PostgreSQL for production
+- Implement proper Prisma migrations (currently using `db push`)
+- Add automated testing (Jest, Playwright)
+- Add CI/CD pipeline
+- Optimize bundle size (code splitting, lazy loading)
+- Add rate limiting to API routes
+- Implement proper logging (Winston/Pino)
 
-## Adding a new bot (the easy way)
+---
 
-1. Create `src/lib/bot/bots/<name>.ts`:
-   ```ts
-   import type { BotModule } from '../framework'
+## 📄 License
 
-   export const myBot: BotModule = {
-     name: 'mybot',
-     description: 'Does something cool',
-     commands: [
-       {
-         name: 'hello',
-         description: 'Say hello',
-         handler: async (ctx) => {
-           await ctx.reply(`Hi @${ctx.senderName}!`)
-         },
-       },
-     ],
-   }
-   ```
+Private project. Not for redistribution.
 
-2. Register it in `src/lib/bot/index.ts`:
-   ```ts
-   import { myBot } from './bots/mybot'
-   registerBotModule(myBot)
-   ```
+---
 
-3. Create the bot via the Bots UI (or Admin panel), choose module `mybot`, and add it to a channel via Admin → Bots.
+## 🤝 Contributors
 
-4. Users can now type `/hello` in that channel and the bot responds. Bots also receive `@mentions` if `privacyMode` is on.
-
-The `BotContext` provides everything you need: `args`, `reply`, `getState`/`setState` (for multi-step flows), `bot.config` (per-bot JSON config), and more. See `src/lib/bot/bots/poll.ts` for a stateful example.
-
-## Architecture decisions (why this isn't bloated)
-
-- **Single-port architecture** — Next.js + Socket.io share one HTTP server via a custom `server.ts`. No Caddy multi-port routing, no `XTransformPort` query param. One tunnel, one process, one log file.
-- **Polymorphic sender** — bots and users post to the same `Message` table. One set of message UI, threading, and reactions code. No parallel bot system.
-- **Dumb realtime relay** — Socket.io only ferries events, never owns state. The DB is the source of truth. Easy to reason about, easy to debug.
-- **In-process realtime auth** — Socket.io middleware decodes the NextAuth JWT directly from the cookie (no HTTP roundtrip to `/api/auth/me`). Same-process, sub-millisecond auth.
-- **Bot framework = transport-agnostic** — currently only REST webhook style, but you can add a polling adapter or external webhook adapter without touching bot logic.
-- **Single-page app shell** — view switching via Zustand state, not Next.js routes. Means no full page reloads between Chat/Status/Voice/Bots/Settings/Admin.
-- **Self-contained modules** — every feature is one folder under `components/` + one hook + (optionally) one API route group. To remove a feature, delete the folder and the imports in `app-shell.tsx`.
-
-## Debugging tips
-
-- **App + realtime log:** `/home/z/my-project/dev.log` (single log file for everything)
-- **Prisma queries:** already logged in dev mode
-- **Socket events:** add `console.log` in `src/lib/realtime-server.ts` — Next.js dev mode auto-reloads
-- **Bot dispatch:** `[bot]` prefixed console logs show module registration; `[bot dispatch]` shows errors
-
-## What's intentionally NOT included (yet)
-
-- End-to-end encryption (Signal-style) — bots would break E2EE; deferred
-- Video calls — voice-only for now; same signaling layer would work for video
-- Mobile push notifications — needs a service worker + FCM/APNs setup
-- Search — small group, scroll back works fine
-- File previews beyond images/videos — easy to add per MIME type
-- SFU for >6-person voice — signaling layer is SFU-ready, just swap the WebRTC manager
+Built with care for a small friend group. Designed to be modular, maintainable, and fun.
