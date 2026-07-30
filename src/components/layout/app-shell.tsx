@@ -18,6 +18,7 @@ import { OfflineBanner } from '@/components/layout/offline-banner'
 import { useAppStore } from '@/stores/useAppStore'
 import { useSocket } from '@/hooks/useSocket'
 import { useNotifications } from '@/hooks/useNotifications'
+import { useGlobalTyping } from '@/hooks/useGlobalTyping'
 import { usePermissionManager } from '@/hooks/usePermissionManager'
 import { useOfflineSession, getCachedSession } from '@/hooks/useOfflineSession'
 import { Toaster } from '@/components/ui/sonner'
@@ -32,6 +33,7 @@ export function AppShell() {
 
   useSocket()
   useNotifications()
+  useGlobalTyping()
   usePermissionManager()
 
   if (status === 'loading') {

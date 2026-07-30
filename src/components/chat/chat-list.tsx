@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAppStore } from '@/stores/useAppStore'
+import { useTypingStore } from '@/stores/useTypingStore'
 import { usePresence } from '@/hooks/usePresence'
 import { useUnreadCounts } from '@/hooks/useUnreadCounts'
 import { useSession } from 'next-auth/react'
@@ -23,7 +24,7 @@ import { Label } from '@/components/ui/label'
 import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn, UserX, Settings, Crown, Shield, Video, Phone, Menu, Pin, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { formatDistanceToNow } from 'date-fns'
+import { format, isToday, isYesterday } from 'date-fns'
 import { GroupSettingsDialog } from './channel-list'
 import { useCall } from '@/hooks/useCall'
 import { unlockAudio } from '@/lib/call-manager'
@@ -35,6 +36,16 @@ interface ChannelInfo {
   topic: string | null
   type: string
   order: number
+  lastMessage: {
+    body: string
+    mediaUrl: string | null
+    mediaType: string | null
+    senderName: string
+    senderType: string
+    senderId: string | null
+    createdAt: string
+  } | null
+  lastMessageAt: string
   partner?: {
     id: string
     displayName: string
@@ -186,6 +197,13 @@ export function ChatList() {
   // When a server (non-DM group) is selected in the rail, show ALL channel
   // types (text, voice, video) for that group. When 'dm' is selected, only
   // show DM text channels.
+  //
+  // Rows are sorted by most recent activity (lastMessageAt desc) so the
+  // conversation with the newest message bubbles to the top. Channels with no
+  // messages fall back to their creation timestamp — they sort to the bottom
+  // of an active chat list but stay grouped above truly empty rows in a
+  // brand-new account. Voice/video channels keep their original `order` and
+  // are excluded from the activity sort (they have no messages).
   const allChats: ChatRow[] = useMemo(() => {
     if (!groups) return []
     const rows: ChatRow[] = []
@@ -207,6 +225,18 @@ export function ChatList() {
         })
       }
     }
+    // Sort by most recent activity (descending). Voice/video channels without
+    // a lastMessageAt fall back to channel.createdAt; they'll naturally sort
+    // below active text channels.
+    rows.sort((a, b) => {
+      const aTime = a.channel.lastMessageAt
+        ? new Date(a.channel.lastMessageAt).getTime()
+        : 0
+      const bTime = b.channel.lastMessageAt
+        ? new Date(b.channel.lastMessageAt).getTime()
+        : 0
+      return bTime - aTime
+    })
     return rows
   }, [groups, selectedGroupId])
 
@@ -334,9 +364,6 @@ export function ChatList() {
                   const displayName = row.isGroup
                     ? row.channel.name
                     : row.partner?.displayName || 'Deleted User'
-                  const handleText = row.isGroup
-                    ? row.groupName
-                    : row.partner ? `@${row.partner.username}` : 'account no longer exists'
 
                   // Voice/video channels are rendered as "join" rows, not chat rows
                   const isCallChannel = row.channel.type === 'voice' || row.channel.type === 'video'
@@ -389,8 +416,15 @@ export function ChatList() {
                   }
 
                   return (
-                    <button
+                    <ChatTextRow
                       key={row.channel.id}
+                      row={row}
+                      active={active}
+                      partnerDeleted={partnerDeleted}
+                      presenceStatus={presenceStatus}
+                      unreadCount={unreadCount}
+                      displayName={displayName}
+                      myId={myId}
                       onClick={() => setActiveChannel(row.channel.id)}
                       onContextMenu={(e) => { e.preventDefault(); showChatContextMenu(e, row) }}
                       onTouchStart={(e) => {
@@ -417,73 +451,7 @@ export function ChatList() {
                         el.addEventListener('touchmove', clear, { once: true })
                         el.addEventListener('touchcancel', clear, { once: true })
                       }}
-                      className={cn(
-                        'w-full flex items-center gap-3.5 p-3 rounded-2xl transition-all text-left select-none relative overflow-hidden',
-                        active 
-                          ? 'bg-primary/10 ring-1 ring-primary/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)]' 
-                          : 'hover:bg-white/[0.04]'
-                      )}
-                    >
-                      {/* Avatar */}
-                      {row.isGroup ? (
-                        <div className="relative w-12 h-12 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
-                          <Hash className="w-5 h-5 text-primary" />
-                        </div>
-                      ) : partnerDeleted ? (
-                        <div className="relative shrink-0">
-                          <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center text-muted-foreground">
-                            <UserX className="w-5 h-5" />
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="relative shrink-0">
-                          <Avatar className="w-12 h-12">
-                            <AvatarImage src={row.partner?.avatarUrl || undefined} />
-                            <AvatarFallback>
-                              {row.partner?.displayName?.charAt(0) || row.channel.name.charAt(0).toUpperCase()}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span
-                            className={cn(
-                              'absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-sidebar',
-                              presenceStatus === 'online' && 'bg-status-online',
-                              presenceStatus === 'idle' && 'bg-status-idle',
-                              presenceStatus === 'dnd' && 'bg-status-dnd',
-                              presenceStatus === 'offline' && 'bg-status-offline'
-                            )}
-                          />
-                        </div>
-                      )}
-
-                      {/* Name + preview */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline justify-between gap-2">
-                          <span
-                            className={cn(
-                              'truncate text-[15px]',
-                              unreadCount > 0 ? 'font-semibold text-foreground' : 'font-medium',
-                              partnerDeleted && 'text-muted-foreground italic'
-                            )}
-                          >
-                            {displayName}
-                          </span>
-                          {unreadCount > 0 && !active && (
-                            <span className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
-                              {unreadCount > 99 ? '99+' : unreadCount}
-                            </span>
-                          )}
-                        </div>
-                        <div
-                          className={cn(
-                            'text-xs truncate',
-                            unreadCount > 0 ? 'text-foreground/80 font-medium' : 'text-muted-foreground',
-                            partnerDeleted && 'italic'
-                          )}
-                        >
-                          {handleText}
-                        </div>
-                      </div>
-                    </button>
+                    />
                   )
                 })}
               </div>
@@ -499,6 +467,241 @@ export function ChatList() {
  * Discover section removed — users now start DMs from the NewDmButton in the
  * chat list header (the + icon next to the search bar).
  */
+
+/**
+ * Format a timestamp for the chat list row.
+ *   - Today       → "HH:mm"   (e.g. "14:23")
+ *   - Yesterday   → "Yesterday"
+ *   - This year   → "MMM d"   (e.g. "Mar 5")
+ *   - Older       → "MMM d, yyyy"
+ *
+ * Comparison is by calendar date (via date-fns `isToday`/`isYesterday` and
+ * `getYear`), NOT raw epoch millis — so a message sent at 23:59 and viewed at
+ * 00:01 correctly shows "Yesterday" instead of "00:01 today".
+ */
+function formatListTimestamp(dateStr: string | Date): string {
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return ''
+  if (isToday(d)) return format(d, 'HH:mm')
+  if (isYesterday(d)) return 'Yesterday'
+  const now = new Date()
+  if (d.getFullYear() === now.getFullYear()) return format(d, 'MMM d')
+  return format(d, 'MMM d, yyyy')
+}
+
+/**
+ * Build the message preview text for a chat list row.
+ *
+ * Rules (matching common chat UX):
+ *   - Media messages show a type label ("Photo", "Video", "Voice message",
+ *     "File") — optionally with a caption if the message also has text.
+ *   - Group channels prefix with the sender's name: "Sarah: lol that was
+ *     wild". The current user's own messages show "You: ...".
+ *   - DM channels with a bot partner prefix the bot's name on bot messages.
+ *   - DM channels with another user show just the message body (the partner's
+ *     name is already in the row title).
+ *   - The result is truncated to ~40 chars to fit the row width.
+ */
+function getLastMessagePreview(
+  row: ChatRow,
+  myId: string | undefined
+): string {
+  const msg = row.channel.lastMessage
+  if (!msg) {
+    // Fall back to a sensible placeholder for empty channels
+    if (row.isGroup) return row.groupName
+    if (row.partner) return `@${row.partner.username}`
+    return 'No messages yet'
+  }
+
+  // Determine the media label (if any)
+  let mediaLabel = ''
+  if (msg.mediaType?.startsWith('image')) mediaLabel = 'Photo'
+  else if (msg.mediaType?.startsWith('video')) mediaLabel = 'Video'
+  else if (msg.mediaType?.startsWith('audio')) mediaLabel = 'Voice message'
+  else if (msg.mediaType === 'file') mediaLabel = 'File'
+  else if (msg.mediaUrl && !msg.body) mediaLabel = 'File' // unknown media with no text
+
+  const hasText = msg.body && msg.body.trim().length > 0
+  // Combine media label + text body (e.g. "Photo: check this out")
+  const textPart = hasText ? msg.body : ''
+  const combined = mediaLabel
+    ? hasText
+      ? `${mediaLabel}: ${textPart}`
+      : mediaLabel
+    : textPart
+
+  // Prefix with sender name where it adds context:
+  //   - Group channels: always prefix (sender could be anyone)
+  //   - DM with a bot partner: prefix bot name on bot messages (so the user
+  //     can tell bot replies apart from their own messages)
+  //   - DM with another user: no prefix needed (the row title is the partner)
+  const isMyMessage = myId && msg.senderId === myId && msg.senderType === 'user'
+
+  let prefixed: string
+  if (row.isGroup) {
+    const senderPrefix = isMyMessage ? 'You' : (msg.senderName || 'Someone')
+    prefixed = `${senderPrefix}: ${combined}`
+  } else if (msg.senderType === 'bot') {
+    // DM with a bot — prefix the bot's name on bot replies
+    prefixed = `${msg.senderName}: ${combined}`
+  } else if (isMyMessage) {
+    prefixed = `You: ${combined}`
+  } else {
+    prefixed = combined
+  }
+
+  // Truncate to ~40 chars for the row preview
+  return prefixed.length > 40 ? prefixed.slice(0, 39) + '…' : prefixed
+}
+
+interface ChatTextRowProps {
+  row: ChatRow
+  active: boolean
+  partnerDeleted: boolean
+  presenceStatus: string
+  unreadCount: number
+  displayName: string
+  myId: string | undefined
+  onClick: () => void
+  onContextMenu: (e: React.MouseEvent) => void
+  onTouchStart: (e: React.TouchEvent) => void
+}
+
+/**
+ * A single text-channel row in the chat list.
+ *
+ * Extracted into its own component so each row can subscribe to its own
+ * typing state via `useTypingStore` without re-rendering every row on every
+ * typing pulse. Zustand's selector-based subscription means a row only
+ * re-renders when ITS channel's typing state changes.
+ */
+function ChatTextRow({
+  row,
+  active,
+  partnerDeleted,
+  presenceStatus,
+  unreadCount,
+  displayName,
+  myId,
+  onClick,
+  onContextMenu,
+  onTouchStart,
+}: ChatTextRowProps) {
+  // Subscribe to typing for THIS channel only. The selector returns a
+  // primitive boolean so the row only re-renders when typing starts/stops.
+  const isTyping = useTypingStore((s) => {
+    const m = s.typingByChannel[row.channel.id]
+    return !!m && Object.keys(m).length > 0
+  })
+
+  // When the channel is open, the in-chat typing indicator handles it —
+  // don't replace the preview here. Only show "typing..." for channels the
+  // user is NOT currently viewing.
+  const showTyping = isTyping && !active
+
+  const previewText = getLastMessagePreview(row, myId)
+  const timestamp = row.channel.lastMessage
+    ? formatListTimestamp(row.channel.lastMessage.createdAt)
+    : ''
+
+  return (
+    <button
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+      onTouchStart={onTouchStart}
+      className={cn(
+        'w-full flex items-center gap-3.5 p-3 rounded-2xl transition-all text-left select-none relative overflow-hidden',
+        active
+          ? 'bg-primary/10 ring-1 ring-primary/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)]'
+          : 'hover:bg-white/[0.04]'
+      )}
+    >
+      {/* Avatar */}
+      {row.isGroup ? (
+        <div className="relative w-12 h-12 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
+          <Hash className="w-5 h-5 text-primary" />
+        </div>
+      ) : partnerDeleted ? (
+        <div className="relative shrink-0">
+          <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center text-muted-foreground">
+            <UserX className="w-5 h-5" />
+          </div>
+        </div>
+      ) : (
+        <div className="relative shrink-0">
+          <Avatar className="w-12 h-12">
+            <AvatarImage src={row.partner?.avatarUrl || undefined} />
+            <AvatarFallback>
+              {row.partner?.displayName?.charAt(0) || row.channel.name.charAt(0).toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <span
+            className={cn(
+              'absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-sidebar',
+              presenceStatus === 'online' && 'bg-status-online',
+              presenceStatus === 'idle' && 'bg-status-idle',
+              presenceStatus === 'dnd' && 'bg-status-dnd',
+              presenceStatus === 'offline' && 'bg-status-offline'
+            )}
+          />
+        </div>
+      )}
+
+      {/* Name + preview + timestamp */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline justify-between gap-2">
+          <span
+            className={cn(
+              'truncate text-[15px]',
+              unreadCount > 0 ? 'font-semibold text-foreground' : 'font-medium',
+              partnerDeleted && 'text-muted-foreground italic'
+            )}
+          >
+            {displayName}
+          </span>
+          {timestamp && (
+            <span
+              className={cn(
+                'shrink-0 text-[11px] tabular-nums',
+                unreadCount > 0 ? 'text-primary font-medium' : 'text-muted-foreground'
+              )}
+            >
+              {timestamp}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center justify-between gap-2 mt-0.5">
+          {showTyping ? (
+            <span className="text-xs truncate italic text-primary flex items-center gap-1 min-w-0">
+              <span className="flex gap-0.5 shrink-0">
+                <span className="w-1 h-1 rounded-full bg-current animate-bounce [animation-delay:0ms]" />
+                <span className="w-1 h-1 rounded-full bg-current animate-bounce [animation-delay:120ms]" />
+                <span className="w-1 h-1 rounded-full bg-current animate-bounce [animation-delay:240ms]" />
+              </span>
+              <span className="truncate">typing...</span>
+            </span>
+          ) : (
+            <span
+              className={cn(
+                'text-xs truncate flex-1 min-w-0',
+                unreadCount > 0 ? 'text-foreground/80 font-medium' : 'text-muted-foreground',
+                partnerDeleted && 'italic'
+              )}
+            >
+              {previewText}
+            </span>
+          )}
+          {unreadCount > 0 && !active && (
+            <span className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
+        </div>
+      </div>
+    </button>
+  )
+}
 
 function EmptyChatList() {
   return (

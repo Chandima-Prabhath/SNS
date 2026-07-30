@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useMemo } from 'react'
 import { useChannel, type ChannelMessage } from '@/hooks/useChannel'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot, UserX, Copy, Pin, AudioLines } from 'lucide-react'
+import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot, UserX, Copy, Pin, AudioLines, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { format, isToday, isYesterday } from 'date-fns'
 import { useAppStore } from '@/stores/useAppStore'
@@ -25,21 +25,58 @@ export function MessageList({ channelId }: MessageListProps) {
   const lastMessageIdRef = useRef<string | null>(null)
   const isAtBottomRef = useRef(true)
 
+  // Scroll-to-bottom button state.
+  //   - showScrollButton: visible when the user has scrolled >200px from the
+  //     bottom (matches the threshold in the task spec).
+  //   - unreadBelow: count of new messages that have arrived BELOW the user's
+  //     current scroll position. Resets to 0 when the user scrolls back to the
+  //     bottom (or clicks the button).
+  const [showScrollButton, setShowScrollButton] = useState(false)
+  const [unreadBelow, setUnreadBelow] = useState(0)
+
   // Reset scroll state when switching channels — otherwise the auto-scroll
   // logic thinks we already saw the last message and skips the initial scroll.
+  // Refs are reset here (no rerender needed); the button state is reset in
+  // the channel-switch derived-state check below to keep it in sync with
+  // React's render cycle.
   useEffect(() => {
     lastMessageIdRef.current = null
     isAtBottomRef.current = true
   }, [channelId])
 
+  // Reset the scroll-button React state when the channel changes. We use the
+  // "derived state" pattern (calling setState during render in a conditional)
+  // instead of useEffect+setState — React specifically endorses this for
+  // "reset state when a prop changes" because it avoids the extra render
+  // cycle that useEffect+setState triggers.
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const [prevChannelId, setPrevChannelId] = useState(channelId)
+  if (prevChannelId !== channelId) {
+    setPrevChannelId(channelId)
+    setShowScrollButton(false)
+    setUnreadBelow(0)
+  }
+
   // Track whether the user is at the bottom of the scroll container.
-  // We use a ref so the scroll handler doesn't trigger re-renders.
+  // We use a ref so the scroll handler doesn't trigger re-renders, but we
+  // also mirror `showScrollButton` into React state so the button can
+  // appear/disappear. The 80px threshold for "at bottom" matches the
+  // existing auto-scroll logic; the 200px threshold for showing the button
+  // is per the task spec.
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
     const onScroll = () => {
       const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-      isAtBottomRef.current = distanceFromBottom < 80
+      const atBottom = distanceFromBottom < 80
+      isAtBottomRef.current = atBottom
+      // Show the floating button only when scrolled meaningfully up
+      setShowScrollButton(distanceFromBottom > 200)
+      // Reset the "new messages below" counter when the user reaches the
+      // bottom — they've now seen everything.
+      if (atBottom) {
+        setUnreadBelow(0)
+      }
     }
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
@@ -56,6 +93,10 @@ export function MessageList({ channelId }: MessageListProps) {
   //   measure. Scroll smoothly so the user sees the message slide in.
   // • Own message: ALWAYS scroll, even if the user scrolled up (so sending
   //   a message snaps back to the bottom).
+  // • New message while scrolled up: DON'T scroll, but increment the
+  //   "unread below" counter so the scroll-to-bottom button shows a badge.
+  //   Multiple messages can land in a single render (e.g., a burst of bot
+  //   replies) — count all of them by comparing indices.
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
@@ -68,10 +109,26 @@ export function MessageList({ channelId }: MessageListProps) {
     const isInitialLoad = !lastMessageIdRef.current
     const shouldScroll = isInitialLoad || isMine || isAtBottomRef.current
 
+    // Count how many new messages arrived since the last one we processed.
+    // If the previous last-seen id is still in the array, the delta is the
+    // number of messages after it. Fall back to 1 if we can't find it (e.g.,
+    // the array was refetched and the old id is gone).
+    let newCount = 1
+    if (lastMessageIdRef.current) {
+      const lastSeenIdx = messages.findIndex((m) => m.id === lastMessageIdRef.current)
+      if (lastSeenIdx >= 0) {
+        newCount = Math.max(1, messages.length - 1 - lastSeenIdx)
+      }
+    }
+
     lastMessageIdRef.current = lastMsg.id
     markRead(lastMsg.id)
 
-    if (!shouldScroll) return
+    if (!shouldScroll) {
+      // User is scrolled up — count this burst as new messages below the fold.
+      setUnreadBelow((n) => n + newCount)
+      return
+    }
 
     if (isInitialLoad) {
       // Give the browser time to lay out all the historical messages (and
@@ -93,6 +150,8 @@ export function MessageList({ channelId }: MessageListProps) {
         e.scrollTo({ top: e.scrollHeight, behavior: 'smooth' })
       }
     })
+    // We scrolled to the bottom — clear the unread-below counter.
+    setUnreadBelow(0)
     return () => cancelAnimationFrame(raf)
   }, [messages, myId, markRead])
 
@@ -197,6 +256,41 @@ export function MessageList({ channelId }: MessageListProps) {
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Scroll-to-bottom button — appears when the user has scrolled >200px
+          up from the bottom. Shows an unread count badge for messages that
+          arrived below the current scroll position. Smooth-scrolls to the
+          bottom on click and hides itself when already at the bottom. */}
+      <AnimatePresence>
+        {showScrollButton && (
+          <motion.button
+            initial={{ opacity: 0, scale: 0.8, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.8, y: 8 }}
+            transition={{ duration: 0.15 }}
+            onClick={() => {
+              const e = scrollRef.current
+              if (e) {
+                e.scrollTo({ top: e.scrollHeight, behavior: 'smooth' })
+                // Optimistically clear — the scroll handler will confirm
+                // once the smooth scroll settles at the bottom.
+                setUnreadBelow(0)
+                setShowScrollButton(false)
+              }
+            }}
+            aria-label="Scroll to latest messages"
+            title="Scroll to latest"
+            className="absolute bottom-4 right-4 z-20 w-11 h-11 rounded-full bg-card border border-border/60 shadow-lg flex items-center justify-center hover:bg-accent active:scale-95 transition-all"
+          >
+            <ChevronDown className="w-5 h-5" />
+            {unreadBelow > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center ring-2 ring-card">
+                {unreadBelow > 99 ? '99+' : unreadBelow}
+              </span>
+            )}
+          </motion.button>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

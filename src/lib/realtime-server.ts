@@ -20,6 +20,7 @@ import type { Server as HTTPServer } from 'http'
 import { Server as IOServer } from 'socket.io'
 import jwt from 'next-auth/jwt'
 import type { NextApiRequest } from 'next'
+import { db } from '@/lib/db'
 
 const SOCKET_PATH = '/api/socket'
 
@@ -197,13 +198,51 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       })
     })
 
-    socket.on('channel:typing', (payload: { channelId: string; isTyping: boolean }) => {
-      socket.to(`channel:${payload.channelId}`).emit('channel:typing', {
+    socket.on('channel:typing', async (payload: { channelId: string; isTyping: boolean }) => {
+      const typingPayload = {
         userId,
         username,
         channelId: payload.channelId,
         isTyping: payload.isTyping,
-      })
+      }
+
+      // Active viewers (sockets that have joined this channel's room) get the
+      // event via the room broadcast — this is the existing fast path.
+      socket.to(`channel:${payload.channelId}`).emit('channel:typing', typingPayload)
+
+      // Fan out to ALL channel members via the presence map so the chat list
+      // can show "typing..." for channels the user hasn't actively joined.
+      //
+      // Without this, a member viewing a different channel would never see the
+      // typing indicator in their chat list because they're not in the channel
+      // room. We fetch the member list from the DB on each typing pulse —
+      // typing is debounced client-side to ~1.5s, so this is at most ~0.7 QPS
+      // per typist, which SQLite handles easily.
+      //
+      // We use `volatile` so a slow client connection doesn't queue up stale
+      // typing pulses — only the most recent state matters.
+      try {
+        const members = await db.channelMember.findMany({
+          where: { channelId: payload.channelId },
+          select: { userId: true },
+        })
+        for (const m of members) {
+          if (m.userId === userId) continue // skip the typist themselves
+          const target = presence.get(m.userId)
+          if (!target) continue
+          for (const sid of target.socketIds) {
+            // Skip the sender's own socket (multi-tab: don't echo back)
+            if (sid === socket.id) continue
+            // Skip sockets already in the channel room — they got it via the
+            // room broadcast above and we don't want to double-deliver.
+            const s = io.sockets.sockets.get(sid)
+            if (s?.rooms.has(`channel:${payload.channelId}`)) continue
+            io.to(sid).volatile.emit('channel:typing', typingPayload)
+          }
+        }
+      } catch (e) {
+        // Silent — typing is best-effort, don't crash the socket handler.
+      }
     })
 
     socket.on('channel:read', (payload: { channelId: string; messageId: string }) => {
