@@ -514,27 +514,33 @@ function extractVariableDefs(node: FlowNode): string[] {
  * Detect infinite loops — cycles that don't pass through a pausing node
  * (input/wait_choice). The engine's MAX_STEPS guard will catch these at
  * runtime, but it's better to warn at design time.
+ *
+ * Uses DFS with three sets: `visiting` (current path), `completed` (fully
+ * explored nodes — safe to skip on re-entry), and detects cycles by checking
+ * if a node is in the current `visiting` path. The `completed` set prevents
+ * exponential blowup on graphs with many paths to the same node.
  */
 function detectInfiniteLoop(flow: BotFlow): ValidationIssue | null {
   const trigger = flow.nodes.find((n) => n.type === 'trigger')
   if (!trigger) return null
 
-  // DFS with path tracking — if we revisit a node in the current path
-  // without passing through a pausing node, it's an infinite loop.
   const visiting = new Set<string>()
+  const completed = new Set<string>()
   const path: string[] = []
 
   function dfs(nodeId: string): boolean {
+    // Already fully explored this node — no infinite loop found through it
+    if (completed.has(nodeId)) return false
+
+    // Found a cycle — check if any node in the cycle is a pausing node
     if (visiting.has(nodeId)) {
-      // Found a cycle — check if any node in the cycle is a pausing node
       const cycleStart = path.indexOf(nodeId)
       const cycleNodes = path.slice(cycleStart)
       const hasPauser = cycleNodes.some((id) => {
         const n = flow.nodes.find((nn) => nn.id === id)
         return n && PAUSING_NODES.includes(n.type)
       })
-      if (!hasPauser) return true
-      return false
+      return !hasPauser
     }
 
     const node = flow.nodes.find((n) => n.id === nodeId)
@@ -550,6 +556,7 @@ function detectInfiniteLoop(flow: BotFlow): ValidationIssue | null {
 
     visiting.delete(nodeId)
     path.pop()
+    completed.add(nodeId)
     return false
   }
 
@@ -606,19 +613,23 @@ export function getFlowSummary(flow: BotFlow): {
   const pausingNodes = flow.nodes.filter((n) => PAUSING_NODES.includes(n.type)).length
   const hasStop = flow.nodes.some((n) => n.type === 'stop')
 
-  // Compute max depth from trigger
+  // Compute max depth from trigger using BFS (visits each node once).
+  // We use a simple visited set — NOT a depth comparison — because loop-back
+  // edges would create infinitely increasing depths and cause OOM.
   let maxDepth = 0
   if (trigger) {
-    const depths = new Map<string, number>()
-    const stack = [{ id: trigger.id, depth: 0 }]
-    while (stack.length > 0) {
-      const { id, depth } = stack.pop()!
-      if (depths.has(id) && depths.get(id)! >= depth) continue
-      depths.set(id, depth)
+    const visited = new Set<string>()
+    const queue: { id: string; depth: number }[] = [{ id: trigger.id, depth: 0 }]
+    while (queue.length > 0) {
+      const { id, depth } = queue.shift()!
+      if (visited.has(id)) continue
+      visited.add(id)
       maxDepth = Math.max(maxDepth, depth)
       const outgoing = flow.edges.filter((e) => e.source === id)
       for (const edge of outgoing) {
-        stack.push({ id: edge.target, depth: depth + 1 })
+        if (!visited.has(edge.target)) {
+          queue.push({ id: edge.target, depth: depth + 1 })
+        }
       }
     }
   }
