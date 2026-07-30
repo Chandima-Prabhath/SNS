@@ -122,6 +122,22 @@ export function MusicView() {
   const autoplay = useMusicStore((s) => s.autoplay)
   const shuffle = useMusicStore((s) => s.shuffle)
   const repeat = useMusicStore((s) => s.repeat)
+
+  // ── Up Next: fetch related/autoplay tracks when queue is empty ──────
+  // Shows what will play next via autoplay (fetched ahead of time so the
+  // user can see what's coming).
+  const { data: upNextData } = useQuery({
+    queryKey: ['music-up-next', currentTrack?.videoId],
+    queryFn: async () => {
+      if (!currentTrack?.videoId) return { tracks: [] }
+      const res = await fetch(`/api/music/related/${currentTrack.videoId}`)
+      if (!res.ok) return { tracks: [] }
+      return res.json()
+    },
+    enabled: !!currentTrack?.videoId && queue.length === 0 && autoplay,
+    staleTime: 30_000, // don't refetch too often
+  })
+  const upNextTracks: Track[] = (upNextData?.tracks || []).slice(0, 5)
   const activeRoomId = useMusicStore((s) => s.activeRoomId)
   const setActiveRoomId = useMusicStore((s) => s.setActiveRoomId)
   const setShuffle = useMusicStore((s) => s.setShuffle)
@@ -789,6 +805,50 @@ export function MusicView() {
                     </div>
                 )}
 
+                {/* Up Next (Autoplay) — shows what will play when the queue is empty */}
+                {queue.length === 0 && currentTrack && autoplay && upNextTracks.length > 0 && (
+                  <div className="mt-4">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Up Next (Autoplay)
+                    </h3>
+                    <div className="space-y-1 opacity-70">
+                      {upNextTracks.map((track, i) => (
+                        <div
+                          key={`${track.videoId}-${i}`}
+                          className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/[0.04] transition-all group"
+                        >
+                          <span className="text-xs text-muted-foreground w-6 text-center font-medium">
+                            {i + 1}
+                          </span>
+                          {track.thumbnail ? (
+                            <img
+                              src={track.thumbnail}
+                              alt=""
+                              className="w-9 h-9 rounded object-cover"
+                            />
+                          ) : (
+                            <div className="w-9 h-9 rounded bg-muted flex items-center justify-center">
+                              <ListMusic className="w-3.5 h-3.5 text-muted-foreground" />
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-medium truncate">{track.title}</div>
+                            <div className="text-[11px] text-muted-foreground truncate">{track.artist}</div>
+                          </div>
+                          <button
+                            onClick={() => playTrack(track, true)}
+                            className="p-1.5 rounded-lg text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-primary transition-opacity"
+                            title="Add to queue"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Quick action: skip to next */}
                 {currentTrack && (
                   <Button
@@ -894,6 +954,7 @@ export function MusicView() {
                               isPlaying={isPlaying && currentTrack?.videoId === track.videoId}
                               isLiked={isLiked(track.videoId)}
                               onToggleLike={() => toggleLike(track)}
+                              onAddToPlaylist={() => setAddToPlaylistTrack(track)}
                             />
                           ))}
                         </div>
@@ -945,6 +1006,7 @@ export function MusicView() {
                               isPlaying={isPlaying && currentTrack?.videoId === track.videoId}
                               isLiked={true}
                               onToggleLike={() => toggleLike(track)}
+                              onAddToPlaylist={() => setAddToPlaylistTrack(track)}
                             />
                           ))}
                         </div>

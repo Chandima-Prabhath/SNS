@@ -137,9 +137,9 @@ export function ChatList() {
         variant: 'danger',
         onClick: () => {
           if (row.isDm) {
-            if (confirm('Delete this conversation? Messages will be removed for you.')) {
-              // For DMs, we leave the channel membership
-              fetch(`/api/channels/${row.channel.id}/members`, {
+            if (confirm('Delete this conversation? ALL messages will be permanently deleted for both users.')) {
+              // For DMs, delete the channel entirely (messages + channel + memberships)
+              fetch(`/api/channels/${row.channel.id}`, {
                 method: 'DELETE',
               }).then(() => {
                 qc.invalidateQueries({ queryKey: ['channels'] })
