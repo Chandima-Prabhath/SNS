@@ -599,10 +599,14 @@
 /* ─── Music player: animated playing border (reactbits.dev inspired) ─────── */
 /* A rotating conic-gradient border that appears when audio is playing.
  *
- * Implementation: the element gets padding: 2px + a rotating conic-gradient
- * background. A ::before pseudo-element masks the center with the element's
- * background color, leaving only the 2px ring visible. Everything is clipped
- * by the element's border-radius + overflow:hidden — no overflow outside.
+ * Structure:
+ *   .adoo-playing-border  → the element (padding: 2px, overflow: hidden)
+ *     ::after             → the rotating gradient (inset: 0, z-index: 0)
+ *     ::before            → the center mask (inset: 2px, z-index: 1)
+ *     > * (content)       → z-index: 2 (above the mask)
+ *
+ * The gradient rotates via ::after's animation — the element itself
+ * does NOT rotate (only the pseudo-element does).
  */
 @keyframes adoo-spin-border {
   to { transform: rotate(360deg); }
@@ -610,8 +614,17 @@
 
 .adoo-playing-border {
   position: relative;
-  /* The gradient shows through the 2px padding as a border ring */
   padding: 2px;
+  overflow: hidden;
+  /* No animation on the element itself — only on ::after */
+}
+
+/* The rotating gradient — fills the entire element (including padding) */
+.adoo-playing-border::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
   background: conic-gradient(
     from 0deg,
     transparent 0%,
@@ -620,14 +633,11 @@
     #ec4899 45%,
     transparent 60%
   );
-  background-size: 100% 100%;
   animation: adoo-spin-border 3s linear infinite;
-  /* Clip the gradient to the rounded shape — no overflow */
-  overflow: hidden;
+  z-index: 0;
 }
 
-/* Mask the center so only the 2px ring shows.
- * Matches glass-dark's background + backdrop-filter for visual consistency. */
+/* The center mask — covers the gradient except in the 2px padding ring */
 .adoo-playing-border::before {
   content: '';
   position: absolute;
@@ -636,16 +646,16 @@
   background: oklch(0.17 0.008 264 / 0.85);
   backdrop-filter: blur(32px) saturate(180%);
   -webkit-backdrop-filter: blur(32px) saturate(180%);
-  z-index: 0;
-}
-
-/* Ensure content sits above the mask */
-.adoo-playing-border > * {
-  position: relative;
   z-index: 1;
 }
 
-/* Subtle outer glow (doesn't cause layout issues — uses filter, not inset) */
+/* Content sits above the mask */
+.adoo-playing-border > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* Subtle outer glow (filter doesn't affect layout) */
 .adoo-playing-border {
   filter: drop-shadow(0 0 6px rgba(99, 102, 241, 0.3));
 }
