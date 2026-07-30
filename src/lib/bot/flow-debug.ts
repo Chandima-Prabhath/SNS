@@ -57,6 +57,15 @@ export async function debugRunFlow(
     variables: {},
     reply: async (text: string) => {
       messages.push(text)
+      return `debug-msg-${messages.length}`
+    },
+    replyWithMedia: async (mediaUrl: string, mediaType: string, caption?: string) => {
+      messages.push(`[${mediaType}] ${caption || mediaUrl}`)
+      return `debug-msg-${messages.length}`
+    },
+    editMessage: async (messageId: string, text: string) => {
+      // In debug mode, edits are logged as new messages for visibility
+      messages.push(`[edited msg ${messageId.slice(0, 8)}] ${text}`)
     },
     getState: async () => ({ ...mockState }),
     setState: async (state: any) => {

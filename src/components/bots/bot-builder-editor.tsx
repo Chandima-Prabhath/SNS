@@ -36,7 +36,7 @@ import {
   Save, Trash2, Plus, X, AlertTriangle, Info, Sparkles,
   Image as ImageIcon, Split, Hash, Braces, Terminal,
   Bug, CheckCircle2, Play, ChevronRight, Activity,
-  Download, Upload, FileText,
+  Download, Upload, FileText, AudioLines,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -55,6 +55,7 @@ const ICONS: Record<string, typeof Zap> = {
   Sparkles,
   Image: ImageIcon,
   Split, Hash, Braces, Terminal,
+  AudioLines,
 }
 
 // ─── Custom Node Component ───────────────────────────────────────────────────
@@ -133,6 +134,9 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
       break
     case 'log':
       preview = { label: 'Logs', value: data.logMessage ? (data.logMessage.length > 40 ? data.logMessage.slice(0, 40) + '…' : data.logMessage) : '(no message)' }
+      break
+    case 'tts':
+      preview = { label: 'Speaks', value: data.ttsText ? (data.ttsText.length > 40 ? data.ttsText.slice(0, 40) + '…' : data.ttsText) : '(no text)' }
       break
   }
 
@@ -1601,6 +1605,52 @@ function NodeInspectorBody({
         <div className="bg-slate-500/10 border border-slate-500/20 rounded-lg p-3 text-xs text-white/60">
           <p className="font-semibold text-slate-400 mb-1">Log Node</p>
           <p>Doesn't send anything to the user — only shows in the <Bug className="w-3 h-3 inline" /> Debug trace. Use it to inspect variable values during a test run.</p>
+        </div>
+      </div>
+    )
+  }
+
+  // ── TTS ─────────────────────────────────────────────────────────────
+  if (nodeType === 'tts') {
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Text to speak</Label>
+          <Textarea
+            value={data.ttsText || ''}
+            onChange={(e) => onUpdate({ ttsText: e.target.value })}
+            placeholder="Hello {{sender}}! This is a voice message."
+            rows={4}
+            className={inputCls + ' resize-none'}
+          />
+          <VariableHelp />
+        </div>
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Voice</Label>
+          <Select value={data.ttsVoice || 'alba'} onValueChange={(v) => onUpdate({ ttsVoice: v })}>
+            <SelectTrigger className={inputCls}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="alba">Alba (English, female)</SelectItem>
+              <SelectItem value="charles">Charles (English, male)</SelectItem>
+              <SelectItem value="jane">Jane (English, female)</SelectItem>
+              <SelectItem value="michael">Michael (English, male)</SelectItem>
+              <SelectItem value="vera">Vera (English, female)</SelectItem>
+              <SelectItem value="george">George (English, male)</SelectItem>
+              <SelectItem value="paul">Paul (English, male)</SelectItem>
+              <SelectItem value="estelle">Estelle (French, female)</SelectItem>
+              <SelectItem value="giovanni">Giovanni (Italian, male)</SelectItem>
+              <SelectItem value="juergen">Juergen (German, male)</SelectItem>
+              <SelectItem value="lola">Lola (Spanish, female)</SelectItem>
+              <SelectItem value="rafael">Rafael (Portuguese, male)</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-white/40">Built-in Pocket TTS voices. Custom voice IDs can be typed but require the voice to exist in the DB.</p>
+        </div>
+        <div className="bg-pink-500/10 border border-pink-500/20 rounded-lg p-3 text-xs text-white/60">
+          <p className="font-semibold text-pink-400 mb-1 flex items-center gap-1.5">
+            <AudioLines className="w-3.5 h-3.5" /> Voice Message
+          </p>
+          <p>Generates audio using your local Pocket TTS server (TTS_URL) and sends it as a voice message. If TTS fails, falls back to sending the text as a plain message with a 🔊 prefix.</p>
         </div>
       </div>
     )

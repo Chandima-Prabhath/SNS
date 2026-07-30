@@ -19,6 +19,10 @@
  *   - advanced : power features (api_call, random)
  */
 
+import { writeFile, mkdir } from 'fs/promises'
+import { existsSync } from 'fs'
+import path from 'path'
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Node type catalog
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,6 +45,7 @@ export type NodeType =
   | 'ai_generate'
   | 'send_media'
   | 'log'
+  | 'tts'
 
 export type NodeCategory = 'trigger' | 'output' | 'input' | 'logic' | 'advanced'
 
@@ -150,6 +155,13 @@ export interface FlowNodeData {
   /** Log level. */
   logLevel?: 'info' | 'warn' | 'error'
 
+  // ── tts ──
+  /** Text to speak. Supports {{var}} interpolation. */
+  ttsText?: string
+  /** Voice name (alba, charles, etc.) or custom voice ID. */
+  ttsVoice?: string
+  // (sends the audio as a voice message — no variable needed)
+
   // ── UI metadata (not used by engine) ──
   /** Node type — stored in data so the editor's CustomNode can read it.
    *  Duplicates FlowNode.type but is required because ReactFlow sets
@@ -191,8 +203,16 @@ export interface BotExecutionContext {
   setState?: (state: any) => Promise<void>
 
   /** Reply helper — pushes a message as the bot. Optional keyboard attaches
-   *  Telegram-style inline buttons to the message. */
-  reply: (text: string, keyboard?: BotKeyboardButton[][]) => Promise<void>
+   *  Telegram-style inline buttons to the message. Returns the message ID. */
+  reply: (text: string, keyboard?: BotKeyboardButton[][]) => Promise<string>
+
+  /** Reply with media (image/video/audio). The URL should be a path like
+   *  /api/uploads/xxx.wav. Returns the message ID. */
+  replyWithMedia?: (mediaUrl: string, mediaType: string, caption?: string) => Promise<string>
+
+  /** Edit an existing bot message in-place (body + keyboard). Used for
+   *  Telegram-style keyboard updates when a wait_choice loops back. */
+  editMessage?: (messageId: string, text: string, keyboard?: BotKeyboardButton[][]) => Promise<void>
 
   /** Show typing indicator — best-effort, no-op if unsupported. */
   setTyping?: (seconds: number) => Promise<void>
@@ -440,10 +460,31 @@ export async function executeBotFlow(
           text: opt,
           callbackData: opt,
         }])
+
+        // Telegram-style behavior: if we have an existing keyboard message
+        // (from a previous pause at this node, i.e. a loop-back), EDIT it
+        // in-place instead of sending a new message. This prevents the bot
+        // from spamming new keyboard messages every time the user clicks a
+        // button that loops back to this menu.
+        //
+        // The keyboardMessageId is set in the session state by visual.ts
+        // when it persists the pause. We read it from ctx.variables under
+        // a reserved key.
+        const existingKeyboardMsgId = ctx.variables['__keyboardMsgId']
+
         if (prompt.trim()) {
-          await ctx.reply(prompt, keyboard)
-          sentCount++
-          trace.push({ type: 'message_sent', timestamp: now(), nodeId: currentNode.id, text: prompt })
+          if (existingKeyboardMsgId && ctx.editMessage) {
+            // Edit-in-place: update the existing keyboard message
+            await ctx.editMessage(existingKeyboardMsgId, prompt, keyboard)
+            trace.push({ type: 'message_sent', timestamp: now(), nodeId: currentNode.id, text: `[edited] ${prompt}` })
+          } else {
+            // Fresh keyboard: send a new message
+            const msgId = await ctx.reply(prompt, keyboard)
+            sentCount++
+            // Store the message ID so future re-pauses can edit it
+            ctx.variables['__keyboardMsgId'] = msgId
+            trace.push({ type: 'message_sent', timestamp: now(), nodeId: currentNode.id, text: prompt })
+          }
         }
         trace.push({ type: 'paused', timestamp: now(), nodeId: currentNode.id, variableName: currentNode.data.variableName || 'choice' })
         trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
@@ -599,6 +640,90 @@ export async function executeBotFlow(
       case 'stop':
         trace.push({ type: 'flow_end', timestamp: now(), reason: 'stop', sentCount })
         return { sentCount, paused: false, variables: ctx.variables, trace }
+
+      // ── OUTPUT: tts (Pocket TTS voice message) ────────────────────────
+      case 'tts': {
+        const ttsStart = now()
+        const ttsNode = currentNode
+        try {
+          const text = interpolate(ttsNode.data.ttsText || '', ctx)
+          const voice = ttsNode.data.ttsVoice || 'alba'
+
+          if (!text.trim()) {
+            trace.push({ type: 'error', timestamp: now(), nodeId: ttsNode.id, message: 'TTS node has empty text' })
+            currentNode = followEdge(ttsNode.id, null)
+            break
+          }
+
+          // Call the Pocket TTS server directly (server-side fetch)
+          const ttsUrl = process.env.TTS_URL || 'http://localhost:8000'
+          const ttsFormData = new FormData()
+          ttsFormData.append('text', text.slice(0, 500))
+
+          // Check if voice is a custom voice ID (cuid format) or a built-in name
+          if (/^[a-z0-9]{20,}$/.test(voice)) {
+            // Custom voice — would need DB lookup + safetensors handling.
+            // For simplicity, just pass it as voice_url and let the TTS
+            // server figure it out. If it fails, the error is caught below.
+            ttsFormData.append('voice_url', voice)
+          } else {
+            ttsFormData.append('voice_url', voice)
+          }
+
+          trace.push({ type: 'log', timestamp: now(), nodeId: ttsNode.id, level: 'info', message: `TTS: generating "${text.slice(0, 60)}…" with voice=${voice}` })
+
+          const ttsRes = await fetch(`${ttsUrl}/tts`, {
+            method: 'POST',
+            body: ttsFormData,
+          })
+
+          if (!ttsRes.ok) {
+            const errText = await ttsRes.text().catch(() => 'unknown error')
+            trace.push({ type: 'error', timestamp: now(), nodeId: ttsNode.id, message: `TTS error ${ttsRes.status}: ${errText.slice(0, 100)}` })
+            // Fallback: send the text as a plain message
+            await ctx.reply(`🔊 [TTS failed] ${text}`)
+            sentCount++
+          } else {
+            // Collect the audio buffer
+            const audioBuffer = Buffer.from(await ttsRes.arrayBuffer())
+
+            if (audioBuffer.length === 0) {
+              throw new Error('TTS returned empty audio')
+            }
+
+            // Write to public/uploads/
+            const uploadDir = path.join(process.cwd(), 'public', 'uploads')
+            if (!existsSync(uploadDir)) {
+              await mkdir(uploadDir, { recursive: true })
+            }
+            const filename = `tts-bot-${crypto.randomUUID()}.wav`
+            const filePath = path.join(uploadDir, filename)
+            await writeFile(filePath, audioBuffer)
+
+            // Send as a voice message
+            const mediaUrl = `/api/uploads/${filename}`
+            if (ctx.replyWithMedia) {
+              await ctx.replyWithMedia(mediaUrl, 'audio')
+            } else {
+              // Fallback: send URL as text if replyWithMedia not available
+              await ctx.reply(`🔊 ${mediaUrl}`)
+            }
+            sentCount++
+            trace.push({ type: 'message_sent', timestamp: now(), nodeId: ttsNode.id, text: `[voice message: ${text.slice(0, 60)}…]` })
+            trace.push({ type: 'ai_call', timestamp: now(), nodeId: ttsNode.id, model: `tts:${voice}`, prompt: text.slice(0, 100), responseLength: audioBuffer.length, durationMs: now() - ttsStart })
+          }
+        } catch (e: any) {
+          trace.push({ type: 'error', timestamp: now(), nodeId: ttsNode.id, message: `TTS failed: ${e?.message || e}` })
+          // Fallback: send the text as a plain message
+          const fallbackText = interpolate(ttsNode.data.ttsText || '', ctx)
+          if (fallbackText.trim()) {
+            await ctx.reply(`🔊 [TTS error] ${fallbackText}`)
+            sentCount++
+          }
+        }
+        currentNode = followEdge(ttsNode.id, null)
+        break
+      }
 
       // ── ADVANCED: api_call ────────────────────────────────────────────
       case 'api_call': {
@@ -838,6 +963,12 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
     icon: 'Sparkles', color: '#C084FC', bg: '#C084FC1A',
     handles: 'single',
   },
+  tts: {
+    type: 'tts', label: 'Voice Message', category: 'output',
+    description: 'Generates a TTS voice message from text using Pocket TTS',
+    icon: 'AudioLines', color: '#F472B6', bg: '#F472B61A',
+    handles: 'single',
+  },
 }
 
 export const CATEGORY_ORDER: NodeCategory[] = ['trigger', 'output', 'input', 'logic', 'advanced']
@@ -894,6 +1025,12 @@ export function defaultNodeData(type: NodeType): FlowNodeData {
         aiTemperature: 0.7,
         aiMaxTokens: 256,
         variableName: 'aiResponse',
+      }
+    case 'tts':
+      return {
+        label: 'Voice Message',
+        ttsText: 'Hello {{sender}}! This is a voice message from the bot.',
+        ttsVoice: 'alba',
       }
   }
 }

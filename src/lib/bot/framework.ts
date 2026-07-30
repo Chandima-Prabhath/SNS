@@ -37,7 +37,16 @@ export interface BotContext {
   isMention: boolean
 
   // Helpers
-  reply: (text: string, keyboard?: BotKeyboard) => Promise<void>
+  /** Reply with text + optional inline keyboard. Returns the new message ID
+   *  (used by the visual bot to track which message has the active keyboard,
+   *  so it can edit it in-place on re-pause instead of sending a new one). */
+  reply: (text: string, keyboard?: BotKeyboard) => Promise<string>
+  /** Reply with media (image/video/audio). Returns the new message ID. */
+  replyWithMedia?: (mediaUrl: string, mediaType: string, caption?: string) => Promise<string>
+  /** Edit an existing bot message's body + keyboard in-place. Used for
+   *  Telegram-style keyboard updates (e.g. when a wait_choice loops back,
+   *  we edit the existing keyboard message instead of sending a new one). */
+  editMessage?: (messageId: string, text: string, keyboard?: BotKeyboard) => Promise<void>
   setState: (state: any) => Promise<void>
   getState: () => Promise<any>
 }
@@ -133,8 +142,10 @@ export async function dispatchBotUpdate(params: {
   // Helper: post a message as the bot
   // If keyboard is provided, it's persisted as JSON on the message row and
   // rendered as tappable Telegram-style inline buttons by the client.
-  const reply = async (text: string, keyboard?: BotKeyboard) => {
-    await db.message.create({
+  // Returns the new message ID (used by visual bot to track the active
+  // keyboard message for edit-in-place on re-pause).
+  const reply = async (text: string, keyboard?: BotKeyboard): Promise<string> => {
+    const msg = await db.message.create({
       data: {
         channelId: params.channelId,
         senderType: 'bot',
@@ -144,7 +155,41 @@ export async function dispatchBotUpdate(params: {
         keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
       },
     })
-    // Note: socket relay is handled by the calling REST route after dispatch returns
+    return msg.id
+  }
+
+  // Helper: edit an existing bot message's body + keyboard in-place.
+  // Used for Telegram-style keyboard updates — when a wait_choice loops
+  // back, we edit the existing keyboard message instead of sending a new
+  // one. Also broadcasts a socket event so all clients update in real-time.
+  const editMessage = async (messageId: string, text: string, keyboard?: BotKeyboard) => {
+    await db.message.update({
+      where: { id: messageId },
+      data: {
+        body: text,
+        keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
+      },
+    })
+    // Note: the socket relay for edits is handled by the calling REST route
+    // (it fetches the updated message and returns it; the client emits
+    // channel:message-edit to broadcast the change to other clients).
+  }
+
+  // Helper: reply with media (image/video/audio). Used by the TTS node
+  // to send voice messages. Returns the new message ID.
+  const replyWithMedia = async (mediaUrl: string, mediaType: string, caption?: string): Promise<string> => {
+    const msg = await db.message.create({
+      data: {
+        channelId: params.channelId,
+        senderType: 'bot',
+        senderId: bot.id,
+        body: caption || (mediaType === 'audio' ? 'Voice message' : 'Media'),
+        replyToId: params.messageId,
+        mediaUrl,
+        mediaType,
+      },
+    })
+    return msg.id
   }
 
   // Helper: state management
@@ -198,6 +243,8 @@ export async function dispatchBotUpdate(params: {
     command,
     isMention: !!params.isMention,
     reply,
+    replyWithMedia,
+    editMessage,
     getState,
     setState,
   }
@@ -282,8 +329,8 @@ export async function dispatchBotCallback(params: {
     config._flow = bot.flow
   }
 
-  const reply = async (text: string, keyboard?: BotKeyboard) => {
-    await db.message.create({
+  const reply = async (text: string, keyboard?: BotKeyboard): Promise<string> => {
+    const msg = await db.message.create({
       data: {
         channelId: params.channelId,
         senderType: 'bot',
@@ -293,6 +340,32 @@ export async function dispatchBotCallback(params: {
         keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
       },
     })
+    return msg.id
+  }
+
+  const editMessage = async (messageId: string, text: string, keyboard?: BotKeyboard) => {
+    await db.message.update({
+      where: { id: messageId },
+      data: {
+        body: text,
+        keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
+      },
+    })
+  }
+
+  const replyWithMedia = async (mediaUrl: string, mediaType: string, caption?: string): Promise<string> => {
+    const msg = await db.message.create({
+      data: {
+        channelId: params.channelId,
+        senderType: 'bot',
+        senderId: bot.id,
+        body: caption || (mediaType === 'audio' ? 'Voice message' : 'Media'),
+        replyToId: params.messageId,
+        mediaUrl,
+        mediaType,
+      },
+    })
+    return msg.id
   }
 
   const stateKey = { botId: bot.id, userId: params.senderId }
@@ -333,6 +406,8 @@ export async function dispatchBotCallback(params: {
     command: undefined,
     isMention: false,
     reply,
+    replyWithMedia,
+    editMessage,
     getState,
     setState,
   }

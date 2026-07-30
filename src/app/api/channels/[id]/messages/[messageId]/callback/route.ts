@@ -51,6 +51,7 @@ export async function POST(
       where: { id: messageId },
       select: {
         id: true,
+        body: true,
         senderType: true,
         senderId: true,
         keyboard: true,
@@ -116,6 +117,32 @@ export async function POST(
 
     console.log(`[callback] found ${botReplies.length} bot replies`)
 
+    // Check if the original keyboard message was edited during dispatch
+    // (Telegram-style edit-in-place when wait_choice loops back).
+    // We re-fetch it to see if its body/keyboard changed.
+    const editedMessage = await db.message.findUnique({
+      where: { id: messageId },
+      include: {
+        sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
+        replyTo: {
+          select: { id: true, body: true, senderType: true, sender: { select: { username: true, displayName: true } } },
+        },
+      },
+    })
+
+    // If the message was edited (body or keyboard changed since we first
+    // loaded it), include it in the response so the client can update its cache.
+    const editedMessages: typeof botReplies = []
+    if (editedMessage &&
+        (editedMessage.body !== originalMessage.body ||
+         editedMessage.keyboard !== originalMessage.keyboard)) {
+      // Only include if it's not already in botReplies (it shouldn't be,
+      // since it was created before dispatchStart, but just in case)
+      if (!botReplies.some((r) => r.id === messageId)) {
+        editedMessages.push(editedMessage as any)
+      }
+    }
+
     // Get recipient IDs for socket broadcast
     const memberIds = await db.channelMember.findMany({
       where: { channelId },
@@ -125,6 +152,7 @@ export async function POST(
 
     return NextResponse.json({
       botReplies,
+      editedMessages,
       recipientIds,
     })
   } catch (e: any) {

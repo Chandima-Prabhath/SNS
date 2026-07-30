@@ -330,7 +330,21 @@ export function useChannel(channelId: string | null) {
           throw new Error(err.error || `callback failed (${res.status})`)
         }
         const data = await res.json()
-        console.log(`[callback] response: ${data.botReplies?.length || 0} replies`)
+        console.log(`[callback] response: ${data.botReplies?.length || 0} replies, ${data.editedMessages?.length || 0} edits`)
+
+        // Handle edited messages (Telegram-style edit-in-place) — update
+        // the existing message in the cache instead of adding a new one
+        if (data.editedMessages && Array.isArray(data.editedMessages)) {
+          for (const edited of data.editedMessages) {
+            qc.setQueryData(['messages', channelId], (old: ChannelMessage[] | undefined) => {
+              if (!old) return old
+              return old.map((m) => (m.id === edited.id ? { ...m, ...edited } : m))
+            })
+            if (socket) {
+              socket.emit('channel:message-edit', { channelId, message: edited })
+            }
+          }
+        }
 
         // Add bot replies to the message cache + broadcast via socket
         if (data.botReplies && Array.isArray(data.botReplies)) {
@@ -347,8 +361,6 @@ export function useChannel(channelId: string | null) {
         }
       } catch (e: any) {
         console.error('[callback] failed:', e)
-        // Don't toast on every error — could be noisy. Console log is enough
-        // for debugging. The user can check the browser console.
       }
     },
     [channelId, socket, qc]

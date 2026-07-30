@@ -116,6 +116,8 @@ export const visualBot: BotModule = {
           isMention: ctx.isMention,
           variables: state.variables,
           reply: ctx.reply,
+          replyWithMedia: ctx.replyWithMedia,
+          editMessage: ctx.editMessage,
         }, resume)
 
         await persistSession(ctx, result)
@@ -140,6 +142,8 @@ export const visualBot: BotModule = {
         isMention: ctx.isMention,
         variables: state.variables,
         reply: ctx.reply,
+        replyWithMedia: ctx.replyWithMedia,
+        editMessage: ctx.editMessage,
       }, resume)
 
       await persistSession(ctx, result)
@@ -167,6 +171,8 @@ async function runFromTrigger(flow: BotFlow, ctx: BotContext) {
     isMention: ctx.isMention,
     variables: state.variables,
     reply: ctx.reply,
+    replyWithMedia: ctx.replyWithMedia,
+    editMessage: ctx.editMessage,
   })
 
   await persistSession(ctx, result)
