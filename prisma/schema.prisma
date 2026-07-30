@@ -56,6 +56,8 @@ model User {
   hostedMusicRooms MusicRoom[]     @relation("MusicRoomHost")
   musicRoomMemberships MusicRoomMember[] @relation("MusicRoomMembers")
   settings        UserSetting[]
+  likedSongs      LikedSong[]
+  playlists       Playlist[]
   sessions        Session[]
   accounts        Account[]
 
@@ -90,6 +92,57 @@ model UserSetting {
 
   @@unique([userId, key])
   @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Music Library (per-user, synced across devices via DB)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Tracks the user has liked. Stored as denormalized track data (videoId,
+ *  title, artist, thumbnail) so we don't need to re-fetch from YouTube. */
+model LikedSong {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoId   String
+  title     String
+  artist    String
+  thumbnail String?
+  durationSeconds Int?
+  createdAt DateTime @default(now())
+
+  @@unique([userId, videoId])
+  @@index([userId])
+}
+
+/** User-created playlists. */
+model Playlist {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  songs     PlaylistSong[]
+
+  @@index([userId])
+}
+
+/** Songs within a playlist. Ordered by `order` field. */
+model PlaylistSong {
+  id         String   @id @default(cuid())
+  playlistId String
+  playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  videoId    String
+  title      String
+  artist     String
+  thumbnail  String?
+  durationSeconds Int?
+  order      Int      @default(0)
+  addedAt    DateTime @default(now())
+
+  @@unique([playlistId, videoId])
+  @@index([playlistId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

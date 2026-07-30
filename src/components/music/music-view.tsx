@@ -10,7 +10,7 @@ import {
   Search, Play, Pause, SkipForward, Plus,
   Loader2, Radio, Headphones, X, ListMusic, Compass,
   Trash2, Repeat, Shuffle, Music as MusicIcon, Users,
-  Flame, Sparkles, History, Library, Clock, Heart,
+  Flame, Sparkles, History, Library, Clock, Heart, ListPlus,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -33,15 +33,16 @@ type Tab = 'browse' | 'rooms' | 'queue' | 'library'
 type LibraryTab = 'history' | 'liked' | 'playlists'
 
 const HISTORY_KEY = 'adoo-music-history'
-const LIKED_KEY = 'adoo-music-liked'
-const PLAYLISTS_KEY = 'adoo-music-playlists'
 const MAX_HISTORY = 50
 
+/** Track shape used by the UI. The DB stores the same fields (minus the
+ *  `order` column on PlaylistSong which we don't expose in the UI). */
+interface DbTrack extends Track {}
 interface Playlist {
   id: string
   name: string
-  tracks: Track[]
-  createdAt: number
+  songs: Track[]
+  updatedAt?: string
 }
 
 function loadHistory(): Track[] {
@@ -54,32 +55,6 @@ function loadHistory(): Track[] {
 function saveHistory(tracks: Track[]) {
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(tracks.slice(0, MAX_HISTORY)))
-  } catch {}
-}
-
-function loadLiked(): Track[] {
-  try {
-    const raw = localStorage.getItem(LIKED_KEY)
-    return raw ? JSON.parse(raw) : []
-  } catch { return [] }
-}
-
-function saveLiked(tracks: Track[]) {
-  try {
-    localStorage.setItem(LIKED_KEY, JSON.stringify(tracks))
-  } catch {}
-}
-
-function loadPlaylists(): Playlist[] {
-  try {
-    const raw = localStorage.getItem(PLAYLISTS_KEY)
-    return raw ? JSON.parse(raw) : []
-  } catch { return [] }
-}
-
-function savePlaylists(playlists: Playlist[]) {
-  try {
-    localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(playlists))
   } catch {}
 }
 
@@ -102,11 +77,43 @@ export function MusicView() {
   const searchAbortRef = useRef<AbortController | null>(null)
   const qc = useQueryClient()
   const [history, setHistory] = useState<Track[]>([])
-  const [liked, setLiked] = useState<Track[]>([])
-  const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('history')
   const [newPlaylistName, setNewPlaylistName] = useState('')
   const [showNewPlaylistInput, setShowNewPlaylistInput] = useState(false)
+  const [addToPlaylistTrack, setAddToPlaylistTrack] = useState<Track | null>(null)
+
+  // ── DB-backed liked songs (react-query) ──────────────────────────────
+  const { data: likedData, refetch: refetchLiked } = useQuery({
+    queryKey: ['music-liked'],
+    queryFn: async () => {
+      const res = await fetch('/api/music/liked')
+      if (!res.ok) throw new Error('failed')
+      return res.json()
+    },
+  })
+  const liked: Track[] = likedData?.songs || []
+
+  // ── DB-backed playlists (react-query) ────────────────────────────────
+  const { data: playlistsData, refetch: refetchPlaylists } = useQuery({
+    queryKey: ['music-playlists'],
+    queryFn: async () => {
+      const res = await fetch('/api/music/playlists')
+      if (!res.ok) throw new Error('failed')
+      return res.json()
+    },
+  })
+  const playlists: Playlist[] = (playlistsData?.playlists || []).map((p: any) => ({
+    id: p.id,
+    name: p.name,
+    songs: (p.songs || []).map((s: any) => ({
+      videoId: s.videoId,
+      title: s.title,
+      artist: s.artist,
+      thumbnail: s.thumbnail,
+      durationSeconds: s.durationSeconds,
+    })),
+    updatedAt: p.updatedAt,
+  }))
 
   // ─── Playback state from the global store ─────────────────────────────
   const currentTrack = useMusicStore((s) => s.currentTrack)
@@ -124,67 +131,85 @@ export function MusicView() {
   // ─── Player actions (broadcast + audio handled by global player) ──────
   const { playTrack, playNext, removeFromQueue, clearQueue } = useMusicPlayer()
 
-  // Load history, liked, and playlists on mount
+  // Load history on mount (history stays in localStorage — it's per-device)
   useEffect(() => {
     setHistory(loadHistory())
-    setLiked(loadLiked())
-    setPlaylists(loadPlaylists())
   }, [])
 
-  // ── Liked songs helpers ──────────────────────────────────────────────
-  const toggleLike = (track: Track) => {
-    setLiked((prev) => {
-      const isLiked = prev.some((t) => t.videoId === track.videoId)
-      const updated = isLiked
-        ? prev.filter((t) => t.videoId !== track.videoId)
-        : [track, ...prev]
-      saveLiked(updated)
-      return updated
+  // ── Liked songs helpers (DB-backed) ──────────────────────────────────
+  const toggleLike = async (track: Track) => {
+    const isLikedVal = liked.some((t) => t.videoId === track.videoId)
+    // Optimistic update — update the cache immediately
+    qc.setQueryData(['music-liked'], (old: any) => {
+      if (!old) return { songs: [track] }
+      const songs = isLikedVal
+        ? old.songs.filter((t: Track) => t.videoId !== track.videoId)
+        : [track, ...old.songs]
+      return { ...old, songs }
     })
+    try {
+      if (isLikedVal) {
+        await fetch(`/api/music/liked?videoId=${track.videoId}`, { method: 'DELETE' })
+      } else {
+        await fetch('/api/music/liked', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(track),
+        })
+      }
+    } catch {
+      // Revert on error
+      refetchLiked()
+      toast.error('Failed to update liked songs')
+    }
   }
 
   const isLiked = (videoId: string) => liked.some((t) => t.videoId === videoId)
 
-  // ── Playlist helpers ─────────────────────────────────────────────────
-  const createPlaylist = (name: string) => {
+  // ── Playlist helpers (DB-backed) ─────────────────────────────────────
+  const createPlaylist = async (name: string) => {
     if (!name.trim()) return
-    const newPlaylist: Playlist = {
-      id: `pl-${Date.now()}`,
-      name: name.trim(),
-      tracks: [],
-      createdAt: Date.now(),
-    }
-    setPlaylists((prev) => {
-      const updated = [newPlaylist, ...prev]
-      savePlaylists(updated)
-      return updated
-    })
-    setNewPlaylistName('')
-    setShowNewPlaylistInput(false)
-    toast.success(`Playlist "${newPlaylist.name}" created`)
-  }
-
-  const addToPlaylist = (playlistId: string, track: Track) => {
-    setPlaylists((prev) => {
-      const updated = prev.map((pl) => {
-        if (pl.id !== playlistId) return pl
-        if (pl.tracks.some((t) => t.videoId === track.videoId)) return pl // dedupe
-        return { ...pl, tracks: [...pl.tracks, track] }
+    try {
+      const res = await fetch('/api/music/playlists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
       })
-      savePlaylists(updated)
-      return updated
-    })
-    const pl = playlists.find((p) => p.id === playlistId)
-    toast.success(`Added to "${pl?.name}"`)
+      if (!res.ok) throw new Error('failed')
+      toast.success(`Playlist "${name}" created`)
+      setNewPlaylistName('')
+      setShowNewPlaylistInput(false)
+      refetchPlaylists()
+    } catch {
+      toast.error('Failed to create playlist')
+    }
   }
 
-  const deletePlaylist = (playlistId: string) => {
-    setPlaylists((prev) => {
-      const updated = prev.filter((pl) => pl.id !== playlistId)
-      savePlaylists(updated)
-      return updated
-    })
-    toast.success('Playlist deleted')
+  const addToPlaylist = async (playlistId: string, track: Track) => {
+    try {
+      const res = await fetch(`/api/music/playlists/${playlistId}/songs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(track),
+      })
+      if (!res.ok) throw new Error('failed')
+      const pl = playlists.find((p) => p.id === playlistId)
+      toast.success(`Added to "${pl?.name}"`)
+      refetchPlaylists()
+    } catch {
+      toast.error('Failed to add to playlist')
+    }
+  }
+
+  const deletePlaylist = async (playlistId: string) => {
+    try {
+      const res = await fetch(`/api/music/playlists/${playlistId}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('failed')
+      toast.success('Playlist deleted')
+      refetchPlaylists()
+    } catch {
+      toast.error('Failed to delete playlist')
+    }
   }
 
   // Track when the current track changes — add to history
@@ -402,6 +427,7 @@ export function MusicView() {
                         }
                         isLiked={isLiked(track.videoId)}
                         onToggleLike={() => toggleLike(track)}
+                        onAddToPlaylist={() => setAddToPlaylistTrack(track)}
                       />
                     ))}
                   </div>
@@ -946,10 +972,10 @@ export function MusicView() {
                             key={pl.id}
                             playlist={pl}
                             onPlay={() => {
-                              if (pl.tracks.length > 0) {
-                                playTrack(pl.tracks[0])
-                                for (let i = 1; i < pl.tracks.length; i++) {
-                                  playTrack(pl.tracks[i], true)
+                              if (pl.songs.length > 0) {
+                                playTrack(pl.songs[0])
+                                for (let i = 1; i < pl.songs.length; i++) {
+                                  playTrack(pl.songs[i], true)
                                 }
                               }
                             }}
@@ -968,6 +994,62 @@ export function MusicView() {
             )}
           </AnimatePresence>
         </div>
+
+        {/* ── Add to Playlist modal ──────────────────────────────────────── */}
+        {addToPlaylistTrack && (
+          <div
+            className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setAddToPlaylistTrack(null)}
+          >
+            <div
+              className="bg-card rounded-2xl border border-border/50 shadow-2xl max-w-sm w-full overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-4 border-b border-border/30">
+                <h3 className="font-semibold text-sm">Add to playlist</h3>
+                <p className="text-xs text-muted-foreground truncate mt-0.5">{addToPlaylistTrack.title}</p>
+              </div>
+              <div className="max-h-64 overflow-y-auto p-2">
+                {playlists.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-6 px-4">
+                    No playlists yet. Go to Library → Playlists to create one.
+                  </p>
+                ) : (
+                  playlists.map((pl) => (
+                    <button
+                      key={pl.id}
+                      onClick={() => {
+                        addToPlaylist(pl.id, addToPlaylistTrack)
+                        setAddToPlaylistTrack(null)
+                      }}
+                      className="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-accent/50 transition-colors text-left"
+                    >
+                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center shrink-0 ring-1 ring-primary/20">
+                        <ListMusic className="w-5 h-5 text-primary" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate">{pl.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {pl.songs.length} song{pl.songs.length !== 1 ? 's' : ''}
+                        </div>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+              <div className="p-2 border-t border-border/30">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => setAddToPlaylistTrack(null)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -982,6 +1064,7 @@ function TrackRow({
   isPlaying,
   isLiked,
   onToggleLike,
+  onAddToPlaylist,
 }: {
   track: Track
   onPlay: () => void
@@ -990,6 +1073,7 @@ function TrackRow({
   isPlaying: boolean
   isLiked?: boolean
   onToggleLike?: () => void
+  onAddToPlaylist?: () => void
 }) {
   return (
     <div
@@ -1054,6 +1138,18 @@ function TrackRow({
         </button>
       )}
 
+      {/* Add to playlist button — always visible */}
+      {onAddToPlaylist && (
+        <button
+          onClick={onAddToPlaylist}
+          className="p-2.5 rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shrink-0"
+          title="Add to playlist"
+          aria-label="Add to playlist"
+        >
+          <ListPlus className="w-5 h-5" />
+        </button>
+      )}
+
       {/* Add to queue button — always visible */}
       <button
         onClick={onAddToQueue}
@@ -1101,11 +1197,11 @@ function PlaylistCard({
           <div className="flex-1 min-w-0">
             <div className="text-[15px] font-semibold truncate">{playlist.name}</div>
             <div className="text-sm text-muted-foreground">
-              {playlist.tracks.length} song{playlist.tracks.length !== 1 ? 's' : ''}
+              {playlist.songs.length} song{playlist.songs.length !== 1 ? 's' : ''}
             </div>
           </div>
         </button>
-        {playlist.tracks.length > 0 && (
+        {playlist.songs.length > 0 && (
           <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={onPlay} title="Play all">
             <Play className="w-4 h-4" />
           </Button>
@@ -1118,13 +1214,13 @@ function PlaylistCard({
       {/* Expanded track list */}
       {expanded && (
         <div className="px-2 pb-2 border-t border-border/30">
-          {playlist.tracks.length === 0 ? (
+          {playlist.songs.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">
               Empty playlist — add songs from search or browse
             </p>
           ) : (
             <div className="space-y-1 pt-2">
-              {playlist.tracks.map((track, i) => (
+              {playlist.songs.map((track, i) => (
                 <TrackRow
                   key={`${track.videoId}-${i}`}
                   track={track}

@@ -607,6 +607,10 @@
  *
  * The gradient rotates via ::after's animation — the element itself
  * does NOT rotate (only the pseudo-element does).
+ *
+ * The mask is FULLY OPAQUE (not semi-transparent) so the rotating gradient
+ * is NOT visible through the player background — only the 2px border ring
+ * shows the animation. backdrop-filter provides the blur effect.
  */
 @keyframes adoo-spin-border {
   to { transform: rotate(360deg); }
@@ -616,7 +620,8 @@
   position: relative;
   padding: 2px;
   overflow: hidden;
-  /* No animation on the element itself — only on ::after */
+  /* No filter/drop-shadow here — it creates a stacking context that breaks
+     fixed positioning on the expanded player. The glow is on ::after. */
 }
 
 /* The rotating gradient — fills the entire element (including padding) */
@@ -635,17 +640,21 @@
   );
   animation: adoo-spin-border 3s linear infinite;
   z-index: 0;
+  /* Glow without affecting the parent's stacking context */
+  filter: blur(0.5px);
 }
 
-/* The center mask — covers the gradient except in the 2px padding ring */
+/* The center mask — covers the gradient except in the 2px padding ring.
+ * FULLY OPAQUE background so the rotating gradient is NOT visible through
+ * the player. backdrop-filter provides the blur for content behind the player. */
 .adoo-playing-border::before {
   content: '';
   position: absolute;
   inset: 2px;
   border-radius: inherit;
-  background: oklch(0.17 0.008 264 / 0.85);
-  backdrop-filter: blur(32px) saturate(180%);
-  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  background: rgb(20 21 24); /* solid dark — matches the app's dark theme */
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
   z-index: 1;
 }
 
@@ -653,11 +662,6 @@
 .adoo-playing-border > * {
   position: relative;
   z-index: 2;
-}
-
-/* Subtle outer glow (filter doesn't affect layout) */
-.adoo-playing-border {
-  filter: drop-shadow(0 0 6px rgba(99, 102, 241, 0.3));
 }
 
 /* Equalizer bars indicator (shown on album art when playing) */
