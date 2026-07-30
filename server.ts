@@ -10,7 +10,21 @@
  * Dev mode:  `bun run dev`     (this file via tsx, with HMR for Next)
  * Prod mode: `bun run start`   (compiles to .next/standalone/server.js
  *                                with this custom server baked in)
+ *
+ * ENV LOADING: Bun automatically loads .env files. But when running via
+ * PM2/Node (deploy script), .env is NOT loaded automatically. We use
+ * dotenv to load it here so NEXTAUTH_SECRET, DATABASE_URL, TTS_URL, etc.
+ * are available in all environments.
  */
+
+// Load .env file — this is a no-op when running with Bun (which loads
+// .env automatically), but critical when running with Node/PM2/tsx.
+try {
+  await import('dotenv').then((dotenv) => dotenv.config())
+} catch {
+  // dotenv not installed — Bun loads .env natively, so this is fine
+}
+
 import { createServer } from 'http'
 import { parse } from 'url'
 import next from 'next'

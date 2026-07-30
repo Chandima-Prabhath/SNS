@@ -32,9 +32,17 @@
  *
  * ENVIRONMENT
  * ===========
- * Production secrets (TTS_URL, NEXTAUTH_SECRET, DATABASE_URL, etc.) should
- * live in a `.env.production` file at the project root — PM2 will load it
- * automatically via the env field below. Do NOT commit .env.production.
+ * The .env file is loaded by server.ts via the `dotenv` package. This
+ * works for BOTH Bun (which also loads .env natively — the dotenv import
+ * is a no-op) and Node/PM2/tsx (which don't load .env automatically).
+ *
+ * Required env vars (set in .env at the project root):
+ *   NEXTAUTH_SECRET     — JWT signing secret (CRITICAL — socket auth fails without it)
+ *   NEXTAUTH_URL        — e.g. https://your-domain.com (must include https://)
+ *   DATABASE_URL        — SQLite path, e.g. file:/home/z/my-project/db/custom.db
+ *   TTS_URL             — Pocket TTS server URL, e.g. http://localhost:8000
+ *   OLLAMA_URL          — Ollama LLM URL, e.g. http://localhost:11434
+ *   YTDLP_COOKIES_PATH  — path to cookies.txt for YouTube downloads (optional)
  */
 module.exports = {
   apps: [
@@ -46,15 +54,12 @@ module.exports = {
       script: 'server.ts',
       interpreter: 'npx',
       interpreter_args: 'tsx',
-      // production env
+      // production env (base vars — secrets are loaded from .env by server.ts)
       env: {
         NODE_ENV: 'production',
         PORT: '3090',
         HOSTNAME: '0.0.0.0',
       },
-      // Load .env.production if it exists (PM2 does this automatically when
-      // the file is present — but we also reference it here for clarity).
-      env_file: '.env.production',
       // Auto-restart on crash
       autorestart: true,
       // Wait 10s between an unexpected crash and a restart attempt
