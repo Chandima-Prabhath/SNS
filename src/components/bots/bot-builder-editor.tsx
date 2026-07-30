@@ -467,7 +467,9 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
           id: n.id,
           type: 'custom',
           position: n.position,
-          data: { ...n.data },
+          // Ensure data.type is set — use top-level type as fallback (for
+          // exported flows that don't have type inside data)
+          data: { ...n.data, type: n.data.type || n.type },
         })))
         setEdges(flow.edges.map((e) => ({
           id: e.id,

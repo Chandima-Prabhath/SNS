@@ -151,6 +151,10 @@ export interface FlowNodeData {
   logLevel?: 'info' | 'warn' | 'error'
 
   // ── UI metadata (not used by engine) ──
+  /** Node type — stored in data so the editor's CustomNode can read it.
+   *  Duplicates FlowNode.type but is required because ReactFlow sets
+   *  n.type to 'custom' for all custom nodes. */
+  type?: NodeType
   label?: string
 }
 

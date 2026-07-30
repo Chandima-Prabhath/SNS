@@ -4,22 +4,9 @@
  * A demo bot that uses every node type in a logical, interconnected flow.
  * Used by the "Load Example" button in the bot builder.
  *
- * Flow summary:
- *   Trigger (any message)
- *     → Counter (increment interaction count)
- *     → Format String ("Hello! This is interaction #N")
- *     → Message (send greeting)
- *     → Wait Choice (buttons: Joke / Ask AI / Game / Quit)
- *     → Switch (on the choice)
- *       ├─ "joke" → Message (joke) → loops back to Wait Choice
- *       ├─ "ask ai" → AI Generate → Format String → Message → loops back
- *       ├─ "game" → Random (2 paths) → Message each → loops back
- *       ├─ "quit" → Log (debug) → Set Var (reset counter) → Message (bye) → Stop
- *       └─ default → Message (invalid) → loops back to Wait Choice
- *
- * Tests: trigger, counter, format_string, message, wait_choice (buttons),
- *        switch_case, ai_generate, random, log, set_var, stop, typing, delay,
- *        api_call, send_media
+ * Each node's `data` block includes `type` because the editor's CustomNode
+ * component reads `data.type` to determine how to render the node (ReactFlow
+ * sets n.type to 'custom' for all custom nodes, so we can't use that).
  */
 
 import type { BotFlow } from './flow-types'
@@ -32,6 +19,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'trigger',
       position: { x: 400, y: 50 },
       data: {
+        type: 'trigger',
         triggerType: 'any_message',
         label: 'Trigger',
       },
@@ -43,6 +31,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'counter',
       position: { x: 400, y: 180 },
       data: {
+        type: 'counter',
         variable: 'interactionCount',
         increment: 1,
         startValue: 1,
@@ -56,6 +45,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'format_string',
       position: { x: 400, y: 310 },
       data: {
+        type: 'format_string',
         text: '👋 Hi {{sender}}! This is your interaction #{{interactionCount}}. What would you like to do?',
         variableName: 'greeting',
         label: 'Build Greeting',
@@ -68,6 +58,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'message',
       position: { x: 400, y: 440 },
       data: {
+        type: 'message',
         text: '{{greeting}}',
         label: 'Send Greeting',
       },
@@ -79,6 +70,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'typing',
       position: { x: 400, y: 570 },
       data: {
+        type: 'typing',
         seconds: 1,
         label: 'Typing Pause',
       },
@@ -90,6 +82,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'wait_choice',
       position: { x: 400, y: 700 },
       data: {
+        type: 'wait_choice',
         prompt: 'Choose an option:',
         options: ['Tell a joke', 'Ask AI', 'Play a game', 'Quit'],
         variableName: 'userChoice',
@@ -103,6 +96,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'delay',
       position: { x: 400, y: 860 },
       data: {
+        type: 'delay',
         seconds: 1,
         label: 'Pause Before Routing',
       },
@@ -114,6 +108,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'switch_case',
       position: { x: 400, y: 990 },
       data: {
+        type: 'switch_case',
         switchVariable: 'userChoice',
         cases: ['Tell a joke', 'Ask AI', 'Play a game', 'Quit'],
         label: 'Route Choice',
@@ -126,6 +121,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'message',
       position: { x: 100, y: 1180 },
       data: {
+        type: 'message',
         text: '😂 Why do programmers prefer dark mode? Because light attracts bugs!',
         label: 'Send Joke',
       },
@@ -137,6 +133,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'ai_generate',
       position: { x: 300, y: 1180 },
       data: {
+        type: 'ai_generate',
         aiPrompt: 'The user said: "{{userChoice}}". Greet them and tell them a fun fact in one sentence.',
         aiSystemPrompt: 'You are a cheerful assistant. Keep responses under 30 words.',
         aiModel: 'gemma3:270m',
@@ -151,6 +148,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'format_string',
       position: { x: 300, y: 1310 },
       data: {
+        type: 'format_string',
         text: '🤖 AI says: {{aiResponse}}',
         variableName: 'aiFormatted',
         label: 'Format AI Response',
@@ -161,6 +159,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'message',
       position: { x: 300, y: 1440 },
       data: {
+        type: 'message',
         text: '{{aiFormatted}}',
         label: 'Send AI Response',
       },
@@ -172,6 +171,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'random',
       position: { x: 500, y: 1180 },
       data: {
+        type: 'random',
         label: 'Random Game',
       },
     },
@@ -180,6 +180,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'message',
       position: { x: 450, y: 1380 },
       data: {
+        type: 'message',
         text: '🎮 You rolled a dice: it landed on 4! Lucky number.',
         label: 'Game Result 1',
       },
@@ -189,7 +190,8 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'message',
       position: { x: 600, y: 1380 },
       data: {
-        text: '🎮 You flipped a coin: it\'s HEADS! You win!',
+        type: 'message',
+        text: "🎮 You flipped a coin: it's HEADS! You win!",
         label: 'Game Result 2',
       },
     },
@@ -200,6 +202,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'log',
       position: { x: 700, y: 1180 },
       data: {
+        type: 'log',
         logMessage: 'User {{sender}} quit after {{interactionCount}} interactions.',
         logLevel: 'info',
         label: 'Log Quit',
@@ -210,6 +213,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'set_var',
       position: { x: 700, y: 1310 },
       data: {
+        type: 'set_var',
         variable: 'interactionCount',
         value: '0',
         label: 'Reset Counter',
@@ -220,6 +224,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'message',
       position: { x: 700, y: 1440 },
       data: {
+        type: 'message',
         text: '👋 Goodbye, {{sender}}! Your counter has been reset. Send any message to start again.',
         label: 'Say Goodbye',
       },
@@ -229,6 +234,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'stop',
       position: { x: 700, y: 1570 },
       data: {
+        type: 'stop',
         label: 'Stop',
       },
     },
@@ -239,7 +245,8 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'message',
       position: { x: 900, y: 1180 },
       data: {
-        text: '🤔 I didn\'t understand that. Please pick one of the options below.',
+        type: 'message',
+        text: "🤔 I didn't understand that. Please pick one of the options below.",
         label: 'Invalid Choice',
       },
     },
@@ -250,6 +257,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'api_call',
       position: { x: 900, y: 1440 },
       data: {
+        type: 'api_call',
         url: 'https://official-joke-api.appspot.com/random_joke',
         method: 'GET',
         variableName: 'jokeApiResult',
@@ -263,8 +271,9 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       type: 'send_media',
       position: { x: 900, y: 1570 },
       data: {
+        type: 'send_media',
         mediaUrl: 'https://emojicdn.elk.sh/%F0%9F%8E%89',
-        caption: 'Here\'s a party emoji to celebrate! 🎉',
+        caption: "Here's a party emoji to celebrate! 🎉",
         mediaType: 'image',
         label: 'Send Emoji',
       },
