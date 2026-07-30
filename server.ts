@@ -19,11 +19,9 @@
 
 // Load .env file — this is a no-op when running with Bun (which loads
 // .env automatically), but critical when running with Node/PM2/tsx.
-try {
-  await import('dotenv').then((dotenv) => dotenv.config())
-} catch {
-  // dotenv not installed — Bun loads .env natively, so this is fine
-}
+// Uses a synchronous side-effect import (no top-level await — tsx/esbuild
+// doesn't support it).
+import 'dotenv/config'
 
 import { createServer } from 'http'
 import { parse } from 'url'
