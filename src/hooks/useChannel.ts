@@ -318,13 +318,19 @@ export function useChannel(channelId: string | null) {
   const sendCallback = useCallback(
     async (messageId: string, callbackData: string) => {
       try {
+        console.log(`[callback] clicking button: messageId=${messageId} callbackData=${callbackData}`)
         const res = await fetch(`/api/channels/${channelId}/messages/${messageId}/callback`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ callbackData }),
         })
-        if (!res.ok) throw new Error('callback failed')
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'callback failed' }))
+          console.error('[callback] API error:', res.status, err)
+          throw new Error(err.error || `callback failed (${res.status})`)
+        }
         const data = await res.json()
+        console.log(`[callback] response: ${data.botReplies?.length || 0} replies`)
 
         // Add bot replies to the message cache + broadcast via socket
         if (data.botReplies && Array.isArray(data.botReplies)) {
@@ -339,8 +345,10 @@ export function useChannel(channelId: string | null) {
             }
           }
         }
-      } catch (e) {
+      } catch (e: any) {
         console.error('[callback] failed:', e)
+        // Don't toast on every error — could be noisy. Console log is enough
+        // for debugging. The user can check the browser console.
       }
     },
     [channelId, socket, qc]

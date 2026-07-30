@@ -54,15 +54,20 @@ export const visualBot: BotModule = {
     const state: VisualSessionState = { ...EMPTY_STATE, ...(await ctx.getState()) }
     if (!state.variables) state.variables = {}
 
+    console.log(`[visual bot] onMessage: pausedAt=${state.pausedAt || 'null'}, body="${ctx.message.body}"`)
+
     // ── Resume case: paused session ────────────────────────────────────
     if (state.pausedAt) {
       const inputNode = findNode(flow, state.pausedAt)
       if (!inputNode) {
+        console.log(`[visual bot] paused node not found, resetting`)
         // Stale session — reset and run from trigger
         await ctx.setState(EMPTY_STATE)
         await runFromTrigger(flow, ctx)
         return
       }
+
+      console.log(`[visual bot] resuming at node type=${inputNode.type}`)
 
       const variableName = inputNode.data.variableName || 'reply'
 
@@ -70,6 +75,7 @@ export const visualBot: BotModule = {
       if (inputNode.type === 'wait_choice') {
         const options = inputNode.data.options || []
         const reply = ctx.message.body.trim()
+        console.log(`[visual bot] wait_choice: reply="${reply}", options=${JSON.stringify(options)}`)
 
         // Allow "1", "2" indexing or direct match
         let matched: string | undefined
@@ -80,6 +86,8 @@ export const visualBot: BotModule = {
           const lower = reply.toLowerCase()
           matched = options.find((o) => o.toLowerCase() === lower)
         }
+
+        console.log(`[visual bot] matched=${matched || 'NONE'}`)
 
         if (!matched) {
           // Re-prompt with inline buttons and stay paused
@@ -139,6 +147,7 @@ export const visualBot: BotModule = {
     }
 
     // ── Fresh start: run from trigger ──────────────────────────────────
+    console.log(`[visual bot] no paused session — running from trigger`)
     await runFromTrigger(flow, ctx)
   },
 }

@@ -338,12 +338,22 @@ export async function dispatchBotCallback(params: {
   }
 
   const mod = getBotModule(bot.module)
-  if (!mod) return
+  if (!mod) {
+    console.log(`[callback] bot module '${bot.module}' not found`)
+    return
+  }
+
+  console.log(`[callback] dispatching to module '${bot.module}', routing to onMessage...`)
 
   // For visual bots, route to onMessage — the wait_choice resume path in
   // visual.ts will match the callbackData against the options.
   if (mod.onMessage && bot.module === 'visual') {
-    await mod.onMessage(ctx)
+    try {
+      await mod.onMessage(ctx)
+      console.log(`[callback] onMessage completed`)
+    } catch (e: any) {
+      console.error('[callback] onMessage error:', e)
+    }
     return
   }
 

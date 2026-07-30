@@ -13,106 +13,125 @@ export const dynamic = 'force-dynamic'
  *
  * Handles an inline keyboard button click (Telegram-style callback).
  * Body: { callbackData: string }
- *
- * Flow:
- *   1. Auth the user + verify they're a channel member.
- *   2. Load the original message (must have a keyboard + be from a bot).
- *   3. Extract the botId from the message's senderId.
- *   4. Call dispatchBotCallback — this resumes the visual bot's paused
- *      wait_choice node, passing the callbackData as the "reply".
- *   5. Fetch any bot replies created during dispatch and return them so
- *      the client can broadcast them via socket.
  */
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string; messageId: string }> }
 ) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
-  const userId = (session.user as any).id
-  const { id: channelId, messageId } = await params
+  try {
+    const session = await getServerSession(authOptions)
+    if (!session?.user) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    }
+    const userId = (session.user as any).id
+    const { id: channelId, messageId } = await params
 
-  // Verify channel membership
-  const membership = await db.channelMember.findUnique({
-    where: { channelId_userId: { channelId, userId } },
-  })
-  if (!membership) {
-    return NextResponse.json({ error: 'not a channel member' }, { status: 403 })
-  }
+    console.log(`[callback] channelId=${channelId} messageId=${messageId} userId=${userId}`)
 
-  const body = await req.json()
-  const { callbackData } = body
-  if (!callbackData || typeof callbackData !== 'string') {
-    return NextResponse.json({ error: 'callbackData required' }, { status: 400 })
-  }
+    // Verify channel membership
+    const membership = await db.channelMember.findUnique({
+      where: { channelId_userId: { channelId, userId } },
+    })
+    if (!membership) {
+      console.log(`[callback] not a channel member`)
+      return NextResponse.json({ error: 'not a channel member' }, { status: 403 })
+    }
 
-  // Load the original message — must be a bot message with a keyboard
-  const originalMessage = await db.message.findUnique({
-    where: { id: messageId },
-    select: {
-      id: true,
-      senderType: true,
-      senderId: true,
-      keyboard: true,
-      createdAt: true,
-    },
-  })
+    const body = await req.json()
+    const { callbackData } = body
+    if (!callbackData || typeof callbackData !== 'string') {
+      console.log(`[callback] missing callbackData`)
+      return NextResponse.json({ error: 'callbackData required' }, { status: 400 })
+    }
 
-  if (!originalMessage) {
-    return NextResponse.json({ error: 'message not found' }, { status: 404 })
-  }
+    console.log(`[callback] callbackData=${callbackData}`)
 
-  if (originalMessage.senderType !== 'bot' || !originalMessage.senderId) {
-    return NextResponse.json({ error: 'not a bot message' }, { status: 400 })
-  }
-
-  if (!originalMessage.keyboard) {
-    return NextResponse.json({ error: 'message has no keyboard' }, { status: 400 })
-  }
-
-  const botId = originalMessage.senderId
-  const senderName = (session.user as any).username || (session.user as any).displayName || 'User'
-
-  // Dispatch the callback to the bot — this resumes the paused flow
-  await dispatchBotCallback({
-    botId,
-    channelId,
-    senderId: userId,
-    senderName,
-    messageId,
-    callbackData,
-    replyToId: messageId,
-  })
-
-  // Fetch any bot replies created during dispatch (same pattern as the
-  // messages POST route)
-  const botReplies = await db.message.findMany({
-    where: {
-      channelId,
-      senderType: 'bot',
-      createdAt: { gte: originalMessage.createdAt },
-      id: { not: messageId }, // exclude the original message itself
-    },
-    include: {
-      sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
-      replyTo: {
-        select: { id: true, body: true, senderType: true, sender: { select: { username: true, displayName: true } } },
+    // Load the original message — must be a bot message with a keyboard
+    const originalMessage = await db.message.findUnique({
+      where: { id: messageId },
+      select: {
+        id: true,
+        senderType: true,
+        senderId: true,
+        keyboard: true,
+        createdAt: true,
       },
-    },
-    orderBy: { createdAt: 'asc' },
-  })
+    })
 
-  // Get recipient IDs for socket broadcast
-  const memberIds = await db.channelMember.findMany({
-    where: { channelId },
-    select: { userId: true },
-  })
-  const recipientIds = memberIds.map((m) => m.userId).filter((id) => id !== userId)
+    if (!originalMessage) {
+      console.log(`[callback] original message not found`)
+      return NextResponse.json({ error: 'message not found' }, { status: 404 })
+    }
 
-  return NextResponse.json({
-    botReplies,
-    recipientIds,
-  })
+    console.log(`[callback] originalMessage: senderType=${originalMessage.senderType} senderId=${originalMessage.senderId} hasKeyboard=${!!originalMessage.keyboard}`)
+
+    if (originalMessage.senderType !== 'bot' || !originalMessage.senderId) {
+      console.log(`[callback] not a bot message`)
+      return NextResponse.json({ error: 'not a bot message' }, { status: 400 })
+    }
+
+    if (!originalMessage.keyboard) {
+      console.log(`[callback] message has no keyboard`)
+      return NextResponse.json({ error: 'message has no keyboard' }, { status: 400 })
+    }
+
+    const botId = originalMessage.senderId
+    const senderName = (session.user as any).username || (session.user as any).displayName || 'User'
+
+    // Record timestamp BEFORE dispatch — we'll query bot replies created
+    // after this moment to avoid matching stale messages
+    const dispatchStart = new Date()
+
+    console.log(`[callback] dispatching to bot ${botId}...`)
+
+    // Dispatch the callback to the bot — this resumes the paused flow
+    await dispatchBotCallback({
+      botId,
+      channelId,
+      senderId: userId,
+      senderName,
+      messageId,
+      callbackData,
+      replyToId: messageId,
+    })
+
+    console.log(`[callback] dispatch complete, fetching bot replies since ${dispatchStart.toISOString()}`)
+
+    // Fetch bot replies created during dispatch (using the dispatch start
+    // timestamp to avoid matching stale messages)
+    const botReplies = await db.message.findMany({
+      where: {
+        channelId,
+        senderType: 'bot',
+        createdAt: { gte: dispatchStart },
+      },
+      include: {
+        sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
+        replyTo: {
+          select: { id: true, body: true, senderType: true, sender: { select: { username: true, displayName: true } } },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    })
+
+    console.log(`[callback] found ${botReplies.length} bot replies`)
+
+    // Get recipient IDs for socket broadcast
+    const memberIds = await db.channelMember.findMany({
+      where: { channelId },
+      select: { userId: true },
+    })
+    const recipientIds = memberIds.map((m) => m.userId).filter((id) => id !== userId)
+
+    return NextResponse.json({
+      botReplies,
+      recipientIds,
+    })
+  } catch (e: any) {
+    console.error('[callback] error:', e)
+    return NextResponse.json(
+      { error: e?.message || 'callback failed' },
+      { status: 500 }
+    )
+  }
 }
