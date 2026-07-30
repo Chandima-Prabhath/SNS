@@ -74,6 +74,18 @@ export async function GET() {
       })
       g.partner = otherMembers[0]?.user || null
 
+      // If the partner is a bot (bot.id == user.id), set their status based
+      // on the bot's enabled flag — enabled bots show as 'online', disabled as 'offline'
+      if (g.partner) {
+        const botRecord = await db.bot.findUnique({
+          where: { id: g.partner.id },
+          select: { enabled: true },
+        }).catch(() => null)
+        if (botRecord) {
+          g.partner.status = botRecord.enabled ? 'online' : 'offline'
+        }
+      }
+
       // Override each channel's name to be the partner's display name
       // so the chat list shows "Jane Doe" instead of "dm"
       if (g.partner) {

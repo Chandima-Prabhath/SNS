@@ -390,6 +390,18 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     }
   }, [playNext, setPosition])
 
+  // ─── Effect: Pre-download upcoming queue tracks ───────────────────────
+  // When a track starts playing, pre-download the next 2 tracks in the queue
+  // so they're ready to play instantly when the user gets to them.
+  useEffect(() => {
+    if (!currentTrack || queue.length === 0) return
+    // Pre-download the next 2 tracks (or all if queue has fewer)
+    const toPreDownload = queue.slice(0, 2)
+    for (const track of toPreDownload) {
+      fetch(`/api/music/predownload/${track.videoId}`, { method: 'POST' }).catch(() => {})
+    }
+  }, [currentTrack, queue])
+
   // ─── Effect: Socket.io room sync ──────────────────────────────────────
   // Joins the music room's socket channel, requests the host's current
   // state, and listens for incoming sync events. Re-subscribes whenever

@@ -25,5 +25,21 @@ export async function GET() {
     orderBy: { username: 'asc' },
   })
 
-  return NextResponse.json({ users })
+  // For each user that is actually a bot, set their status based on the
+  // bot's enabled flag — enabled bots show as 'online', disabled as 'offline'
+  const botIds = users.map((u) => u.id)
+  const bots = await db.bot.findMany({
+    where: { id: { in: botIds } },
+    select: { id: true, enabled: true },
+  })
+  const botMap = new Map(bots.map((b) => [b.id, b.enabled]))
+
+  const usersWithBotStatus = users.map((u) => {
+    if (botMap.has(u.id)) {
+      return { ...u, status: botMap.get(u.id) ? 'online' : 'offline' }
+    }
+    return u
+  })
+
+  return NextResponse.json({ users: usersWithBotStatus })
 }

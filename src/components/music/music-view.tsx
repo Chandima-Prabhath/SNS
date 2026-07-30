@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,7 @@ import {
   Search, Play, Pause, SkipForward, Plus,
   Loader2, Radio, Headphones, X, ListMusic, Compass,
   Trash2, Repeat, Shuffle, Music as MusicIcon, Users,
-  Flame, Sparkles,
+  Flame, Sparkles, History, Library, Clock,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -29,7 +29,23 @@ interface Room {
   members: any[]
 }
 
-type Tab = 'browse' | 'rooms' | 'queue'
+type Tab = 'browse' | 'rooms' | 'queue' | 'library'
+
+const HISTORY_KEY = 'adoo-music-history'
+const MAX_HISTORY = 50
+
+function loadHistory(): Track[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+function saveHistory(tracks: Track[]) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(tracks.slice(0, MAX_HISTORY)))
+  } catch {}
+}
 
 /**
  * MusicView — Browse / Rooms / Queue UI for the music feature.
@@ -48,9 +64,26 @@ export function MusicView() {
   const [searching, setSearching] = useState(false)
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const qc = useQueryClient()
+  const [history, setHistory] = useState<Track[]>([])
+
+  // Load history on mount
+  useEffect(() => {
+    setHistory(loadHistory())
+  }, [])
+
+  // Track when the current track changes — add to history
+  useEffect(() => {
+    if (currentTrack) {
+      setHistory((prev) => {
+        const filtered = prev.filter((t) => t.videoId !== currentTrack.videoId)
+        const updated = [currentTrack, ...filtered].slice(0, MAX_HISTORY)
+        saveHistory(updated)
+        return updated
+      })
+    }
+  }, [currentTrack])
 
   // ─── Playback state from the global store ─────────────────────────────
-  const currentTrack = useMusicStore((s) => s.currentTrack)
   const isPlaying = useMusicStore((s) => s.isPlaying)
   const queue = useMusicStore((s) => s.queue)
   const autoplay = useMusicStore((s) => s.autoplay)
@@ -177,6 +210,7 @@ export function MusicView() {
                 ['browse', 'Browse', Compass],
                 ['rooms', 'Rooms', Radio],
                 ['queue', 'Queue', ListMusic],
+                ['library', 'Library', Library],
               ] as const).map(([key, label, Icon]) => (
                 <button
                   key={key}
@@ -589,6 +623,61 @@ export function MusicView() {
                   >
                     <SkipForward className="w-4 h-4 mr-2" />
                     Skip to next
+                  </Button>
+                )}
+              </motion.div>
+            )}
+
+            {tab === 'library' && (
+              <motion.div
+                key="library"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2 }}
+                className="space-y-6"
+              >
+                {/* Recently Played */}
+                <div>
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
+                    <History className="w-3.5 h-3.5" />
+                    Recently Played
+                  </h2>
+                  {history.length === 0 ? (
+                    <Card className="p-8 text-center border-dashed">
+                      <Clock className="w-10 h-10 mx-auto text-muted-foreground mb-2" strokeWidth={1.5} />
+                      <p className="text-sm text-muted-foreground">No play history yet</p>
+                    </Card>
+                  ) : (
+                    <div className="space-y-1">
+                      {history.map((track, i) => (
+                        <TrackRow
+                          key={`${track.videoId}-${i}`}
+                          track={track}
+                          onPlay={() => playTrack(track)}
+                          onAddToQueue={() => playTrack(track, true)}
+                          isCurrent={currentTrack?.videoId === track.videoId}
+                          isPlaying={isPlaying && currentTrack?.videoId === track.videoId}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Clear history button */}
+                {history.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setHistory([])
+                      saveHistory([])
+                      toast.success('History cleared')
+                    }}
+                    className="text-red-400 hover:text-red-300"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                    Clear History
                   </Button>
                 )}
               </motion.div>
