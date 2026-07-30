@@ -110,10 +110,10 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
   // ─── Video call layout ───
   if (isVideoCall) {
     return (
-      <>
+      <div className="fixed inset-0 z-[70]">
       <motion.div
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[70] bg-black flex flex-col"
+        className="fixed inset-0 bg-black flex flex-col"
       >
         {/* Top bar */}
         <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between text-white/80 text-sm p-4 pt-safe bg-gradient-to-b from-black/60 to-transparent">
@@ -186,13 +186,13 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
           if (!res.ok) throw new Error('Failed to send invite')
         }}
       />
-    </>
-  )
-}
+      </div>
+    )
+  }
 
   // ─── Voice call layout — premium phone-call style ───
   return (
-    <>
+    <div className="fixed inset-0 z-[70]">
     <motion.div
       initial={{ opacity: 0, scale: 1.02 }}
       animate={{ opacity: 1, scale: 1 }}
@@ -387,7 +387,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
         if (!res.ok) throw new Error('Failed to send invite')
       }}
     />
-    </>
+    </div>
   )
 }
 

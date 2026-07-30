@@ -13,7 +13,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useContextMenu } from '@/components/ui/context-menu-provider'
 import { useCall } from '@/hooks/useCall'
 import { useMusicStore } from '@/stores/useMusicStore'
-import { useSocket } from '@/hooks/useSocket'
 import { toast } from 'sonner'
 
 interface MessageListProps {
@@ -427,7 +426,6 @@ function MessageItem(props: MessageItemProps) {
   const ctxMenu = useContextMenu()
   const { startCall } = useCall()
   const setActiveRoomId = useMusicStore((s) => s.setActiveRoomId)
-  const socket = useSocket()
 
   // Handle invitation Join button — joins a call or music room
   const handleInviteJoin = async (invite: any) => {
@@ -714,7 +712,10 @@ function MessageItem(props: MessageItemProps) {
           </div>
         ) : (
           <>
-            <div className="whitespace-pre-wrap">{m.body}</div>
+            {/* Don't show body text for invite messages (it's JSON) */}
+            {m.mediaType !== 'invite-call' && m.mediaType !== 'invite-music' && (
+              <div className="whitespace-pre-wrap">{m.body}</div>
+            )}
             {m.editedAt && (
               <span className={cn('text-[10px] opacity-60 ml-1')}>
                 edited

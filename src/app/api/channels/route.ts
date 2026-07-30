@@ -83,8 +83,20 @@ export async function GET() {
         latest.sender?.displayName ||
         latest.sender?.username ||
         (latest.senderType === 'bot' ? 'Bot' : 'Unknown')
+      // For invite messages, show a friendly preview instead of raw JSON
+      let previewBody = latest.body
+      if (latest.mediaType === 'invite-call' || latest.mediaType === 'invite-music') {
+        try {
+          const invite = JSON.parse(latest.body)
+          previewBody = invite.type === 'call'
+            ? `📞 Call invitation`
+            : `🎵 Music room invitation`
+        } catch {
+          previewBody = 'Invitation'
+        }
+      }
       ;(ch as any).lastMessage = {
-        body: latest.body,
+        body: previewBody,
         mediaUrl: latest.mediaUrl,
         mediaType: latest.mediaType,
         senderName,

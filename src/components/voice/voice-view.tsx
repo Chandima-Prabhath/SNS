@@ -70,11 +70,16 @@ export function VoiceView() {
       return res.json()
     },
     onSuccess: async (data) => {
-      await startCall({ callId: data.call.id, channelId: data.call.channelId })
-      unlockAudio()
-      toast.success('Joined voice channel')
+      try {
+        await startCall({ callId: data.call.id, channelId: data.call.channelId })
+        unlockAudio()
+        toast.success('Joined voice channel')
+      } catch (e: any) {
+        console.error('[voice-view] startCall failed:', e)
+        toast.error(e?.message || 'Failed to start call — check microphone permissions')
+      }
     },
-    onError: () => toast.error('Failed to join voice'),
+    onError: (e: any) => toast.error(e?.message || 'Failed to join voice'),
   })
 
   // When in an active call, show the full-screen call UI
