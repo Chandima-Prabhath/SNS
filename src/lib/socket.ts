@@ -31,9 +31,12 @@ export function getSocket(): Promise<Socket> {
       withCredentials: true, // sends the NextAuth cookie automatically
     })
 
-    instance.on('connect', () => resolve(instance))
+    instance.on('connect', () => {
+      console.log('[socket] connected successfully')
+      resolve(instance)
+    })
     instance.on('connect_error', (err) => {
-      console.error('[socket] connect_error', err.message)
+      console.error('[socket] connect_error:', err.message, '| type:', err.type || 'unknown')
       if (!socket) reject(err)
     })
 

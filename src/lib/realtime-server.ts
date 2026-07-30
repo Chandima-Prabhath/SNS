@@ -61,6 +61,8 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
   io.use(async (socket, next) => {
     try {
       const cookieHeader = socket.handshake.headers.cookie || ''
+      console.log('[realtime auth] cookie header present:', !!cookieHeader, 'length:', cookieHeader.length)
+
       // Parse cookies into a plain object (small helper, avoids extra dep)
       const cookies: Record<string, string> = {}
       for (const part of cookieHeader.split(';')) {
@@ -79,6 +81,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
         cookies['next-auth.session-token']
 
       if (!tokenRaw) {
+        console.log('[realtime auth] no session cookie found. Available cookies:', Object.keys(cookies))
         return next(new Error('unauthorized: no session cookie'))
       }
 
@@ -86,6 +89,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       // next-auth/jwt.decode only needs secret + token.
       const secret = process.env.NEXTAUTH_SECRET
       if (!secret) {
+        console.error('[realtime auth] NEXTAUTH_SECRET is not set in environment!')
         return next(new Error('server misconfigured: NEXTAUTH_SECRET missing'))
       }
 
@@ -95,14 +99,16 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       } as any)
 
       if (!decoded || !decoded.id) {
+        console.log('[realtime auth] JWT decode returned null or missing id. decoded:', decoded ? Object.keys(decoded) : 'null')
         return next(new Error('unauthorized: invalid session'))
       }
 
       ;(socket as any).userId = decoded.id
       ;(socket as any).username = decoded.username || decoded.email || 'user'
+      console.log('[realtime auth] success: userId=', decoded.id, 'username=', (socket as any).username)
       next()
     } catch (e: any) {
-      console.error('[realtime auth] error:', e.message)
+      console.error('[realtime auth] error:', e?.message || e, e?.stack?.slice(0, 200))
       next(new Error('unauthorized'))
     }
   })
