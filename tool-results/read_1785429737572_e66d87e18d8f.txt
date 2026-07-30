@@ -1,0 +1,1043 @@
+     1→'use client'
+     2→
+     3→import { useCallback, useMemo, useState } from 'react'
+     4→import {
+     5→  ReactFlow,
+     6→  Controls,
+     7→  MiniMap,
+     8→  Background,
+     9→  addEdge,
+    10→  useNodesState,
+    11→  useEdgesState,
+    12→  type Connection,
+    13→  type Node,
+    14→  type Edge,
+    15→  BackgroundVariant,
+    16→  Handle,
+    17→  Position,
+    18→  MarkerType,
+    19→} from '@xyflow/react'
+    20→import '@xyflow/react/dist/style.css'
+    21→import { Button } from '@/components/ui/button'
+    22→import { Input } from '@/components/ui/input'
+    23→import { Label } from '@/components/ui/label'
+    24→import { Textarea } from '@/components/ui/textarea'
+    25→import {
+    26→  Select,
+    27→  SelectContent,
+    28→  SelectItem,
+    29→  SelectTrigger,
+    30→  SelectValue,
+    31→} from '@/components/ui/select'
+    32→import {
+    33→  Zap, Send, Loader, Keyboard, MousePointerClick,
+    34→  GitBranch, Variable, Clock, Square, Webhook, Shuffle,
+    35→  Save, Trash2, Plus, X, AlertTriangle, Info, Sparkles,
+    36→} from 'lucide-react'
+    37→import {
+    38→  type BotFlow, type FlowNode, type NodeType, type NodeCategory,
+    39→  NODE_DEFS, CATEGORY_ORDER, CATEGORY_LABELS, defaultNodeData,
+    40→} from '@/lib/bot/flow-types'
+    41→
+    42→// ─── Icon registry ───────────────────────────────────────────────────────────
+    43→const ICONS: Record<string, typeof Zap> = {
+    44→  Zap, Send, Loader, Keyboard, MousePointerClick,
+    45→  GitBranch, Variable, Clock, Square, Webhook, Shuffle,
+    46→}
+    47→
+    48→// ─── Custom Node Component ───────────────────────────────────────────────────
+    49→/**
+    50→ * Reads the FlowNode type from `data.type` (NOT the ReactFlow `type` prop,
+    51→ * which is always 'custom' in this app). This was the root cause of every
+    52→ * node rendering as a green "Send Message" node.
+    53→ */
+    54→function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
+    55→  const nodeType = (data.type as NodeType) || 'message'
+    56→  const def = NODE_DEFS[nodeType] || NODE_DEFS.message
+    57→  const Icon = ICONS[def.icon] || Zap
+    58→
+    59→  const isTrigger = nodeType === 'trigger'
+    60→  const isStop = nodeType === 'stop'
+    61→  const isCondition = nodeType === 'condition'
+    62→  const isRandom = nodeType === 'random'
+    63→
+    64→  // ── Build preview content per node type ──────────────────────────────
+    65→  let preview: { label: string; value: string } | null = null
+    66→  switch (nodeType) {
+    67→    case 'trigger': {
+    68→      const tt = data.triggerType || 'any_message'
+    69→      const label =
+    70→        tt === 'command' ? `/${data.command || 'command'}` :
+    71→        tt === 'mention' ? '@mentioned' :
+    72→        'any message'
+    73→      preview = { label: 'When', value: label }
+    74→      break
+    75→    }
+    76→    case 'message':
+    77→      preview = { label: 'Says', value: data.text || '(empty)' }
+    78→      break
+    79→    case 'typing':
+    80→      preview = { label: 'For', value: `${data.seconds || 1}s` }
+    81→      break
+    82→    case 'input':
+    83→      preview = { label: 'Asks', value: data.prompt || '(empty)' }
+    84→      break
+    85→    case 'wait_choice':
+    86→      preview = { label: 'Picks from', value: (data.options || []).join(' · ') || '(none)' }
+    87→      break
+    88→    case 'condition':
+    89→      preview = { label: 'If', value: `${data.variable || '∅'} ${data.operator || 'exists'} ${data.value || ''}` }
+    90→      break
+    91→    case 'set_var':
+    92→      preview = { label: 'Sets', value: `${data.variable || '∅'} = ${data.value || '∅'}` }
+    93→      break
+    94→    case 'delay':
+    95→      preview = { label: 'Wait', value: `${data.seconds || 1}s` }
+    96→      break
+    97→    case 'stop':
+    98→      preview = null
+    99→      break
+   100→    case 'api_call':
+   101→      preview = { label: 'Calls', value: `${data.method || 'GET'} ${data.url || '(no url)'}` }
+   102→      break
+   103→    case 'random':
+   104→      preview = { label: 'Picks', value: 'a random branch' }
+   105→      break
+   106→  }
+   107→
+   108→  return (
+   109→    <div
+   110→      className="bg-[#2b2d31] rounded-xl min-w-[200px] max-w-[260px] shadow-lg border overflow-hidden transition-shadow"
+   111→      style={{
+   112→        borderColor: selected ? def.color : 'rgba(255,255,255,0.08)',
+   113→        boxShadow: selected ? `0 0 0 2px ${def.color}40` : undefined,
+   114→      }}
+   115→    >
+   116→      {/* Target handle (not for trigger — it has no incoming edges) */}
+   117→      {!isTrigger && (
+   118→        <Handle
+   119→          type="target"
+   120→          position={Position.Top}
+   121→          style={{ background: def.color, width: 10, height: 10, border: 'none' }}
+   122→        />
+   123→      )}
+   124→
+   125→      {/* Header */}
+   126→      <div
+   127→        className="flex items-center gap-2 px-3 py-2 border-b"
+   128→        style={{ background: def.bg, borderColor: `${def.color}30` }}
+   129→      >
+   130→        <div
+   131→          className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
+   132→          style={{ background: def.color + '30' }}
+   133→        >
+   134→          <Icon className="w-3.5 h-3.5" style={{ color: def.color }} />
+   135→        </div>
+   136→        <span
+   137→          className="text-[11px] font-bold uppercase tracking-wider flex-1"
+   138→          style={{ color: def.color }}
+   139→        >
+   140→          {def.label}
+   141→        </span>
+   142→        {def.pauses && (
+   143→          <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/10 text-white/60">
+   144→            pause
+   145→          </span>
+   146→        )}
+   147→        {def.terminates && (
+   148→          <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/10 text-white/60">
+   149→            end
+   150→          </span>
+   151→        )}
+   152→      </div>
+   153→
+   154→      {/* Body */}
+   155→      <div className="px-3 py-2 text-xs">
+   156→        {preview ? (
+   157→          <div className="space-y-1">
+   158→            <div className="text-white/40 uppercase tracking-wider text-[10px]">{preview.label}</div>
+   159→            <div className="text-white/80 break-words line-clamp-2">{preview.value}</div>
+   160→            {(nodeType === 'input' || nodeType === 'wait_choice' || nodeType === 'api_call') && data.variableName && (
+   161→              <div className="text-[10px] text-white/40">→ saves as <code className="text-white/60">{`{{${data.variableName}}}`}</code></div>
+   162→            )}
+   163→          </div>
+   164→        ) : (
+   165→          <div className="text-white/50 italic text-center py-1">{def.description}</div>
+   166→        )}
+   167→      </div>
+   168→
+   169→      {/* Source handles */}
+   170→      {isCondition ? (
+   171→        <div className="flex justify-between px-3 pb-2 pt-1">
+   172→          <div className="flex flex-col items-center">
+   173→            <span className="text-[10px] font-semibold text-emerald-400 mb-1">TRUE</span>
+   174→            <Handle
+   175→              type="source"
+   176→              position={Position.Bottom}
+   177→              id="true"
+   178→              style={{ background: '#34D399', width: 10, height: 10, border: 'none' }}
+   179→            />
+   180→          </div>
+   181→          <div className="flex flex-col items-center">
+   182→            <span className="text-[10px] font-semibold text-red-400 mb-1">FALSE</span>
+   183→            <Handle
+   184→              type="source"
+   185→              position={Position.Bottom}
+   186→              id="false"
+   187→              style={{ background: '#F87171', width: 10, height: 10, border: 'none' }}
+   188→            />
+   189→          </div>
+   190→        </div>
+   191→      ) : isRandom ? (
+   192→        <div className="px-3 pb-2 pt-1 text-center">
+   193→          <span className="text-[10px] text-white/40 mb-1 block">All outgoing edges are random picks</span>
+   194→          <Handle
+   195→            type="source"
+   196→            position={Position.Bottom}
+   197→            style={{ background: def.color, width: 10, height: 10, border: 'none' }}
+   198→          />
+   199→        </div>
+   200→      ) : !isStop ? (
+   201→        <Handle
+   202→          type="source"
+   203→          position={Position.Bottom}
+   204→          style={{ background: def.color, width: 10, height: 10, border: 'none' }}
+   205→        />
+   206→      ) : null}
+   207→    </div>
+   208→  )
+   209→}
+   210→
+   211→const nodeTypes = { custom: CustomNode }
+   212→
+   213→// ─── Bot Builder Editor ──────────────────────────────────────────────────────
+   214→
+   215→interface BotBuilderEditorProps {
+   216→  initialFlow?: BotFlow
+   217→  onSave: (flow: BotFlow) => void
+   218→}
+   219→
+   220→export function BotBuilderEditor({ initialFlow, onSave }: BotBuilderEditorProps) {
+   221→  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+   222→  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
+   223→
+   224→  // ── Initial nodes/edges ──────────────────────────────────────────────
+   225→  // FIX: previously the .map() overwrote data.type with ReactFlow's type
+   226→  // ('custom'), so the inspector crashed on click. Now we use data.type
+   227→  // everywhere and never let n.type leak into data.
+   228→  const { initialNodes, initialEdges } = useMemo(() => {
+   229→    if (initialFlow?.nodes?.length) {
+   230→      return {
+   231→        initialNodes: initialFlow.nodes.map((n) => ({
+   232→          id: n.id,
+   233→          type: 'custom',
+   234→          position: n.position,
+   235→          data: { ...n.data },
+   236→        })) as Node[],
+   237→        initialEdges: initialFlow.edges.map((e) => ({
+   238→          id: e.id,
+   239→          source: e.source,
+   240→          target: e.target,
+   241→          sourceHandle: e.sourceHandle || undefined,
+   242→          label: e.label || undefined,
+   243→          animated: true,
+   244→          style: { stroke: '#5865F2', strokeWidth: 2 },
+   245→          markerEnd: { type: MarkerType.ArrowClosed, color: '#5865F2' },
+   246→        })) as Edge[],
+   247→      }
+   248→    }
+   249→    // Brand-new bot: seed with a sensible default flow
+   250→    const triggerData = defaultNodeData('trigger')
+   251→    const msgData = defaultNodeData('message')
+   252→    return {
+   253→      initialNodes: [
+   254→        { id: 'trigger-1', type: 'custom', position: { x: 320, y: 80 }, data: { ...triggerData, type: 'trigger' } },
+   255→        { id: 'message-1', type: 'custom', position: { x: 320, y: 240 }, data: { ...msgData, type: 'message' } },
+   256→      ] as Node[],
+   257→      initialEdges: [
+   258→        {
+   259→          id: 'e-trigger-1-message-1',
+   260→          source: 'trigger-1',
+   261→          target: 'message-1',
+   262→          animated: true,
+   263→          style: { stroke: '#5865F2', strokeWidth: 2 },
+   264→          markerEnd: { type: MarkerType.ArrowClosed, color: '#5865F2' },
+   265→        },
+   266→      ] as Edge[],
+   267→    }
+   268→  }, [initialFlow])
+   269→
+   270→  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
+   271→  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
+   272→
+   273→  const onConnect = useCallback(
+   274→    (params: Connection) =>
+   275→      setEdges((eds) =>
+   276→        addEdge(
+   277→          {
+   278→            ...params,
+   279→            animated: true,
+   280→            style: { stroke: '#5865F2', strokeWidth: 2 },
+   281→            markerEnd: { type: MarkerType.ArrowClosed, color: '#5865F2' },
+   282→          },
+   283→          eds
+   284→        )
+   285→      ),
+   286→    [setEdges]
+   287→  )
+   288→
+   289→  // ── Add node — position near the canvas center, offset by count ──────
+   290→  const addNode = (type: NodeType) => {
+   291→    const id = `${type}-${Date.now()}`
+   292→    const data = { ...defaultNodeData(type), type }
+   293→    // Place near the top-center with a slight cascade so it's always visible
+   294→    const idx = nodes.length
+   295→    const position = {
+   296→      x: 240 + (idx % 4) * 90,
+   297→      y: 80 + idx * 30,
+   298→    }
+   299→    setNodes((nds) => [...nds, { id, type: 'custom', position, data }])
+   300→    setSelectedNodeId(id)
+   301→  }
+   302→
+   303→  const updateNodeData = (nodeId: string, patch: Record<string, any>) =>
+   304→    setNodes((nds) =>
+   305→      nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n))
+   306→    )
+   307→
+   308→  const deleteNode = (nodeId: string) => {
+   309→    setNodes((nds) => nds.filter((n) => n.id !== nodeId))
+   310→    setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId))
+   311→    setSelectedNodeId(null)
+   312→  }
+   313→
+   314→  // Disconnect an edge — used by the edge context menu and the Delete key.
+   315→  const deleteEdge = (edgeId: string) => {
+   316→    setEdges((eds) => eds.filter((e) => e.id !== edgeId))
+   317→    setSelectedEdgeId(null)
+   318→  }
+   319→
+   320→  // Keyboard shortcuts: Delete/Backspace deletes the selected node or edge.
+   321→  // ReactFlow's built-in `deleteKeyCode` only handles nodes, so we wire up
+   322→  // edges manually here.
+   323→  const onKeyDown = useCallback(
+   324→    (e: React.KeyboardEvent) => {
+   325→      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+   326→      // Don't intercept if the user is typing in an input/textarea
+   327→      const target = e.target as HTMLElement
+   328→      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+   329→      if (selectedNodeId) {
+   330→        e.preventDefault()
+   331→        deleteNode(selectedNodeId)
+   332→      } else if (selectedEdgeId) {
+   333→        e.preventDefault()
+   334→        deleteEdge(selectedEdgeId)
+   335→      }
+   336→    },
+   337→    [selectedNodeId, selectedEdgeId] // eslint-disable-line react-hooks/exhaustive-deps
+   338→  )
+   339→
+   340→  const clearAll = () => {
+   341→    if (!confirm('Clear the entire flow? This cannot be undone.')) return
+   342→    setNodes([])
+   343→    setEdges([])
+   344→    setSelectedNodeId(null)
+   345→  }
+   346→
+   347→  const handleSave = () => {
+   348→    const flow: BotFlow = {
+   349→      nodes: nodes.map((n) => ({
+   350→        id: n.id,
+   351→        type: n.data.type as NodeType,
+   352→        position: n.position,
+   353→        data: { ...n.data },
+   354→      })) as FlowNode[],
+   355→      edges: edges.map((e) => ({
+   356→        id: e.id,
+   357→        source: e.source,
+   358→        target: e.target,
+   359→        sourceHandle: e.sourceHandle || null,
+   360→        label: typeof e.label === 'string' ? e.label : undefined,
+   361→      })),
+   362→    }
+   363→    onSave(flow)
+   364→  }
+   365→
+   366→  const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null
+   367→
+   368→  // ── Validation warnings ──────────────────────────────────────────────
+   369→  const warnings = useMemo(() => {
+   370→    const w: string[] = []
+   371→    const triggerCount = nodes.filter((n) => n.data.type === 'trigger').length
+   372→    if (triggerCount === 0) w.push('No trigger node — the bot will never start.')
+   373→    if (triggerCount > 1) w.push('Multiple trigger nodes — only the first one will be used.')
+   374→
+   375→    // Orphaned nodes (no incoming or outgoing edges, except trigger)
+   376→    const connected = new Set<string>()
+   377→    edges.forEach((e) => { connected.add(e.source); connected.add(e.target) })
+   378→    const orphans = nodes.filter((n) => n.data.type !== 'trigger' && !connected.has(n.id))
+   379→    if (orphans.length > 0) w.push(`${orphans.length} node(s) are not connected to the flow.`)
+   380→
+   381→    return w
+   382→  }, [nodes, edges])
+   383→
+   384→  return (
+   385→    <div className="flex h-full bg-[#1e1f22]">
+   386→      {/* ─── LEFT: node palette ────────────────────────────────────────── */}
+   387→      <div className="w-56 shrink-0 bg-[#2b2d31] border-r border-white/5 flex flex-col">
+   388→        <div className="p-3 border-b border-white/5">
+   389→          <div className="flex items-center gap-2">
+   390→            <Sparkles className="w-4 h-4 text-primary" />
+   391→            <h3 className="text-sm font-semibold text-white/80">Flow Builder</h3>
+   392→          </div>
+   393→          <p className="text-[11px] text-white/40 mt-1">Drag or click a node to add it to the canvas.</p>
+   394→        </div>
+   395→
+   396→        <div className="flex-1 overflow-y-auto p-3 space-y-4">
+   397→          {CATEGORY_ORDER.map((cat) => {
+   398→            const nodesInCat = Object.values(NODE_DEFS).filter((d) => d.category === cat)
+   399→            if (nodesInCat.length === 0) return null
+   400→            return (
+   401→              <div key={cat}>
+   402→                <h4 className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-2 px-1">
+   403→                  {CATEGORY_LABELS[cat]}
+   404→                </h4>
+   405→                <div className="space-y-1">
+   406→                  {nodesInCat.map((def) => {
+   407→                    const Icon = ICONS[def.icon] || Zap
+   408→                    return (
+   409→                      <button
+   410→                        key={def.type}
+   411→                        onClick={() => addNode(def.type)}
+   412→                        className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-white/5 transition-colors text-left group"
+   413→                      >
+   414→                        <div
+   415→                          className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-transform group-hover:scale-110"
+   416→                          style={{ background: def.bg }}
+   417→                        >
+   418→                          <Icon className="w-3.5 h-3.5" style={{ color: def.color }} />
+   419→                        </div>
+   420→                        <div className="flex-1 min-w-0">
+   421→                          <div className="text-xs text-white/80 font-medium">{def.label}</div>
+   422→                          <div className="text-[10px] text-white/30 truncate">{def.description}</div>
+   423→                        </div>
+   424→                      </button>
+   425→                    )
+   426→                  })}
+   427→                </div>
+   428→              </div>
+   429→            )
+   430→          })}
+   431→        </div>
+   432→
+   433→        <div className="p-3 border-t border-white/5 space-y-2">
+   434→          <Button onClick={handleSave} className="w-full" size="sm">
+   435→            <Save className="w-4 h-4 mr-1.5" /> Save Flow
+   436→          </Button>
+   437→          <Button onClick={clearAll} variant="ghost" className="w-full text-red-400 hover:text-red-300" size="sm">
+   438→            <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Clear All
+   439→          </Button>
+   440→        </div>
+   441→      </div>
+   442→
+   443→      {/* ─── CENTER: canvas ────────────────────────────────────────────── */}
+   444→      <div className="flex-1 relative flex flex-col">
+   445→        {/* Toolbar */}
+   446→        <div className="h-12 shrink-0 bg-[#2b2d31] border-b border-white/5 flex items-center px-4 gap-3">
+   447→          <span className="text-xs text-white/40">
+   448→            {nodes.length} node{nodes.length !== 1 ? 's' : ''} · {edges.length} edge{edges.length !== 1 ? 's' : ''}
+   449→          </span>
+   450→          {selectedEdgeId && (
+   451→            <Button
+   452→              variant="ghost"
+   453→              size="sm"
+   454→              className="h-7 text-xs text-red-400 hover:text-red-300"
+   455→              onClick={() => deleteEdge(selectedEdgeId)}
+   456→            >
+   457→              <Trash2 className="w-3 h-3 mr-1" /> Disconnect
+   458→            </Button>
+   459→          )}
+   460→          {selectedNodeId && (
+   461→            <span className="text-xs text-white/40">
+   462→              Node selected — press <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-[10px]">Del</kbd> to remove
+   463→            </span>
+   464→          )}
+   465→          {!selectedNodeId && !selectedEdgeId && warnings.length > 0 && (
+   466→            <div className="flex items-center gap-1.5 text-xs text-amber-400">
+   467→              <AlertTriangle className="w-3.5 h-3.5" />
+   468→              <span>{warnings.length} warning{warnings.length !== 1 ? 's' : ''}</span>
+   469→            </div>
+   470→          )}
+   471→          <div className="flex-1" />
+   472→          <span className="text-[10px] text-white/30">
+   473→            Click an edge to select · <kbd className="px-1 py-0.5 bg-white/10 rounded">Del</kbd> to delete
+   474→          </span>
+   475→        </div>
+   476→
+   477→        {/* Warnings strip */}
+   478→        {warnings.length > 0 && (
+   479→          <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 space-y-1">
+   480→            {warnings.map((w, i) => (
+   481→              <div key={i} className="flex items-start gap-2 text-xs text-amber-300">
+   482→                <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+   483→                <span>{w}</span>
+   484→              </div>
+   485→            ))}
+   486→          </div>
+   487→        )}
+   488→
+   489→        <div className="flex-1 relative">
+   490→          <ReactFlow
+   491→            nodes={nodes}
+   492→            edges={edges.map((e) => ({
+   493→              ...e,
+   494→              selected: e.id === selectedEdgeId,
+   495→              style: {
+   496→                stroke: e.id === selectedEdgeId ? '#EF4444' : '#5865F2',
+   497→                strokeWidth: e.id === selectedEdgeId ? 3 : 2,
+   498→              },
+   499→            }))}
+   500→            onNodesChange={onNodesChange}
+   501→            onEdgesChange={onEdgesChange}
+   502→            onConnect={onConnect}
+   503→            onNodeClick={(_, node) => {
+   504→              setSelectedNodeId(node.id)
+   505→              setSelectedEdgeId(null)
+   506→            }}
+   507→            onEdgeClick={(_, edge) => {
+   508→              setSelectedEdgeId(edge.id)
+   509→              setSelectedNodeId(null)
+   510→            }}
+   511→            onPaneClick={() => {
+   512→              setSelectedNodeId(null)
+   513→              setSelectedEdgeId(null)
+   514→            }}
+   515→            onKeyDown={onKeyDown}
+   516→            nodeTypes={nodeTypes}
+   517→            fitView
+   518→            className="bg-[#1e1f22]"
+   519→            defaultEdgeOptions={{
+   520→              animated: true,
+   521→              style: { stroke: '#5865F2', strokeWidth: 2 },
+   522→              markerEnd: { type: MarkerType.ArrowClosed, color: '#5865F2' },
+   523→            }}
+   524→          >
+   525→            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#ffffff10" />
+   526→            <Controls className="!bg-[#2b2d31] !border-white/10" />
+   527→            <MiniMap
+   528→              className="!bg-[#2b2d31] !border-white/10"
+   529→              nodeColor={(n) => {
+   530→                const t = (n.data as any)?.type as NodeType | undefined
+   531→                return t ? NODE_DEFS[t]?.color || '#5865F2' : '#5865F2'
+   532→              }}
+   533→              maskColor="rgba(0,0,0,0.5)"
+   534→            />
+   535→          </ReactFlow>
+   536→        </div>
+   537→      </div>
+   538→
+   539→      {/* ─── RIGHT: inspector ──────────────────────────────────────────── */}
+   540→      <div className="w-72 shrink-0 bg-[#2b2d31] border-l border-white/5 flex flex-col">
+   541→        {selectedNode ? (
+   542→          <NodeInspectorPanel
+   543→            node={selectedNode}
+   544→            onUpdate={(patch) => updateNodeData(selectedNode.id, patch)}
+   545→            onDelete={() => deleteNode(selectedNode.id)}
+   546→          />
+   547→        ) : (
+   548→          <EmptyInspector />
+   549→        )}
+   550→      </div>
+   551→    </div>
+   552→  )
+   553→}
+   554→
+   555→// ─── Empty inspector state ───────────────────────────────────────────────────
+   556→function EmptyInspector() {
+   557→  return (
+   558→    <div className="p-4 flex flex-col h-full">
+   559→      <h3 className="text-sm font-semibold text-white/80 mb-3">Inspector</h3>
+   560→      <div className="flex-1 flex flex-col items-center justify-center text-center px-4">
+   561→        <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mb-3">
+   562→          <Info className="w-5 h-5 text-white/30" />
+   563→        </div>
+   564→        <p className="text-sm text-white/40 mb-2">No node selected</p>
+   565→        <p className="text-xs text-white/30 leading-relaxed">
+   566→          Click a node on the canvas to edit its settings, or click a node type on the left to add one.
+   567→        </p>
+   568→      </div>
+   569→      <div className="border-t border-white/5 pt-3 space-y-2">
+   570→        <h4 className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-2">Quick Tips</h4>
+   571→        <ul className="text-[11px] text-white/40 space-y-1.5 leading-relaxed">
+   572→          <li>• Every flow needs exactly one <span className="text-primary">Trigger</span> node.</li>
+   573→          <li>• <span className="text-red-400">Input</span> nodes pause the bot and wait for the user's next message.</li>
+   574→          <li>• Use <code className="text-white/60">{`{{varName}}`}</code> in text to insert variables.</li>
+   575→          <li>• <span className="text-amber-400">Condition</span> nodes have two outputs: TRUE and FALSE.</li>
+   576→        </ul>
+   577→      </div>
+   578→    </div>
+   579→  )
+   580→}
+   581→
+   582→// ─── Inspector wrapper (header + delete button) ──────────────────────────────
+   583→function NodeInspectorPanel({
+   584→  node,
+   585→  onUpdate,
+   586→  onDelete,
+   587→}: {
+   588→  node: Node
+   589→  onUpdate: (patch: Record<string, any>) => void
+   590→  onDelete: () => void
+   591→}) {
+   592→  const nodeType = (node.data.type as NodeType) || 'message'
+   593→  const def = NODE_DEFS[nodeType] || NODE_DEFS.message
+   594→  const Icon = ICONS[def.icon] || Zap
+   595→
+   596→  return (
+   597→    <div className="flex flex-col h-full">
+   598→      <div className="p-4 border-b border-white/5 flex items-center gap-2">
+   599→        <div
+   600→          className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+   601→          style={{ background: def.bg }}
+   602→        >
+   603→          <Icon className="w-4 h-4" style={{ color: def.color }} />
+   604→        </div>
+   605→        <div className="flex-1 min-w-0">
+   606→          <h3 className="text-sm font-semibold text-white/80 truncate">{def.label}</h3>
+   607→          <p className="text-[10px] text-white/40 truncate">{def.description}</p>
+   608→        </div>
+   609→        <Button
+   610→          variant="ghost"
+   611→          size="icon"
+   612→          className="h-7 w-7 text-red-400 hover:text-red-300 shrink-0"
+   613→          onClick={onDelete}
+   614→          title="Delete node"
+   615→        >
+   616→          <Trash2 className="w-4 h-4" />
+   617→        </Button>
+   618→      </div>
+   619→
+   620→      <div className="flex-1 overflow-y-auto p-4">
+   621→        <NodeInspectorBody nodeType={nodeType} data={node.data} onUpdate={onUpdate} />
+   622→      </div>
+   623→    </div>
+   624→  )
+   625→}
+   626→
+   627→// ─── Inspector body — per node type ──────────────────────────────────────────
+   628→function NodeInspectorBody({
+   629→  nodeType,
+   630→  data,
+   631→  onUpdate,
+   632→}: {
+   633→  nodeType: NodeType
+   634→  data: any
+   635→  onUpdate: (patch: Record<string, any>) => void
+   636→}) {
+   637→  const inputCls = 'bg-[#1e1f22] border-white/10 text-white placeholder:text-white/30'
+   638→
+   639→  // ── TRIGGER ──────────────────────────────────────────────────────────
+   640→  if (nodeType === 'trigger') {
+   641→    return (
+   642→      <div className="space-y-4">
+   643→        <div className="space-y-2">
+   644→          <Label className="text-white/60 text-xs">When should the bot start?</Label>
+   645→          <Select value={data.triggerType || 'any_message'} onValueChange={(v) => onUpdate({ triggerType: v })}>
+   646→            <SelectTrigger className={inputCls}><SelectValue /></SelectTrigger>
+   647→            <SelectContent>
+   648→              <SelectItem value="any_message">Any message in channel</SelectItem>
+   649→              <SelectItem value="command">Specific command</SelectItem>
+   650→              <SelectItem value="mention">When @mentioned</SelectItem>
+   651→            </SelectContent>
+   652→          </Select>
+   653→        </div>
+   654→        {data.triggerType === 'command' && (
+   655→          <div className="space-y-2">
+   656→            <Label className="text-white/60 text-xs">Command name</Label>
+   657→            <div className="relative">
+   658→              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 text-sm">/</span>
+   659→              <Input
+   660→                value={data.command || ''}
+   661→                onChange={(e) => onUpdate({ command: e.target.value.replace(/[^a-z0-9_]/gi, '') })}
+   662→                placeholder="hello"
+   663→                className={inputCls + ' pl-7'}
+   664→              />
+   665→            </div>
+   666→            <p className="text-xs text-white/40">Users type this to trigger the bot.</p>
+   667→          </div>
+   668→        )}
+   669→        <div className="bg-primary/10 border border-primary/20 rounded-lg p-3 text-xs text-white/60">
+   670→          <p className="font-semibold text-primary mb-1">How triggers work</p>
+   671→          <p>The trigger node is the start of every flow. The bot will only respond when the trigger condition matches.</p>
+   672→        </div>
+   673→      </div>
+   674→    )
+   675→  }
+   676→
+   677→  // ── MESSAGE ──────────────────────────────────────────────────────────
+   678→  if (nodeType === 'message') {
+   679→    return (
+   680→      <div className="space-y-2">
+   681→        <Label className="text-white/60 text-xs">Message text</Label>
+   682→        <Textarea
+   683→          value={data.text || ''}
+   684→          onChange={(e) => onUpdate({ text: e.target.value })}
+   685→          placeholder="Hello {{sender}}! You said: {{body}}"
+   686→          rows={5}
+   687→          className={inputCls + ' resize-none'}
+   688→        />
+   689→        <VariableHelp />
+   690→      </div>
+   691→    )
+   692→  }
+   693→
+   694→  // ── TYPING ───────────────────────────────────────────────────────────
+   695→  if (nodeType === 'typing') {
+   696→    return (
+   697→      <div className="space-y-2">
+   698→        <Label className="text-white/60 text-xs">Duration (seconds)</Label>
+   699→        <Input
+   700→          type="number"
+   701→          value={data.seconds || 1}
+   702→          onChange={(e) => onUpdate({ seconds: Math.max(1, Math.min(30, parseInt(e.target.value, 10) || 1)) })}
+   703→          min={1}
+   704→          max={30}
+   705→          className={inputCls}
+   706→        />
+   707→        <p className="text-xs text-white/40">Pauses the bot to make replies feel more natural.</p>
+   708→      </div>
+   709→    )
+   710→  }
+   711→
+   712→  // ── INPUT ────────────────────────────────────────────────────────────
+   713→  if (nodeType === 'input') {
+   714→    return (
+   715→      <div className="space-y-4">
+   716→        <div className="space-y-2">
+   717→          <Label className="text-white/60 text-xs">Question / Prompt</Label>
+   718→          <Textarea
+   719→            value={data.prompt || ''}
+   720→            onChange={(e) => onUpdate({ prompt: e.target.value })}
+   721→            placeholder="What's your name?"
+   722→            rows={2}
+   723→            className={inputCls + ' resize-none'}
+   724→          />
+   725→        </div>
+   726→        <VariableNameField
+   727→          value={data.variableName || ''}
+   728→          onChange={(v) => onUpdate({ variableName: v })}
+   729→          label="Save reply as variable"
+   730→          placeholder="userName"
+   731→        />
+   732→        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-white/60">
+   733→          <p className="font-semibold text-red-400 mb-1">Pauses the flow</p>
+   734→          <p>The bot will send the prompt and wait for the user's next message. That message will be stored as <code className="text-white/80">{`{{${data.variableName || 'varName'}}}`}</code> and the flow will resume.</p>
+   735→        </div>
+   736→      </div>
+   737→    )
+   738→  }
+   739→
+   740→  // ── WAIT_CHOICE ──────────────────────────────────────────────────────
+   741→  if (nodeType === 'wait_choice') {
+   742→    return (
+   743→      <div className="space-y-4">
+   744→        <div className="space-y-2">
+   745→          <Label className="text-white/60 text-xs">Prompt</Label>
+   746→          <Textarea
+   747→            value={data.prompt || ''}
+   748→            onChange={(e) => onUpdate({ prompt: e.target.value })}
+   749→            placeholder="Pick one:"
+   750→            rows={2}
+   751→            className={inputCls + ' resize-none'}
+   752→          />
+   753→        </div>
+   754→        <OptionsEditor
+   755→          options={data.options || []}
+   756→          onChange={(options) => onUpdate({ options })}
+   757→        />
+   758→        <VariableNameField
+   759→          value={data.variableName || ''}
+   760→          onChange={(v) => onUpdate({ variableName: v })}
+   761→          label="Save picked choice as"
+   762→          placeholder="choice"
+   763→        />
+   764→        <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-3 text-xs text-white/60">
+   765→          <p className="font-semibold text-orange-400 mb-1">Waits for a valid choice</p>
+   766→          <p>The user must reply with one of the options (by number or text). Invalid replies will be re-prompted.</p>
+   767→        </div>
+   768→      </div>
+   769→    )
+   770→  }
+   771→
+   772→  // ── CONDITION ────────────────────────────────────────────────────────
+   773→  if (nodeType === 'condition') {
+   774→    return (
+   775→      <div className="space-y-4">
+   776→        <div className="space-y-2">
+   777→          <Label className="text-white/60 text-xs">Variable to check</Label>
+   778→          <Input
+   779→            value={data.variable || ''}
+   780→            onChange={(e) => onUpdate({ variable: e.target.value })}
+   781→            placeholder="userName"
+   782→            className={inputCls}
+   783→          />
+   784→        </div>
+   785→        <div className="space-y-2">
+   786→          <Label className="text-white/60 text-xs">Operator</Label>
+   787→          <Select value={data.operator || 'exists'} onValueChange={(v) => onUpdate({ operator: v })}>
+   788→            <SelectTrigger className={inputCls}><SelectValue /></SelectTrigger>
+   789→            <SelectContent>
+   790→              <SelectItem value="equals">Equals (==)</SelectItem>
+   791→              <SelectItem value="not_equals">Not equals (!=)</SelectItem>
+   792→              <SelectItem value="contains">Contains</SelectItem>
+   793→              <SelectItem value="starts_with">Starts with</SelectItem>
+   794→              <SelectItem value="exists">Has any value</SelectItem>
+   795→              <SelectItem value="not_exists">Is empty / not set</SelectItem>
+   796→            </SelectContent>
+   797→          </Select>
+   798→        </div>
+   799→        {(data.operator === 'equals' || data.operator === 'not_equals' || data.operator === 'contains' || data.operator === 'starts_with') && (
+   800→          <div className="space-y-2">
+   801→            <Label className="text-white/60 text-xs">Compare with</Label>
+   802→            <Input
+   803→              value={data.value || ''}
+   804→              onChange={(e) => onUpdate({ value: e.target.value })}
+   805→              placeholder="yes"
+   806→              className={inputCls}
+   807→            />
+   808→          </div>
+   809→        )}
+   810→        <div className="bg-white/5 rounded-lg p-3 text-xs text-white/50 space-y-1">
+   811→          <p>Connect the <span className="text-emerald-400 font-semibold">TRUE</span> handle for the matching path.</p>
+   812→          <p>Connect the <span className="text-red-400 font-semibold">FALSE</span> handle for the non-matching path.</p>
+   813→        </div>
+   814→      </div>
+   815→    )
+   816→  }
+   817→
+   818→  // ── SET_VAR ──────────────────────────────────────────────────────────
+   819→  if (nodeType === 'set_var') {
+   820→    return (
+   821→      <div className="space-y-4">
+   822→        <div className="space-y-2">
+   823→          <Label className="text-white/60 text-xs">Variable name</Label>
+   824→          <Input
+   825→            value={data.variable || ''}
+   826→            onChange={(e) => onUpdate({ variable: e.target.value })}
+   827→            placeholder="greetingCount"
+   828→            className={inputCls}
+   829→          />
+   830→        </div>
+   831→        <div className="space-y-2">
+   832→          <Label className="text-white/60 text-xs">Value</Label>
+   833→          <Input
+   834→            value={data.value || ''}
+   835→            onChange={(e) => onUpdate({ value: e.target.value })}
+   836→            placeholder="1"
+   837→            className={inputCls}
+   838→          />
+   839→          <p className="text-xs text-white/40">Supports <code className="text-white/60">{`{{varName}}`}</code> interpolation.</p>
+   840→        </div>
+   841→      </div>
+   842→    )
+   843→  }
+   844→
+   845→  // ── DELAY ────────────────────────────────────────────────────────────
+   846→  if (nodeType === 'delay') {
+   847→    return (
+   848→      <div className="space-y-2">
+   849→        <Label className="text-white/60 text-xs">Wait time (seconds)</Label>
+   850→        <Input
+   851→          type="number"
+   852→          value={data.seconds || 1}
+   853→          onChange={(e) => onUpdate({ seconds: Math.max(1, Math.min(60, parseInt(e.target.value, 10) || 1)) })}
+   854→          min={1}
+   855→          max={60}
+   856→          className={inputCls}
+   857→        />
+   858→        <p className="text-xs text-white/40">Pauses the bot for this many seconds before continuing.</p>
+   859→      </div>
+   860→    )
+   861→  }
+   862→
+   863→  // ── STOP ─────────────────────────────────────────────────────────────
+   864→  if (nodeType === 'stop') {
+   865→    return (
+   866→      <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 text-center">
+   867→        <Square className="w-6 h-6 text-red-400 mx-auto mb-2" />
+   868→        <p className="text-sm text-white/70 font-medium">Ends the flow immediately</p>
+   869→        <p className="text-xs text-white/40 mt-1">No further nodes will execute.</p>
+   870→      </div>
+   871→    )
+   872→  }
+   873→
+   874→  // ── API_CALL ─────────────────────────────────────────────────────────
+   875→  if (nodeType === 'api_call') {
+   876→    return (
+   877→      <div className="space-y-4">
+   878→        <div className="space-y-2">
+   879→          <Label className="text-white/60 text-xs">URL</Label>
+   880→          <Input
+   881→            value={data.url || ''}
+   882→            onChange={(e) => onUpdate({ url: e.target.value })}
+   883→            placeholder="https://api.example.com/data"
+   884→            className={inputCls}
+   885→          />
+   886→        </div>
+   887→        <div className="space-y-2">
+   888→          <Label className="text-white/60 text-xs">Method</Label>
+   889→          <Select value={data.method || 'GET'} onValueChange={(v) => onUpdate({ method: v })}>
+   890→            <SelectTrigger className={inputCls}><SelectValue /></SelectTrigger>
+   891→            <SelectContent>
+   892→              <SelectItem value="GET">GET</SelectItem>
+   893→              <SelectItem value="POST">POST</SelectItem>
+   894→            </SelectContent>
+   895→          </Select>
+   896→        </div>
+   897→        <div className="space-y-2">
+   898→          <Label className="text-white/60 text-xs">Headers (JSON)</Label>
+   899→          <Textarea
+   900→            value={data.headers || ''}
+   901→            onChange={(e) => onUpdate({ headers: e.target.value })}
+   902→            placeholder='{"Authorization": "Bearer xxx"}'
+   903→            rows={2}
+   904→            className={inputCls + ' resize-none font-mono text-xs'}
+   905→          />
+   906→        </div>
+   907→        {data.method === 'POST' && (
+   908→          <div className="space-y-2">
+   909→            <Label className="text-white/60 text-xs">Body</Label>
+   910→            <Textarea
+   911→              value={data.body || ''}
+   912→              onChange={(e) => onUpdate({ body: e.target.value })}
+   913→              placeholder='{"key": "value"}'
+   914→              rows={3}
+   915→              className={inputCls + ' resize-none font-mono text-xs'}
+   916→            />
+   917→          </div>
+   918→        )}
+   919→        <VariableNameField
+   920→          value={data.variableName || ''}
+   921→          onChange={(v) => onUpdate({ variableName: v })}
+   922→          label="Save response body as"
+   923→          placeholder="apiResult"
+   924→        />
+   925→      </div>
+   926→    )
+   927→  }
+   928→
+   929→  // ── RANDOM ───────────────────────────────────────────────────────────
+   930→  if (nodeType === 'random') {
+   931→    return (
+   932→      <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-4">
+   933→        <Shuffle className="w-6 h-6 text-cyan-400 mx-auto mb-2" />
+   934→        <p className="text-sm text-white/70 font-medium text-center">Picks a random outgoing edge</p>
+   935→        <p className="text-xs text-white/40 mt-2 text-center leading-relaxed">
+   936→          Connect multiple nodes from this one. Each time the flow runs, exactly one will be chosen at random.
+   937→        </p>
+   938→      </div>
+   939→    )
+   940→  }
+   941→
+   942→  return null
+   943→}
+   944→
+   945→// ─── Helper UI components ────────────────────────────────────────────────────
+   946→
+   947→function VariableNameField({
+   948→  value,
+   949→  onChange,
+   950→  label,
+   951→  placeholder,
+   952→}: {
+   953→  value: string
+   954→  onChange: (v: string) => void
+   955→  label: string
+   956→  placeholder: string
+   957→}) {
+   958→  const inputCls = 'bg-[#1e1f22] border-white/10 text-white placeholder:text-white/30'
+   959→  return (
+   960→    <div className="space-y-2">
+   961→      <Label className="text-white/60 text-xs">{label}</Label>
+   962→      <Input
+   963→        value={value}
+   964→        onChange={(e) => onChange(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
+   965→        placeholder={placeholder}
+   966→        className={inputCls + ' font-mono'}
+   967→      />
+   968→      {value && (
+   969→        <p className="text-xs text-white/40">
+   970→          Access later with <code className="text-primary">{`{{${value}}}`}</code>
+   971→        </p>
+   972→      )}
+   973→    </div>
+   974→  )
+   975→}
+   976→
+   977→function OptionsEditor({
+   978→  options,
+   979→  onChange,
+   980→}: {
+   981→  options: string[]
+   982→  onChange: (options: string[]) => void
+   983→}) {
+   984→  const [newOption, setNewOption] = useState('')
+   985→
+   986→  const add = () => {
+   987→    const v = newOption.trim()
+   988→    if (!v) return
+   989→    onChange([...options, v])
+   990→    setNewOption('')
+   991→  }
+   992→
+   993→  return (
+   994→    <div className="space-y-2">
+   995→      <Label className="text-white/60 text-xs">Options ({options.length})</Label>
+   996→      <div className="space-y-1.5">
+   997→        {options.map((opt, i) => (
+   998→          <div key={i} className="flex items-center gap-2">
+   999→            <span className="text-[10px] text-white/30 w-4">{i + 1}.</span>
+  1000→            <Input
+  1001→              value={opt}
+  1002→              onChange={(e) => onChange(options.map((o, j) => (j === i ? e.target.value : o)))}
+  1003→              className="bg-[#1e1f22] border-white/10 text-white text-xs h-8"
+  1004→            />
+  1005→            <Button
+  1006→              variant="ghost"
+  1007→              size="icon"
+  1008→              className="h-8 w-8 text-red-400 hover:text-red-300 shrink-0"
+  1009→              onClick={() => onChange(options.filter((_, j) => j !== i))}
+  1010→            >
+  1011→              <X className="w-3 h-3" />
+  1012→            </Button>
+  1013→          </div>
+  1014→        ))}
+  1015→      </div>
+  1016→      <div className="flex gap-2">
+  1017→        <Input
+  1018→          value={newOption}
+  1019→          onChange={(e) => setNewOption(e.target.value)}
+  1020→          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
+  1021→          placeholder="Add option…"
+  1022→          className="bg-[#1e1f22] border-white/10 text-white text-xs h-8"
+  1023→        />
+  1024→        <Button size="sm" variant="outline" onClick={add} className="shrink-0 h-8">
+  1025→          <Plus className="w-3 h-3" />
+  1026→        </Button>
+  1027→      </div>
+  1028→    </div>
+  1029→  )
+  1030→}
+  1031→
+  1032→function VariableHelp() {
+  1033→  return (
+  1034→    <div className="bg-white/5 rounded-lg p-3 text-xs text-white/50 space-y-1.5">
+  1035→      <p className="font-semibold text-white/70">Available variables:</p>
+  1036→      <p><code className="text-primary">{`{{sender}}`}</code> — sender's username</p>
+  1037→      <p><code className="text-primary">{`{{body}}`}</code> — the original message</p>
+  1038→      <p><code className="text-primary">{`{{args}}`}</code> — command arguments</p>
+  1039→      <p><code className="text-primary">{`{{varName}}`}</code> — any variable from Input/Set Variable nodes</p>
+  1040→    </div>
+  1041→  )
+  1042→}
+  1043→

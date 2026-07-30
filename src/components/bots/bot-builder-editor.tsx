@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   ReactFlow,
   Controls,
@@ -43,6 +44,7 @@ import {
 const ICONS: Record<string, typeof Zap> = {
   Zap, Send, Loader, Keyboard, MousePointerClick,
   GitBranch, Variable, Clock, Square, Webhook, Shuffle,
+  Sparkles,
 }
 
 // ─── Custom Node Component ───────────────────────────────────────────────────
@@ -102,6 +104,9 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
       break
     case 'random':
       preview = { label: 'Picks', value: 'a random branch' }
+      break
+    case 'ai_generate':
+      preview = { label: 'Asks AI', value: data.aiPrompt ? (data.aiPrompt.length > 40 ? data.aiPrompt.slice(0, 40) + '…' : data.aiPrompt) : '(no prompt)' }
       break
   }
 
@@ -939,7 +944,166 @@ function NodeInspectorBody({
     )
   }
 
+  // ── AI_GENERATE ──────────────────────────────────────────────────────
+  if (nodeType === 'ai_generate') {
+    return <AiGenerateInspector data={data} onUpdate={onUpdate} />
+  }
+
   return null
+}
+
+// ─── AI Generate inspector (separate component — uses useQuery) ──────────────
+function AiGenerateInspector({
+  data,
+  onUpdate,
+}: {
+  data: any
+  onUpdate: (patch: Record<string, any>) => void
+}) {
+  const inputCls = 'bg-[#1e1f22] border-white/10 text-white placeholder:text-white/30'
+
+  // Fetch available Ollama models (3s timeout handled server-side)
+  const { data: modelsData, isLoading } = useQuery({
+    queryKey: ['ollama-models'],
+    queryFn: async () => {
+      const res = await fetch('/api/llm/models')
+      if (!res.ok) throw new Error('failed')
+      return res.json()
+    },
+    staleTime: 60_000, // models don't change often
+  })
+  const models: { name: string; details?: any }[] = modelsData?.models || []
+  const online: boolean = modelsData?.online ?? false
+
+  return (
+    <div className="space-y-4">
+      {/* Model picker */}
+      <div className="space-y-2">
+        <Label className="text-white/60 text-xs">Model</Label>
+        {online ? (
+          <Select
+            value={data.aiModel || 'gemma3:270m'}
+            onValueChange={(v) => onUpdate({ aiModel: v })}
+          >
+            <SelectTrigger className={inputCls}>
+              <SelectValue placeholder={isLoading ? 'Loading…' : 'Select model'} />
+            </SelectTrigger>
+            <SelectContent>
+              {models.length === 0 && !isLoading ? (
+                <SelectItem value={data.aiModel || 'gemma3:270m'} disabled>
+                  No models found — run `ollama pull gemma3:270m`
+                </SelectItem>
+              ) : (
+                models.map((m) => (
+                  <SelectItem key={m.name} value={m.name}>
+                    {m.name}
+                    {m.details?.parameterSize ? (
+                      <span className="text-white/40 ml-2 text-xs">({m.details.parameterSize})</span>
+                    ) : null}
+                  </SelectItem>
+                ))
+              )}
+            </SelectContent>
+          </Select>
+        ) : (
+          <div className="space-y-1.5">
+            <Input
+              value={data.aiModel || ''}
+              onChange={(e) => onUpdate({ aiModel: e.target.value })}
+              placeholder="gemma3:270m"
+              className={inputCls + ' font-mono'}
+            />
+            <p className="text-xs text-amber-400/80 flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" />
+              Ollama offline — using manual model name
+            </p>
+          </div>
+        )}
+        <p className="text-xs text-white/40">
+          Local model from <code className="text-white/60">ollama pull &lt;name&gt;</code>
+        </p>
+      </div>
+
+      {/* System prompt */}
+      <div className="space-y-2">
+        <Label className="text-white/60 text-xs">System prompt (optional)</Label>
+        <Textarea
+          value={data.aiSystemPrompt || ''}
+          onChange={(e) => onUpdate({ aiSystemPrompt: e.target.value })}
+          placeholder="You are a helpful assistant. Reply concisely."
+          rows={2}
+          className={inputCls + ' resize-none'}
+        />
+        <p className="text-xs text-white/40">Sets the AI's persona / behavior. Supports {`{{vars}}`}.</p>
+      </div>
+
+      {/* Prompt */}
+      <div className="space-y-2">
+        <Label className="text-white/60 text-xs">Prompt</Label>
+        <Textarea
+          value={data.aiPrompt || ''}
+          onChange={(e) => onUpdate({ aiPrompt: e.target.value })}
+          placeholder="Summarize this message in one sentence: {{body}}"
+          rows={4}
+          className={inputCls + ' resize-none'}
+        />
+        <VariableHelp />
+      </div>
+
+      {/* Temperature + Max tokens */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Temperature</Label>
+          <Input
+            type="number"
+            value={data.aiTemperature ?? 0.7}
+            onChange={(e) => onUpdate({ aiTemperature: Math.max(0, Math.min(2, parseFloat(e.target.value) || 0.7)) })}
+            min={0}
+            max={2}
+            step={0.1}
+            className={inputCls}
+          />
+          <p className="text-xs text-white/40">0 = precise, 1 = creative</p>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Max tokens</Label>
+          <Input
+            type="number"
+            value={data.aiMaxTokens ?? 256}
+            onChange={(e) => onUpdate({ aiMaxTokens: Math.max(16, Math.min(4096, parseInt(e.target.value, 10) || 256)) })}
+            min={16}
+            max={4096}
+            step={16}
+            className={inputCls}
+          />
+          <p className="text-xs text-white/40">Response length cap</p>
+        </div>
+      </div>
+
+      {/* Output variable */}
+      <VariableNameField
+        value={data.variableName || ''}
+        onChange={(v) => onUpdate({ variableName: v })}
+        label="Save AI response as"
+        placeholder="aiResponse"
+      />
+
+      {/* Tip */}
+      <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3 text-xs text-white/60">
+        <p className="font-semibold text-purple-400 mb-1 flex items-center gap-1.5">
+          <Sparkles className="w-3.5 h-3.5" />
+          AI Generate
+        </p>
+        <p className="leading-relaxed">
+          Calls your local Ollama instance. The generated text is stored as{' '}
+          <code className="text-white/80">{`{{${data.variableName || 'aiResponse'}}}`}</code>{' '}
+          — pipe it into a Send Message node with{' '}
+          <code className="text-white/80">{`{{${data.variableName || 'aiResponse'}}}`}</code>{' '}
+          to reply to the user.
+        </p>
+      </div>
+    </div>
+  )
 }
 
 // ─── Helper UI components ────────────────────────────────────────────────────

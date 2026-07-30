@@ -35,6 +35,7 @@ export type NodeType =
   | 'stop'
   | 'api_call'
   | 'random'
+  | 'ai_generate'
 
 export type NodeCategory = 'trigger' | 'output' | 'input' | 'logic' | 'advanced'
 
@@ -98,6 +99,19 @@ export interface FlowNodeData {
 
   // ── random ──
   // (no data — uses N outgoing edges; engine picks one)
+
+  // ── ai_generate ──
+  /** The prompt to send to the LLM. Supports {{var}} interpolation. */
+  aiPrompt?: string
+  /** Optional system prompt to set the LLM's persona/behavior. */
+  aiSystemPrompt?: string
+  /** Ollama model name, e.g. 'gemma3:270m'. */
+  aiModel?: string
+  /** Sampling temperature (0 = deterministic, 1 = creative). */
+  aiTemperature?: number
+  /** Max tokens to generate. */
+  aiMaxTokens?: number
+  // (also uses variableName to store the generated response)
 
   // ── UI metadata (not used by engine) ──
   label?: string
@@ -398,6 +412,56 @@ export async function executeBotFlow(
         continue
       }
 
+      // ── ADVANCED: ai_generate ──────────────────────────────────────────
+      // Calls a local Ollama instance (http://localhost:11434) to generate
+      // text from a prompt. The response is stored in `variableName` and
+      // the flow continues to the next node.
+      case 'ai_generate': {
+        const vname = currentNode.data.variableName || 'aiResponse'
+        try {
+          const model = currentNode.data.aiModel || 'gemma3:270m'
+          const prompt = interpolate(currentNode.data.aiPrompt || '', ctx)
+          const systemPrompt = currentNode.data.aiSystemPrompt
+            ? interpolate(currentNode.data.aiSystemPrompt, ctx)
+            : undefined
+          const temperature = currentNode.data.aiTemperature ?? 0.7
+          const maxTokens = currentNode.data.aiMaxTokens ?? 256
+
+          // Ollama API: POST /api/generate
+          // Docs: https://github.com/ollama/ollama/blob/main/docs/api.md
+          const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434'
+          const res = await fetch(`${ollamaUrl}/api/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model,
+              prompt,
+              system: systemPrompt,
+              stream: false,
+              options: {
+                temperature,
+                num_predict: maxTokens,
+              },
+            }),
+          })
+
+          if (!res.ok) {
+            const errText = await res.text().catch(() => 'unknown error')
+            console.error(`[bot:ai_generate] Ollama error ${res.status}:`, errText)
+            ctx.variables[vname] = `[AI error: ${res.status}]`
+          } else {
+            const data = await res.json()
+            const generated: string = data.response || ''
+            ctx.variables[vname] = generated.slice(0, 4000)
+          }
+        } catch (e: any) {
+          console.error('[bot:ai_generate] failed:', e?.message || e)
+          ctx.variables[vname] = `[AI error: ${e?.message || 'unavailable'}]`
+        }
+        currentNode = followEdge(currentNode.id, null)
+        continue
+      }
+
       default:
         // Unknown node type — stop to avoid runaway loops
         return { sentCount, paused: false, variables: ctx.variables, error: `unknown node type: ${currentNode.type}` }
@@ -504,6 +568,12 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
     icon: 'Shuffle', color: '#2DD4BF', bg: '#2DD4BF1A',
     handles: 'multi',
   },
+  ai_generate: {
+    type: 'ai_generate', label: 'AI Generate', category: 'advanced',
+    description: 'Generates text with a local Ollama LLM',
+    icon: 'Sparkles', color: '#C084FC', bg: '#C084FC1A',
+    handles: 'single',
+  },
 }
 
 export const CATEGORY_ORDER: NodeCategory[] = ['trigger', 'output', 'input', 'logic', 'advanced']
@@ -541,5 +611,15 @@ export function defaultNodeData(type: NodeType): FlowNodeData {
       return { url: '', method: 'GET', variableName: 'apiResult', label: 'API Call' }
     case 'random':
       return { label: 'Random Branch' }
+    case 'ai_generate':
+      return {
+        label: 'AI Generate',
+        aiPrompt: 'Summarize this message in one sentence: {{body}}',
+        aiSystemPrompt: '',
+        aiModel: 'gemma3:270m',
+        aiTemperature: 0.7,
+        aiMaxTokens: 256,
+        variableName: 'aiResponse',
+      }
   }
 }
