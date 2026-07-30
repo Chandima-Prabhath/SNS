@@ -14,8 +14,8 @@
  *   requests (sending messages, etc.) will fail gracefully.
  */
 
-const CACHE_NAME = 'adoo-v10'
-const API_CACHE = 'adoo-api-v10'
+const CACHE_NAME = 'adoo-v11'
+const API_CACHE = 'adoo-api-v11'
 const APP_SHELL = ['/', '/manifest.json', '/icon.svg']
 
 self.addEventListener('install', (event) => {
@@ -123,40 +123,41 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // ─── API GET requests → stale-while-revalidate ────────────────────────
-  // This enables offline reading: if the network is down, serve cached API
-  // responses (messages, channels, users, etc.). When the network is up,
-  // serve cached immediately AND fetch fresh data in the background.
+  // ─── API GET requests → network-first with cache fallback ─────────────
+  // Network-first: always try the network first. If the network succeeds,
+  // cache the fresh response and return it. If the network fails (offline),
+  // fall back to the cached version.
   //
-  // EXCLUSIONS: search and related are network-first (never serve stale)
-  // because the user expects fresh results every time.
-  if (url.pathname.startsWith('/api/') && !url.pathname.includes('/api/tts') && !url.pathname.includes('/api/music/stream') && !url.pathname.includes('/api/upload') && !url.pathname.includes('/api/music/debug') && !url.pathname.includes('/api/version') && !url.pathname.includes('/api/music/search') && !url.pathname.includes('/api/music/related') && !url.pathname.includes('/api/music/predownload')) {
+  // This is CRITICAL for write-then-read flows: after uploading a status,
+  // creating a playlist, or sending a message, the next GET must see the
+  // fresh data immediately — not a stale cached version.
+  //
+  // The previous stale-while-revalidate approach served stale cache first
+  // and updated in the background, causing delays where mutations weren't
+  // visible until a manual refresh.
+  if (url.pathname.startsWith('/api/') && !url.pathname.includes('/api/tts') && !url.pathname.includes('/api/music/stream') && !url.pathname.includes('/api/upload') && !url.pathname.includes('/api/music/debug') && !url.pathname.includes('/api/version') && !url.pathname.includes('/api/music/search') && !url.pathname.includes('/api/music/related') && !url.pathname.includes('/api/music/predownload') && !url.pathname.includes('/api/uploads/')) {
     event.respondWith(
-      caches.open(API_CACHE).then((cache) =>
-        cache.match(req).then((cached) => {
-          // Always fetch fresh data in the background (revalidate)
-          const fetchPromise = fetch(req).then((res) => {
-            // Only cache successful JSON responses
-            if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
-              const copy = res.clone()
-              cache.put(req, copy)
-            }
-            return res
-          }).catch(() => {
-            // Network failed — if we have cached data, it's already returned
-            // If no cached data, return a 503
-            if (!cached) {
-              return new Response(JSON.stringify({ error: 'offline' }), {
-                status: 503,
-                headers: { 'Content-Type': 'application/json' }
-              })
-            }
+      caches.open(API_CACHE).then(async (cache) => {
+        try {
+          // Try network first
+          const res = await fetch(req)
+          // Cache successful JSON responses for offline use
+          if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+            const copy = res.clone()
+            cache.put(req, copy)
+          }
+          return res
+        } catch {
+          // Network failed — fall back to cache (offline mode)
+          const cached = await cache.match(req)
+          if (cached) return cached
+          // No cache either — return a 503
+          return new Response(JSON.stringify({ error: 'offline' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' }
           })
-
-          // Return cached immediately if available, otherwise wait for network
-          return cached || fetchPromise
-        })
-      )
+        }
+      })
     )
     return
   }
