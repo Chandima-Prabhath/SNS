@@ -16,6 +16,29 @@ import { existsSync } from 'fs'
 import path from 'path'
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Edited message tracking — used to detect which messages were edited
+// during a bot dispatch so the API route can return them to the client.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const editedMessageIds = new Set<string>()
+
+/** Record that a message was edited during the current dispatch cycle.
+ *  The API route calls getAndClearEditedMessages() after dispatch to
+ *  return the edited messages to the client. */
+export function trackEditedMessage(messageId: string) {
+  editedMessageIds.add(messageId)
+}
+
+/** Returns the IDs of messages edited during this dispatch cycle, then
+ *  clears the set. Called by the messages POST route and the callback
+ *  route after dispatchBotUpdate/dispatchBotCallback returns. */
+export function getAndClearEditedMessages(): string[] {
+  const ids = Array.from(editedMessageIds)
+  editedMessageIds.clear()
+  return ids
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -176,9 +199,7 @@ export async function dispatchBotUpdate(params: {
         keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
       },
     })
-    // Note: the socket relay for edits is handled by the calling REST route
-    // (it fetches the updated message and returns it; the client emits
-    // channel:message-edit to broadcast the change to other clients).
+    trackEditedMessage(messageId)
   }
 
   // Helper: reply with media (image/video/audio). Used by the TTS node
@@ -397,6 +418,7 @@ export async function dispatchBotCallback(params: {
         keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
       },
     })
+    trackEditedMessage(messageId)
   }
 
   const replyWithMedia = async (mediaUrl: string, mediaType: string, caption?: string): Promise<string> => {

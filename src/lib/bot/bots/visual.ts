@@ -90,10 +90,23 @@ export const visualBot: BotModule = {
         console.log(`[visual bot] matched=${matched || 'NONE'}`)
 
         if (!matched) {
-          // Re-prompt with inline buttons and stay paused
-          const prompt = inputNode.data.prompt || 'Pick one:'
+          // Invalid choice — edit the existing keyboard message in-place
+          // (Telegram-style) if we have its ID, or send a new one as fallback.
+          // The prompt text is updated to show a hint, but the buttons stay
+          // the same so the user can just click one.
+          const keyboardMsgId = state.variables['__keyboardMsgId']
+          const hintPrompt = `❌ "${reply.slice(0, 50)}" isn't a valid option. Please pick one:`
           const keyboard = options.map((opt) => [{ text: opt, callbackData: opt }])
-          await ctx.reply(prompt, keyboard)
+
+          if (keyboardMsgId && ctx.editMessage) {
+            // Edit the existing keyboard message — no new message sent
+            await ctx.editMessage(keyboardMsgId, hintPrompt, keyboard)
+            console.log(`[visual bot] re-prompt: edited message ${keyboardMsgId}`)
+          } else {
+            // No existing keyboard message (first time or lost state) — send new
+            await ctx.reply(hintPrompt, keyboard)
+            console.log(`[visual bot] re-prompt: sent new keyboard message`)
+          }
           await ctx.setState({ ...state })
           return
         }

@@ -175,6 +175,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     orderBy: { createdAt: 'asc' },
   })
 
+  // Check for bot messages that were EDITED during dispatch (e.g. the
+  // visual bot's wait_choice re-prompt edits the keyboard message in-place).
+  // The framework tracks edited message IDs via trackEditedMessage().
+  const editedMessages: any[] = []
+  try {
+    const { getAndClearEditedMessages } = await import('@/lib/bot/framework')
+    const editedIds = getAndClearEditedMessages()
+    if (editedIds.length > 0) {
+      const edited = await db.message.findMany({
+        where: { id: { in: editedIds } },
+        include: {
+          sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
+          replyTo: {
+            select: { id: true, body: true, senderType: true, sender: { select: { username: true, displayName: true } } },
+          },
+        },
+      })
+      // Only include messages not already in botReplies (avoid duplicates)
+      const replyIds = new Set(botReplies.map((r) => r.id))
+      for (const msg of edited) {
+        if (!replyIds.has(msg.id)) {
+          editedMessages.push(msg)
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[bot dispatch] error fetching edited messages:', e)
+  }
+
   // Get all channel member user IDs so the client can broadcast notifications
   // to every participant (not just the sender). The sender's socket will relay
   // both the message and a notify event to each recipient.
@@ -204,6 +233,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   return NextResponse.json({
     message,
     botReplies,
+    editedMessages,
     recipientIds,
   })
 }

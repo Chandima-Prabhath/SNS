@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { dispatchBotCallback } from '@/lib/bot/framework'
+import { dispatchBotCallback, getAndClearEditedMessages } from '@/lib/bot/framework'
 
 // Force dynamic Node.js route — bot dispatch involves DB writes + bot logic.
 export const runtime = 'nodejs'
@@ -117,30 +117,32 @@ export async function POST(
 
     console.log(`[callback] found ${botReplies.length} bot replies`)
 
-    // Check if the original keyboard message was edited during dispatch
-    // (Telegram-style edit-in-place when wait_choice loops back).
-    // We re-fetch it to see if its body/keyboard changed.
-    const editedMessage = await db.message.findUnique({
-      where: { id: messageId },
-      include: {
-        sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
-        replyTo: {
-          select: { id: true, body: true, senderType: true, sender: { select: { username: true, displayName: true } } },
-        },
-      },
-    })
-
-    // If the message was edited (body or keyboard changed since we first
-    // loaded it), include it in the response so the client can update its cache.
-    const editedMessages: typeof botReplies = []
-    if (editedMessage &&
-        (editedMessage.body !== originalMessage.body ||
-         editedMessage.keyboard !== originalMessage.keyboard)) {
-      // Only include if it's not already in botReplies (it shouldn't be,
-      // since it was created before dispatchStart, but just in case)
-      if (!botReplies.some((r) => r.id === messageId)) {
-        editedMessages.push(editedMessage as any)
+    // Check for messages that were EDITED during dispatch (Telegram-style
+    // edit-in-place). The framework tracks edited message IDs via
+    // trackEditedMessage() — we fetch the full message data for each.
+    const editedMessages: any[] = []
+    try {
+      const editedIds = getAndClearEditedMessages()
+      if (editedIds.length > 0) {
+        const edited = await db.message.findMany({
+          where: { id: { in: editedIds } },
+          include: {
+            sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
+            replyTo: {
+              select: { id: true, body: true, senderType: true, sender: { select: { username: true, displayName: true } } },
+            },
+          },
+        })
+        // Only include messages not already in botReplies (avoid duplicates)
+        const replyIds = new Set(botReplies.map((r: any) => r.id))
+        for (const msg of edited) {
+          if (!replyIds.has(msg.id)) {
+            editedMessages.push(msg)
+          }
+        }
       }
+    } catch (e) {
+      console.error('[callback] error fetching edited messages:', e)
     }
 
     // Get recipient IDs for socket broadcast

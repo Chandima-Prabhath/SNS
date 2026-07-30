@@ -240,6 +240,19 @@ export function useChannel(channelId: string | null) {
             }
           }
         }
+
+        // Handle edited messages (Telegram-style edit-in-place for re-prompts)
+        if (data.editedMessages && Array.isArray(data.editedMessages)) {
+          for (const edited of data.editedMessages) {
+            qc.setQueryData(['messages', channelId], (old: ChannelMessage[] | undefined) => {
+              if (!old) return old
+              return old.map((m) => (m.id === edited.id ? { ...m, ...edited } : m))
+            })
+            if (socket) {
+              socket.emit('channel:message-edit', { channelId, message: edited })
+            }
+          }
+        }
       }
       setReplyTo(null)
     },
