@@ -118,6 +118,7 @@ export const visualBot: BotModule = {
           reply: ctx.reply,
           replyWithMedia: ctx.replyWithMedia,
           editMessage: ctx.editMessage,
+          generateTTS: ctx.generateTTS,
         }, resume)
 
         await persistSession(ctx, result)
@@ -144,6 +145,7 @@ export const visualBot: BotModule = {
         reply: ctx.reply,
         replyWithMedia: ctx.replyWithMedia,
         editMessage: ctx.editMessage,
+        generateTTS: ctx.generateTTS,
       }, resume)
 
       await persistSession(ctx, result)
@@ -173,6 +175,7 @@ async function runFromTrigger(flow: BotFlow, ctx: BotContext) {
     reply: ctx.reply,
     replyWithMedia: ctx.replyWithMedia,
     editMessage: ctx.editMessage,
+    generateTTS: ctx.generateTTS,
   })
 
   await persistSession(ctx, result)

@@ -11,6 +11,9 @@
  */
 
 import { db } from '@/lib/db'
+import { writeFile, mkdir } from 'fs/promises'
+import { existsSync } from 'fs'
+import path from 'path'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -47,6 +50,9 @@ export interface BotContext {
    *  Telegram-style keyboard updates (e.g. when a wait_choice loops back,
    *  we edit the existing keyboard message instead of sending a new one). */
   editMessage?: (messageId: string, text: string, keyboard?: BotKeyboard) => Promise<void>
+  /** Generate TTS audio from text using Pocket TTS. Returns the media URL
+   *  or null if generation failed. Server-only. */
+  generateTTS?: (text: string, voice: string) => Promise<string | null>
   setState: (state: any) => Promise<void>
   getState: () => Promise<any>
 }
@@ -192,6 +198,45 @@ export async function dispatchBotUpdate(params: {
     return msg.id
   }
 
+  // Helper: generate TTS audio via Pocket TTS, save to disk, return URL.
+  // Server-only — uses fs/path to write the WAV file to public/uploads/.
+  const generateTTS = async (text: string, voice: string): Promise<string | null> => {
+    try {
+      const ttsUrl = process.env.TTS_URL || 'http://localhost:8000'
+      const formData = new FormData()
+      formData.append('text', text.slice(0, 500))
+      formData.append('voice_url', voice)
+
+      const ttsRes = await fetch(`${ttsUrl}/tts`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!ttsRes.ok) {
+        console.error(`[bot:tts] TTS server error ${ttsRes.status}`)
+        return null
+      }
+
+      const audioBuffer = Buffer.from(await ttsRes.arrayBuffer())
+      if (audioBuffer.length === 0) {
+        console.error('[bot:tts] TTS returned empty audio')
+        return null
+      }
+
+      const uploadDir = path.join(process.cwd(), 'public', 'uploads')
+      if (!existsSync(uploadDir)) {
+        await mkdir(uploadDir, { recursive: true })
+      }
+      const filename = `tts-bot-${crypto.randomUUID()}.wav`
+      await writeFile(path.join(uploadDir, filename), audioBuffer)
+
+      return `/api/uploads/${filename}`
+    } catch (e: any) {
+      console.error('[bot:tts] failed:', e?.message || e)
+      return null
+    }
+  }
+
   // Helper: state management
   const stateKey = { botId: bot.id, userId: params.senderId }
   const getState = async () => {
@@ -245,6 +290,7 @@ export async function dispatchBotUpdate(params: {
     reply,
     replyWithMedia,
     editMessage,
+    generateTTS,
     getState,
     setState,
   }
@@ -368,6 +414,37 @@ export async function dispatchBotCallback(params: {
     return msg.id
   }
 
+  const generateTTS = async (text: string, voice: string): Promise<string | null> => {
+    try {
+      const ttsUrl = process.env.TTS_URL || 'http://localhost:8000'
+      const formData = new FormData()
+      formData.append('text', text.slice(0, 500))
+      formData.append('voice_url', voice)
+
+      const ttsRes = await fetch(`${ttsUrl}/tts`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!ttsRes.ok) return null
+
+      const audioBuffer = Buffer.from(await ttsRes.arrayBuffer())
+      if (audioBuffer.length === 0) return null
+
+      const uploadDir = path.join(process.cwd(), 'public', 'uploads')
+      if (!existsSync(uploadDir)) {
+        await mkdir(uploadDir, { recursive: true })
+      }
+      const filename = `tts-bot-${crypto.randomUUID()}.wav`
+      await writeFile(path.join(uploadDir, filename), audioBuffer)
+
+      return `/api/uploads/${filename}`
+    } catch (e: any) {
+      console.error('[bot:tts callback] failed:', e?.message || e)
+      return null
+    }
+  }
+
   const stateKey = { botId: bot.id, userId: params.senderId }
   const getState = async () => {
     const session = await db.conversationSession.findUnique({ where: { botId_userId: stateKey } })
@@ -408,6 +485,7 @@ export async function dispatchBotCallback(params: {
     reply,
     replyWithMedia,
     editMessage,
+    generateTTS,
     getState,
     setState,
   }

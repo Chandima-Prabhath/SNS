@@ -19,10 +19,6 @@
  *   - advanced : power features (api_call, random)
  */
 
-import { writeFile, mkdir } from 'fs/promises'
-import { existsSync } from 'fs'
-import path from 'path'
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Node type catalog
 // ─────────────────────────────────────────────────────────────────────────────
@@ -213,6 +209,12 @@ export interface BotExecutionContext {
   /** Edit an existing bot message in-place (body + keyboard). Used for
    *  Telegram-style keyboard updates when a wait_choice loops back. */
   editMessage?: (messageId: string, text: string, keyboard?: BotKeyboardButton[][]) => Promise<void>
+
+  /** Generate TTS audio from text using Pocket TTS. Returns the media URL
+   *  (e.g. /api/uploads/tts-bot-xxx.wav) or null if generation failed.
+   *  Server-only — debug mode should return null and let the engine fall
+   *  back to sending text. */
+  generateTTS?: (text: string, voice: string) => Promise<string | null>
 
   /** Show typing indicator — best-effort, no-op if unsupported. */
   setTyping?: (seconds: number) => Promise<void>
@@ -645,81 +647,44 @@ export async function executeBotFlow(
       case 'tts': {
         const ttsStart = now()
         const ttsNode = currentNode
-        try {
-          const text = interpolate(ttsNode.data.ttsText || '', ctx)
-          const voice = ttsNode.data.ttsVoice || 'alba'
+        const text = interpolate(ttsNode.data.ttsText || '', ctx)
+        const voice = ttsNode.data.ttsVoice || 'alba'
 
-          if (!text.trim()) {
-            trace.push({ type: 'error', timestamp: now(), nodeId: ttsNode.id, message: 'TTS node has empty text' })
-            currentNode = followEdge(ttsNode.id, null)
-            break
+        if (!text.trim()) {
+          trace.push({ type: 'error', timestamp: now(), nodeId: ttsNode.id, message: 'TTS node has empty text' })
+          currentNode = followEdge(ttsNode.id, null)
+          break
+        }
+
+        trace.push({ type: 'log', timestamp: now(), nodeId: ttsNode.id, level: 'info', message: `TTS: generating "${text.slice(0, 60)}…" with voice=${voice}` })
+
+        let mediaUrl: string | null = null
+        if (ctx.generateTTS) {
+          try {
+            mediaUrl = await ctx.generateTTS(text, voice)
+          } catch (e: any) {
+            trace.push({ type: 'error', timestamp: now(), nodeId: ttsNode.id, message: `TTS failed: ${e?.message || e}` })
           }
+        } else {
+          // Debug mode — no actual TTS available
+          trace.push({ type: 'error', timestamp: now(), nodeId: ttsNode.id, message: 'TTS not available in debug mode' })
+        }
 
-          // Call the Pocket TTS server directly (server-side fetch)
-          const ttsUrl = process.env.TTS_URL || 'http://localhost:8000'
-          const ttsFormData = new FormData()
-          ttsFormData.append('text', text.slice(0, 500))
-
-          // Check if voice is a custom voice ID (cuid format) or a built-in name
-          if (/^[a-z0-9]{20,}$/.test(voice)) {
-            // Custom voice — would need DB lookup + safetensors handling.
-            // For simplicity, just pass it as voice_url and let the TTS
-            // server figure it out. If it fails, the error is caught below.
-            ttsFormData.append('voice_url', voice)
+        if (mediaUrl) {
+          // Send as a voice message
+          if (ctx.replyWithMedia) {
+            await ctx.replyWithMedia(mediaUrl, 'audio')
           } else {
-            ttsFormData.append('voice_url', voice)
+            await ctx.reply(`🔊 ${mediaUrl}`)
           }
-
-          trace.push({ type: 'log', timestamp: now(), nodeId: ttsNode.id, level: 'info', message: `TTS: generating "${text.slice(0, 60)}…" with voice=${voice}` })
-
-          const ttsRes = await fetch(`${ttsUrl}/tts`, {
-            method: 'POST',
-            body: ttsFormData,
-          })
-
-          if (!ttsRes.ok) {
-            const errText = await ttsRes.text().catch(() => 'unknown error')
-            trace.push({ type: 'error', timestamp: now(), nodeId: ttsNode.id, message: `TTS error ${ttsRes.status}: ${errText.slice(0, 100)}` })
-            // Fallback: send the text as a plain message
-            await ctx.reply(`🔊 [TTS failed] ${text}`)
-            sentCount++
-          } else {
-            // Collect the audio buffer
-            const audioBuffer = Buffer.from(await ttsRes.arrayBuffer())
-
-            if (audioBuffer.length === 0) {
-              throw new Error('TTS returned empty audio')
-            }
-
-            // Write to public/uploads/
-            const uploadDir = path.join(process.cwd(), 'public', 'uploads')
-            if (!existsSync(uploadDir)) {
-              await mkdir(uploadDir, { recursive: true })
-            }
-            const filename = `tts-bot-${crypto.randomUUID()}.wav`
-            const filePath = path.join(uploadDir, filename)
-            await writeFile(filePath, audioBuffer)
-
-            // Send as a voice message
-            const mediaUrl = `/api/uploads/${filename}`
-            if (ctx.replyWithMedia) {
-              await ctx.replyWithMedia(mediaUrl, 'audio')
-            } else {
-              // Fallback: send URL as text if replyWithMedia not available
-              await ctx.reply(`🔊 ${mediaUrl}`)
-            }
-            sentCount++
-            trace.push({ type: 'message_sent', timestamp: now(), nodeId: ttsNode.id, text: `[voice message: ${text.slice(0, 60)}…]` })
-            trace.push({ type: 'ai_call', timestamp: now(), nodeId: ttsNode.id, model: `tts:${voice}`, prompt: text.slice(0, 100), responseLength: audioBuffer.length, durationMs: now() - ttsStart })
-          }
-        } catch (e: any) {
-          trace.push({ type: 'error', timestamp: now(), nodeId: ttsNode.id, message: `TTS failed: ${e?.message || e}` })
+          sentCount++
+          trace.push({ type: 'message_sent', timestamp: now(), nodeId: ttsNode.id, text: `[voice message: ${text.slice(0, 60)}…]` })
+          trace.push({ type: 'ai_call', timestamp: now(), nodeId: ttsNode.id, model: `tts:${voice}`, prompt: text.slice(0, 100), responseLength: 0, durationMs: now() - ttsStart })
+        } else {
           // Fallback: send the text as a plain message
-          const fallbackText = interpolate(ttsNode.data.ttsText || '', ctx)
-          if (fallbackText.trim()) {
-            await ctx.reply(`🔊 [TTS error] ${fallbackText}`)
-            sentCount++
-          }
+          await ctx.reply(`🔊 ${text}`)
+          sentCount++
+          trace.push({ type: 'message_sent', timestamp: now(), nodeId: ttsNode.id, text: `[TTS fallback] ${text.slice(0, 80)}` })
         }
         currentNode = followEdge(ttsNode.id, null)
         break
