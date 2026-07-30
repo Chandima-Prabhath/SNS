@@ -93,7 +93,7 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
       preview = { label: 'Asks', value: data.prompt || '(empty)' }
       break
     case 'wait_choice':
-      preview = { label: 'Picks from', value: (data.options || []).join(' · ') || '(none)' }
+      preview = { label: 'Buttons', value: (data.options || []).join(' · ') || '(none)' }
       break
     case 'condition':
       preview = { label: 'If', value: `${data.variable || '∅'} ${data.operator || 'exists'} ${data.value || ''}` }
@@ -1157,8 +1157,8 @@ function NodeInspectorBody({
           placeholder="choice"
         />
         <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-3 text-xs text-white/60">
-          <p className="font-semibold text-orange-400 mb-1">Waits for a valid choice</p>
-          <p>The user must reply with one of the options (by number or text). Invalid replies will be re-prompted.</p>
+          <p className="font-semibold text-orange-400 mb-1">Inline buttons (Telegram-style)</p>
+          <p>Each option becomes a tappable button under the message. The user can click a button OR type the option text. The picked value is stored as <code className="text-white/80">{`{{${data.variableName || 'choice'}}}`}</code>.</p>
         </div>
       </div>
     )

@@ -131,16 +131,17 @@ export async function dispatchBotUpdate(params: {
   }
 
   // Helper: post a message as the bot
+  // If keyboard is provided, it's persisted as JSON on the message row and
+  // rendered as tappable Telegram-style inline buttons by the client.
   const reply = async (text: string, keyboard?: BotKeyboard) => {
     await db.message.create({
       data: {
         channelId: params.channelId,
         senderType: 'bot',
         senderId: bot.id,
-        body: keyboard && keyboard.length > 0
-          ? `${text}\n\n${keyboard.flat().map(b => `[${b.text}]`).join('  ')}`
-          : text,
+        body: text,
         replyToId: params.messageId,
+        keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
       },
     })
     // Note: socket relay is handled by the calling REST route after dispatch returns
@@ -236,4 +237,124 @@ export async function dispatchBotUpdate(params: {
   }
 
   await chain()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Callback dispatcher — handles inline keyboard button clicks
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Dispatch a callback (inline button click) to a bot.
+ *
+ * When a user taps an inline button on a bot message, the client POSTs to
+ * /api/channels/:id/messages/:messageId/callback with { callbackData, botId }.
+ * This function:
+ *   1. Loads the bot
+ *   2. Builds a BotContext with the callbackData as the message body
+ *   3. If the bot is a visual bot, routes to onMessage (which handles the
+ *      paused wait_choice resume path)
+ *   4. Otherwise, calls the first matching callback handler in the module
+ *
+ * Returns the bot replies created during dispatch (same pattern as
+ * dispatchBotUpdate).
+ */
+export async function dispatchBotCallback(params: {
+  botId: string
+  channelId: string
+  senderId: string
+  senderName: string
+  messageId: string // the message that contained the keyboard
+  callbackData: string // the button's callbackData value
+  replyToId?: string | null
+}): Promise<void> {
+  const bot = await db.bot.findUnique({ where: { id: params.botId } })
+  if (!bot || !bot.enabled) return
+
+  let config: any = {}
+  try {
+    config = bot.config ? JSON.parse(bot.config) : {}
+  } catch {
+    config = {}
+  }
+
+  // Pass the flow to visual bots
+  if (bot.module === 'visual' && bot.flow) {
+    config._flow = bot.flow
+  }
+
+  const reply = async (text: string, keyboard?: BotKeyboard) => {
+    await db.message.create({
+      data: {
+        channelId: params.channelId,
+        senderType: 'bot',
+        senderId: bot.id,
+        body: text,
+        replyToId: params.messageId,
+        keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
+      },
+    })
+  }
+
+  const stateKey = { botId: bot.id, userId: params.senderId }
+  const getState = async () => {
+    const session = await db.conversationSession.findUnique({ where: { botId_userId: stateKey } })
+    if (!session) return {}
+    try {
+      return JSON.parse(session.state || '{}')
+    } catch {
+      return {}
+    }
+  }
+  const setState = async (state: any) => {
+    await db.conversationSession.upsert({
+      where: { botId_userId: stateKey },
+      create: { ...stateKey, state: JSON.stringify(state) },
+      update: { state: JSON.stringify(state) },
+    })
+  }
+
+  const ctx: BotContext = {
+    bot: {
+      id: bot.id,
+      name: bot.name,
+      username: bot.username,
+      module: bot.module,
+      config,
+    },
+    channelId: params.channelId,
+    senderId: params.senderId,
+    senderName: params.senderName,
+    message: {
+      id: params.messageId,
+      body: params.callbackData, // the callbackData acts as the "message body" for the resume path
+      replyToId: params.replyToId,
+    },
+    args: [],
+    command: undefined,
+    isMention: false,
+    reply,
+    getState,
+    setState,
+  }
+
+  const mod = getBotModule(bot.module)
+  if (!mod) return
+
+  // For visual bots, route to onMessage — the wait_choice resume path in
+  // visual.ts will match the callbackData against the options.
+  if (mod.onMessage && bot.module === 'visual') {
+    await mod.onMessage(ctx)
+    return
+  }
+
+  // For non-visual bots, try callback handlers
+  if (mod.callbacks) {
+    for (const cb of mod.callbacks) {
+      const pattern = typeof cb.pattern === 'string' ? new RegExp(`^${cb.pattern}$`) : cb.pattern
+      if (pattern.test(params.callbackData)) {
+        await cb.handler(ctx, params.callbackData)
+        return
+      }
+    }
+  }
 }

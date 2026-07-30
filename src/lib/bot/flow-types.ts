@@ -158,6 +158,13 @@ export interface FlowNodeData {
 // Execution context & result
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** A single inline keyboard button (Telegram-style). */
+export interface BotKeyboardButton {
+  text: string
+  /** Value sent back to the bot when the button is clicked. */
+  callbackData: string
+}
+
 export interface BotExecutionContext {
   channelId: string
   senderId: string
@@ -179,8 +186,9 @@ export interface BotExecutionContext {
   getState?: () => Promise<any>
   setState?: (state: any) => Promise<void>
 
-  /** Reply helper — pushes a message as the bot. */
-  reply: (text: string) => Promise<void>
+  /** Reply helper — pushes a message as the bot. Optional keyboard attaches
+   *  Telegram-style inline buttons to the message. */
+  reply: (text: string, keyboard?: BotKeyboardButton[][]) => Promise<void>
 
   /** Show typing indicator — best-effort, no-op if unsupported. */
   setTyping?: (seconds: number) => Promise<void>
@@ -421,13 +429,17 @@ export async function executeBotFlow(
       case 'wait_choice': {
         const prompt = interpolate(currentNode.data.prompt || '', ctx)
         const options = currentNode.data.options || []
-        const text = options.length > 0
-          ? `${prompt}\n${options.map((o, i) => `${i + 1}. ${o}`).join('\n')}`
-          : prompt
-        if (text.trim()) {
-          await ctx.reply(text)
+        // Build a Telegram-style inline keyboard — each option is a button.
+        // The button's callbackData is the option text itself, so the resume
+        // path in visual.ts can match it directly.
+        const keyboard: BotKeyboardButton[][] = options.map((opt) => [{
+          text: opt,
+          callbackData: opt,
+        }])
+        if (prompt.trim()) {
+          await ctx.reply(prompt, keyboard)
           sentCount++
-          trace.push({ type: 'message_sent', timestamp: now(), nodeId: currentNode.id, text })
+          trace.push({ type: 'message_sent', timestamp: now(), nodeId: currentNode.id, text: prompt })
         }
         trace.push({ type: 'paused', timestamp: now(), nodeId: currentNode.id, variableName: currentNode.data.variableName || 'choice' })
         trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })

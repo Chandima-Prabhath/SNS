@@ -82,11 +82,10 @@ export const visualBot: BotModule = {
         }
 
         if (!matched) {
-          // Re-prompt and stay paused
+          // Re-prompt with inline buttons and stay paused
           const prompt = inputNode.data.prompt || 'Pick one:'
-          const text = `Please pick one of:\n${options.map((o, i) => `${i + 1}. ${o}`).join('\n')}`
-          if (prompt) await ctx.reply(prompt)
-          await ctx.reply(text)
+          const keyboard = options.map((opt) => [{ text: opt, callbackData: opt }])
+          await ctx.reply(prompt, keyboard)
           await ctx.setState({ ...state })
           return
         }

@@ -5,6 +5,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSocket } from './useSocket'
 import { useAppStore } from '@/stores/useAppStore'
 
+export interface KeyboardButton {
+  text: string
+  callbackData: string
+}
+
 export interface ChannelMessage {
   id: string
   channelId: string
@@ -19,6 +24,9 @@ export interface ChannelMessage {
   body: string
   mediaUrl: string | null
   mediaType: string | null
+  /** Telegram-style inline keyboard — JSON string of KeyboardButton[][].
+   *  Parsed by the message renderer into tappable buttons. */
+  keyboard: string | null
   replyToId: string | null
   replyTo: {
     id: string
@@ -306,11 +314,44 @@ export function useChannel(channelId: string | null) {
     [channelId, socket, qc]
   )
 
+  // Send a callback (inline keyboard button click) to a bot
+  const sendCallback = useCallback(
+    async (messageId: string, callbackData: string) => {
+      try {
+        const res = await fetch(`/api/channels/${channelId}/messages/${messageId}/callback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callbackData }),
+        })
+        if (!res.ok) throw new Error('callback failed')
+        const data = await res.json()
+
+        // Add bot replies to the message cache + broadcast via socket
+        if (data.botReplies && Array.isArray(data.botReplies)) {
+          for (const reply of data.botReplies) {
+            qc.setQueryData(['messages', channelId], (old: ChannelMessage[] | undefined) => {
+              if (!old) return [reply]
+              if (old.some((m) => m.id === reply.id)) return old
+              return [...old, reply]
+            })
+            if (socket) {
+              socket.emit('channel:message', { channelId, message: reply })
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[callback] failed:', e)
+      }
+    },
+    [channelId, socket, qc]
+  )
+
   return {
     messages: data || [],
     isLoading,
     error,
     send: sendMutation.mutateAsync,
+    sendCallback,
     edit: editMutation.mutateAsync,
     remove: deleteMutation.mutateAsync,
     typing: Object.values(typing),

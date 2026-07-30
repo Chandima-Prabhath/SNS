@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useMemo } from 'react'
-import { useChannel, type ChannelMessage } from '@/hooks/useChannel'
+import { useChannel, type ChannelMessage, type KeyboardButton } from '@/hooks/useChannel'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot, UserX, Copy, Pin, AudioLines, ChevronDown } from 'lucide-react'
@@ -17,7 +17,7 @@ interface MessageListProps {
 }
 
 export function MessageList({ channelId }: MessageListProps) {
-  const { messages, isLoading, send, edit, remove, typing, markRead, replyTo, setReplyTo } =
+  const { messages, isLoading, send, edit, remove, sendCallback, typing, markRead, replyTo, setReplyTo } =
     useChannel(channelId)
   const { data: session } = useSession()
   const myId = (session?.user as any)?.id
@@ -231,6 +231,7 @@ export function MessageList({ channelId }: MessageListProps) {
                   }
                   onDelete={(m) => remove(m.id)}
                   onEditSubmit={async (messageId, text) => edit(messageId, text)}
+                  onCallback={async (messageId, callbackData) => sendCallback(messageId, callbackData)}
                 />
               </div>
             )
@@ -329,6 +330,7 @@ interface MessageGroupProps {
   onReply: (m: ChannelMessage) => void
   onDelete: (m: ChannelMessage) => void
   onEditSubmit: (messageId: string, text: string) => Promise<any>
+  onCallback: (messageId: string, callbackData: string) => Promise<void>
 }
 
 function MessageGroup(props: MessageGroupProps) {
@@ -388,6 +390,9 @@ function MessageGroup(props: MessageGroupProps) {
               await props.onEditSubmit(m.id, text)
               setEditingId(null)
             }}
+            onCallback={async (callbackData) => {
+              await props.onCallback(m.id, callbackData)
+            }}
             highlight={replyTo?.id === m.id}
             clearHighlight={() => setReplyTo(null)}
           />
@@ -406,6 +411,7 @@ interface MessageItemProps {
   onReply: () => void
   onDelete: () => void
   onEditSubmit: (text: string) => Promise<void>
+  onCallback: (callbackData: string) => Promise<void>
   highlight?: boolean
   clearHighlight: () => void
 }
@@ -546,6 +552,39 @@ function MessageItem(props: MessageItemProps) {
             </div>
           </div>
         )}
+
+        {/* Telegram-style inline keyboard buttons */}
+        {m.keyboard && !isEditing && (() => {
+          try {
+            const keyboard = JSON.parse(m.keyboard) as KeyboardButton[][]
+            if (!Array.isArray(keyboard) || keyboard.length === 0) return null
+            return (
+              <div className="mt-1.5 space-y-1">
+                {keyboard.map((row, ri) => (
+                  <div key={ri} className="flex gap-1 flex-wrap">
+                    {row.map((btn, bi) => (
+                      <button
+                        key={bi}
+                        onClick={() => props.onCallback(btn.callbackData)}
+                        className={cn(
+                          'flex-1 min-w-[60px] px-3 py-1.5 rounded-lg text-xs font-medium transition-all active:scale-95',
+                          'backdrop-blur-md border',
+                          isMine
+                            ? 'bg-black/15 border-white/20 text-primary-foreground hover:bg-black/25'
+                            : 'bg-primary/15 border-primary/30 text-primary hover:bg-primary/25'
+                        )}
+                      >
+                        {btn.text}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )
+          } catch {
+            return null
+          }
+        })()}
 
         {/* Body or editor */}
         {isEditing ? (

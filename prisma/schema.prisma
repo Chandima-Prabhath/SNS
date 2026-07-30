@@ -177,6 +177,12 @@ model Message {
   mediaUrl    String?
   mediaType   String?  // image | video | audio | file
 
+  // Telegram-style inline keyboard buttons — JSON string of BotKeyboardButton[][]
+  // Each button: { text: string, callbackData: string }
+  // Rendered as tappable buttons under the message. Clicking sends the
+  // callbackData back to the bot via /api/channels/:id/messages/:msgId/callback
+  keyboard    String?
+
   replyToId   String?
   replyTo     Message?  @relation("MessageReply", fields: [replyToId], references: [id], onDelete: NoAction)
   replies     Message[] @relation("MessageReply")
