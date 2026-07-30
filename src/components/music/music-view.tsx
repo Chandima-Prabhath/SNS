@@ -83,7 +83,7 @@ export function MusicView() {
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState<Track | null>(null)
 
   // ── DB-backed liked songs (react-query) ──────────────────────────────
-  const { data: likedData, refetch: refetchLiked } = useQuery({
+  const { data: likedData } = useQuery({
     queryKey: ['music-liked'],
     queryFn: async () => {
       const res = await fetch('/api/music/liked')
@@ -94,7 +94,7 @@ export function MusicView() {
   const liked: Track[] = likedData?.songs || []
 
   // ── DB-backed playlists (react-query) ────────────────────────────────
-  const { data: playlistsData, refetch: refetchPlaylists } = useQuery({
+  const { data: playlistsData } = useQuery({
     queryKey: ['music-playlists'],
     queryFn: async () => {
       const res = await fetch('/api/music/playlists')
@@ -159,14 +159,14 @@ export function MusicView() {
       }
     } catch {
       // Revert on error
-      refetchLiked()
+      qc.invalidateQueries({ queryKey: ['music-liked'] })
       toast.error('Failed to update liked songs')
     }
   }
 
   const isLiked = (videoId: string) => liked.some((t) => t.videoId === videoId)
 
-  // ── Playlist helpers (DB-backed) ─────────────────────────────────────
+  // ── Playlist helpers (DB-backed, with optimistic updates) ────────────
   const createPlaylist = async (name: string) => {
     if (!name.trim()) return
     try {
@@ -176,16 +176,38 @@ export function MusicView() {
         body: JSON.stringify({ name }),
       })
       if (!res.ok) throw new Error('failed')
+      const data = await res.json()
+      // Add the new playlist to the cache immediately (optimistic)
+      qc.setQueryData(['music-playlists'], (old: any) => {
+        const newPlaylist = { ...data.playlist, songs: [] }
+        return { playlists: [newPlaylist, ...(old?.playlists || [])] }
+      })
       toast.success(`Playlist "${name}" created`)
       setNewPlaylistName('')
       setShowNewPlaylistInput(false)
-      refetchPlaylists()
     } catch {
       toast.error('Failed to create playlist')
     }
   }
 
   const addToPlaylist = async (playlistId: string, track: Track) => {
+    // Optimistic update — add the song to the playlist in the cache
+    qc.setQueryData(['music-playlists'], (old: any) => {
+      if (!old) return old
+      return {
+        ...old,
+        playlists: old.playlists.map((pl: any) =>
+          pl.id === playlistId
+            ? {
+                ...pl,
+                songs: pl.songs.some((s: Track) => s.videoId === track.videoId)
+                  ? pl.songs // already in playlist — don't add duplicate
+                  : [...pl.songs, track],
+              }
+            : pl
+        ),
+      }
+    })
     try {
       const res = await fetch(`/api/music/playlists/${playlistId}/songs`, {
         method: 'POST',
@@ -195,19 +217,29 @@ export function MusicView() {
       if (!res.ok) throw new Error('failed')
       const pl = playlists.find((p) => p.id === playlistId)
       toast.success(`Added to "${pl?.name}"`)
-      refetchPlaylists()
     } catch {
+      // Revert on error
+      qc.invalidateQueries({ queryKey: ['music-playlists'] })
       toast.error('Failed to add to playlist')
     }
   }
 
   const deletePlaylist = async (playlistId: string) => {
+    // Optimistic update — remove from cache immediately
+    qc.setQueryData(['music-playlists'], (old: any) => {
+      if (!old) return old
+      return {
+        ...old,
+        playlists: old.playlists.filter((pl: any) => pl.id !== playlistId),
+      }
+    })
     try {
       const res = await fetch(`/api/music/playlists/${playlistId}`, { method: 'DELETE' })
       if (!res.ok) throw new Error('failed')
       toast.success('Playlist deleted')
-      refetchPlaylists()
     } catch {
+      // Revert on error
+      qc.invalidateQueries({ queryKey: ['music-playlists'] })
       toast.error('Failed to delete playlist')
     }
   }

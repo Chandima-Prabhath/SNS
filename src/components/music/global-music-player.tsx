@@ -771,11 +771,14 @@ function PlayerBar({
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 120, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className={cn(
-              "fixed bottom-16 lg:bottom-4 left-3 right-3 lg:left-1/2 lg:-translate-x-1/2 lg:right-auto lg:w-[660px] z-[60] rounded-2xl shadow-2xl overflow-hidden",
-              isPlaying ? "adoo-playing-border" : "glass-dark"
-            )}
+            className="fixed bottom-16 lg:bottom-4 left-3 right-3 lg:left-1/2 lg:-translate-x-1/2 lg:right-auto lg:w-[660px] z-[60] pointer-events-auto"
           >
+            <div
+              className={cn(
+                "rounded-2xl shadow-2xl overflow-hidden",
+                isPlaying ? "adoo-playing-border" : "glass-dark"
+              )}
+            >
             {/* Mobile layout */}
             <div className="lg:hidden px-4 py-3 space-y-2.5">
               <div className="flex items-center gap-3">
@@ -883,6 +886,7 @@ function PlayerBar({
                   <ChevronDown className="w-4 h-4" />
                 </button>
               </div>
+            </div>
             </div>
           </motion.div>
         )}
