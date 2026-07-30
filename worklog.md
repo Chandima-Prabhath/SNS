@@ -275,3 +275,29 @@ Stage Summary:
 - /api/tts/route.ts: Removed tee(), background IIFE, X-Tts-* headers, writeFile/mkdir imports. Now just pipes TTS stream to client.
 - message-composer.tsx: Added previewBlob state. handleGenerate collects chunks into Blob + creates blob URL for preview. handleSend uploads Blob to /api/upload, uses returned URL. Streaming playback via Web Audio API unchanged (still ~200ms to first sound).
 - The production 0-length audio issue is eliminated because /api/upload saves synchronously — the file is guaranteed on disk before the URL is used in a message.
+
+---
+Task ID: pm2-prod-runtime
+Agent: main
+Task: Replace `bun run start` with a foolproof PM2 + Node.js production setup. Bun's runtime has known issues streaming HTTP responses and piping fetch() streams through Next.js route handlers — the root cause of TTS audio arriving as 0-length in production.
+
+Work Log:
+- Read package.json — confirmed `start` script uses `bun run server.ts` (Bun runtime executing the custom Next.js + Socket.io server).
+- Read server.ts — pure Node.js APIs (http, next, socket.io). No Bun-specific code, so switching to Node.js + tsx is safe.
+- Read next.config.ts — no standalone output, runs from project root with node_modules access. Perfect for PM2 + tsx.
+- Added `export const runtime = 'nodejs'` and `export const dynamic = 'force-dynamic'` to /api/tts/route.ts and /api/upload/route.ts. Belt-and-suspenders: forces Next.js to treat these as dynamic Node.js routes in production, preventing any static/edge optimization that could buffer streaming responses.
+- Created ecosystem.config.cjs — PM2 config that runs server.ts via `npx tsx` (Node.js TypeScript loader) instead of Bun. Includes: auto-restart (max 10 restarts per 60s window to prevent loops), 1.5GB memory threshold restart, log files with timestamps, graceful 5s shutdown.
+- Added package.json scripts: start:node (Node + tsx direct), pm2:start, pm2:stop, pm2:restart, pm2:logs, pm2:status, pm2:save, deploy (build + pm2 restart).
+- Created scripts/deploy.sh — foolproof one-command deploy: ensures PM2 is installed, builds with `bun run build` (build step doesn't have the streaming issue — only the long-running server does), restarts under PM2 with Node.js, saves process list for reboot survival. Supports `--no-build` flag for code-only restarts.
+- Verified `npx tsx server.ts` loads server.ts correctly (got past module resolution into Next.js init — only failed due to dev lock being held, which proves tsx + Node path resolution works).
+- Verified tsc --noEmit shows zero errors in the modified route files.
+
+Stage Summary:
+- Production runtime switched from Bun to Node.js (via tsx) managed by PM2.
+- ecosystem.config.cjs: PM2 process config with auto-restart, log rotation, memory limits.
+- scripts/deploy.sh: one-command deploy (build + PM2 restart + save).
+- package.json: new pm2:* and deploy scripts.
+- /api/tts/route.ts + /api/upload/route.ts: force-dynamic + nodejs runtime exports.
+- TO DEPLOY: `./scripts/deploy.sh` (first time) or `bun run deploy` (subsequent).
+- TO ENABLE BOOT STARTUP (one-time): `pm2 startup systemd` then run the printed command, then `pm2 save`.
+- The TTS 0-length audio issue should now be resolved because: (1) Node.js handles streaming responses correctly, (2) force-dynamic prevents Next.js from buffering, (3) PM2 ensures the process stays up and restarts cleanly on deploy.

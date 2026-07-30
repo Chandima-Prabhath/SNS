@@ -6,6 +6,12 @@ import { existsSync } from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 
+// Force Node.js runtime + dynamic route. Uploads involve streaming FormData
+// parsing and synchronous disk writes — must always run on Node.js, never
+// edge/static-optimized.
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
 // Avoid stat-ing the upload dir on every request after the first time.
 let uploadDirEnsured = false
 

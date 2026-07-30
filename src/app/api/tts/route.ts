@@ -10,6 +10,13 @@ import path from 'path'
 
 const execFileAsync = promisify(execFile)
 
+// Force this route to always run on the Node.js runtime as a dynamic route.
+// In production builds, Next.js can otherwise try to inline/optimize route
+// handlers in ways that break streaming responses. These two exports ensure
+// the route always streams correctly in `next start` / PM2 / Node.js prod.
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
 /**
  * POST /api/tts — Generate a voice message using PocketBase TTS (Kyutai pocket-tts).
  *
