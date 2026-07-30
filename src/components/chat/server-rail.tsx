@@ -170,8 +170,6 @@ function MobileServerRail() {
   const open = useAppStore((s) => s.serverRailOpen)
   const setOpen = useAppStore((s) => s.setServerRailOpen)
   const { data: unreadData } = useUnreadCounts()
-  const { status: callStatus } = useCall()
-  const { data: session } = useSession()
   const totalUnread = unreadData?.total || 0
 
   const { data: groups } = useQuery({
@@ -206,7 +204,7 @@ function MobileServerRail() {
             animate={{ x: 0 }}
             exit={{ x: -300 }}
             transition={{ type: 'spring', stiffness: 350, damping: 35 }}
-            className="md:hidden fixed left-0 top-0 bottom-0 z-50 w-20 flex flex-col items-center gap-1.5 py-4 bg-sidebar border-r border-sidebar-border/50 glass-dark"
+            className="md:hidden fixed left-0 top-0 bottom-16 z-50 w-20 flex flex-col items-center gap-1.5 py-4 bg-sidebar border-r border-sidebar-border/50 glass-dark"
             style={{ pointerEvents: open ? 'auto' : 'none' }}
           >
             {/* Top section: DMs + servers */}
@@ -245,27 +243,6 @@ function MobileServerRail() {
               <CreateOrJoinGroupButton
                 onCreated={() => setOpen(false)}
               />
-            </div>
-
-            <div className="flex-1" />
-
-            {/* Bottom nav */}
-            <div className="flex flex-col items-center gap-1.5">
-              <div className="w-8 h-px bg-sidebar-border/60 mb-0.5" />
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon
-                const active = view === item.key
-                return (
-                  <RailButton
-                    key={item.key}
-                    active={active}
-                    onClick={() => { setView(item.key); setOpen(false) }}
-                    label={item.label}
-                  >
-                    <Icon className="w-5 h-5" strokeWidth={active ? 2.4 : 2} fill={active && item.key === 'status' ? 'currentColor' : 'none'} />
-                  </RailButton>
-                )
-              })}
             </div>
           </motion.div>
         </>

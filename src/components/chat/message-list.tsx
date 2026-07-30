@@ -30,12 +30,6 @@ export function MessageList({ channelId }: MessageListProps) {
   useEffect(() => {
     lastMessageIdRef.current = null
     isAtBottomRef.current = true
-    // Jump to bottom immediately on channel switch (no smooth scroll for the
-    // initial load — instant feels more responsive).
-    requestAnimationFrame(() => {
-      const el = scrollRef.current
-      if (el) el.scrollTop = el.scrollHeight
-    })
   }, [channelId])
 
   // Track whether the user is at the bottom of the scroll container.
@@ -51,42 +45,56 @@ export function MessageList({ channelId }: MessageListProps) {
     return () => el.removeEventListener('scroll', onScroll)
   }, [])
 
-  // Auto-scroll on new messages — smooth if user is at bottom, otherwise
-  // leave them where they are (don't yank them down while reading history).
+  // Auto-scroll — handles BOTH the initial load (channel switch / first
+  // messages arriving) and subsequent new messages.
+  //
+  // • Initial load: wait 200ms so avatars/images have time to render and
+  //   lay out before we measure scrollHeight. Double rAF was too short for
+  //   channels with media-heavy history (scroll would land on "yesterday"
+  //   instead of the latest message).
+  // • New message: use requestAnimationFrame so the DOM updates before we
+  //   measure. Scroll smoothly so the user sees the message slide in.
+  // • Own message: ALWAYS scroll, even if the user scrolled up (so sending
+  //   a message snaps back to the bottom).
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
     const lastMsg = messages[messages.length - 1]
     if (!lastMsg) return
-    if (lastMessageIdRef.current !== lastMsg.id) {
-      const isMine = lastMsg.senderId === myId
-      // Always scroll if: it's my own message, OR I'm already at the bottom.
-      if (isMine || isAtBottomRef.current) {
-        // Use 'auto' for instant jump on initial load / channel switch,
-        // smooth for subsequent new messages.
-        const behavior = lastMessageIdRef.current === null ? 'auto' : 'smooth'
-        el.scrollTo({ top: el.scrollHeight, behavior })
-      }
-      lastMessageIdRef.current = lastMsg.id
-      markRead(lastMsg.id)
-    }
-  }, [messages, myId, markRead])
+    // Already processed this exact message — nothing to do.
+    if (lastMessageIdRef.current === lastMsg.id) return
 
-  // Initial scroll-to-bottom when messages first load for a channel.
-  useEffect(() => {
-    if (messages.length > 0 && !lastMessageIdRef.current) {
-      const el = scrollRef.current
-      if (el) {
-        // Wait two frames so images/avatars have a chance to lay out.
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (el) el.scrollTop = el.scrollHeight
-            lastMessageIdRef.current = messages[messages.length - 1].id
-          })
-        })
-      }
+    const isMine = lastMsg.senderId === myId
+    const isInitialLoad = !lastMessageIdRef.current
+    const shouldScroll = isInitialLoad || isMine || isAtBottomRef.current
+
+    lastMessageIdRef.current = lastMsg.id
+    markRead(lastMsg.id)
+
+    if (!shouldScroll) return
+
+    if (isInitialLoad) {
+      // Give the browser time to lay out all the historical messages (and
+      // their media) before we jump. 200ms is enough for most avatars and
+      // thumbnails to load without making the channel switch feel slow.
+      const t = window.setTimeout(() => {
+        const e = scrollRef.current
+        if (e) e.scrollTop = e.scrollHeight
+      }, 200)
+      return () => window.clearTimeout(t)
     }
-  }, [messages])
+
+    // New message — wait one frame so the new bubble has rendered before
+    // we measure scrollHeight. Otherwise we'd scroll to the OLD bottom and
+    // the latest message would sit just below the fold.
+    const raf = requestAnimationFrame(() => {
+      const e = scrollRef.current
+      if (e) {
+        e.scrollTo({ top: e.scrollHeight, behavior: 'smooth' })
+      }
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [messages, myId, markRead])
 
   // Group consecutive messages by same sender within 5 min
   const grouped = useMemo(() => {

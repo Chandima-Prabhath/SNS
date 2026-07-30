@@ -638,9 +638,8 @@ function PlayerBar({
             exit={{ scale: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 400, damping: 25 }}
             drag
-            dragMomentum={false}
-            dragElastic={0.1}
-            dragTransition={{ bounceStiffness: 300, bounceDamping: 20 }}
+            dragElastic={0.2}
+            dragTransition={{ power: 0.2, timeConstant: 200 }}
             whileDrag={{ scale: 1.08, cursor: 'grabbing' }}
             onDragStart={() => { isDraggingRef.current = true }}
             onDragEnd={() => { setTimeout(() => { isDraggingRef.current = false }, 100) }}

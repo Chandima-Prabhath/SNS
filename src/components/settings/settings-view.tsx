@@ -32,7 +32,7 @@ import { signOut } from 'next-auth/react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
-import { generateAvatarCandidates } from '@/lib/avatar'
+import { generateAvatarCandidates, AVATAR_STYLES } from '@/lib/avatar'
 import { SpotlightCard, GlassSurface, GradientText, ShinyText } from '@/components/reactbits'
 // BotBuilderEditor is now loaded via the standalone /bot-builder/[id] route
 import {
@@ -867,7 +867,9 @@ function SystemSection() {
 
 /**
  * Avatar picker — shows generated DiceBear avatars + upload option.
- * Users can pick from 12 generated avatars or upload their own.
+ * Users can pick from 56 generated avatars (14 styles × 4 seeds) or upload
+ * their own. The gallery is grouped by style with a scrollable container so
+ * the long list doesn't dominate the settings panel.
  */
 function AvatarPicker({
   currentAvatarUrl,
@@ -911,19 +913,35 @@ function AvatarPicker({
       </div>
 
       {showPicker && (
-        <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 pt-2">
-          {candidates.map((c, i) => (
-            <button
-              key={i}
-              onClick={() => onPick(c.url)}
-              className={cn(
-                'rounded-xl overflow-hidden border-2 transition-all hover:scale-105',
-                currentAvatarUrl === c.url ? 'border-primary' : 'border-transparent'
-              )}
-            >
-              <img src={c.url} alt="" className="w-full aspect-square" />
-            </button>
-          ))}
+        <div className="max-h-96 overflow-y-auto pr-1 -mr-1 space-y-3 pt-2">
+          {AVATAR_STYLES.map((style) => {
+            const styleCandidates = candidates.filter((c) => c.style === style.key)
+            if (styleCandidates.length === 0) return null
+            return (
+              <div key={style.key} className="space-y-1.5">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-1">
+                  {style.label}
+                </div>
+                <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+                  {styleCandidates.map((c, i) => (
+                    <button
+                      key={`${style.key}-${i}`}
+                      onClick={() => onPick(c.url)}
+                      title={style.label}
+                      className={cn(
+                        'rounded-xl overflow-hidden border-2 transition-all hover:scale-105 bg-muted/30',
+                        currentAvatarUrl === c.url
+                          ? 'border-primary ring-2 ring-primary/30'
+                          : 'border-transparent'
+                      )}
+                    >
+                      <img src={c.url} alt={`${style.label} avatar`} className="w-full aspect-square" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

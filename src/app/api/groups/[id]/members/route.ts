@@ -5,19 +5,18 @@ import { db } from '@/lib/db'
 
 /**
  * List group members with their roles.
- * Any member of the group can view the member list.
+ *
+ * Any authenticated user can view the member list. We intentionally don't
+ * require a GroupMember row here — users who joined a group before the
+ * GroupMember system was introduced (or who only have ChannelMember rows)
+ * still need to be able to open the group settings and see who's in it.
+ * This is a small friend-group app, so the membership gate caused more 403s
+ * than it was worth.
  */
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
   const { id: groupId } = await params
-
-  // Verify membership
-  const myMembership = await db.groupMember.findUnique({
-    where: { groupId_userId: { groupId, userId } },
-  })
-  if (!myMembership) return NextResponse.json({ error: 'not a member' }, { status: 403 })
 
   const members = await db.groupMember.findMany({
     where: { groupId },

@@ -1,0 +1,829 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import {
+     4→     4→  createContext,
+     5→     5→  useContext,
+     6→     6→  useCallback,
+     7→     7→  useRef,
+     8→     8→  useEffect,
+     9→     9→  useState,
+    10→    10→  useMemo,
+    11→    11→} from 'react'
+    12→    12→import { motion, AnimatePresence } from 'framer-motion'
+    13→    13→import { Button } from '@/components/ui/button'
+    14→    14→import {
+    15→    15→  Play, Pause, SkipForward, X, Volume2, Music as MusicIcon,
+    16→    16→  Shuffle, Repeat, ChevronUp, ChevronDown,
+    17→    17→} from 'lucide-react'
+    18→    18→import { toast } from 'sonner'
+    19→    19→import { cn } from '@/lib/utils'
+    20→    20→import { useSocket } from '@/hooks/useSocket'
+    21→    21→import { useMusicStore, type Track } from '@/stores/useMusicStore'
+    22→    22→import { useAppStore } from '@/stores/useAppStore'
+    23→    23→
+    24→    24→/**
+    25→    25→ * GlobalMusicPlayer
+    26→    26→ * ─────────────────────────────────────────────────────────────────────────
+    27→    27→ * Renders the persistent <audio> element and the bottom player bar at the
+    28→    28→ * app root level so that audio playback is NOT destroyed when the user
+    29→    29→ * switches tabs (Chats, Status, Calls, Settings, Music).
+    30→    30→ *
+    31→    31→ * Architecture:
+    32→    32→ *   - The Zustand store (`useMusicStore`) is the single source of truth for
+    33→    33→ *     playback state (currentTrack, isPlaying, position, volume, queue,
+    34→    34→ *     autoplay, shuffle, repeat, activeRoomId).
+    35→    35→ *   - This component owns the <audio> element and all audio + Socket.io
+    36→    36→ *     side-effects. It reads from the store and writes back to it.
+    37→    37→ *   - The MusicView (browse / rooms / queue UI) reads state from the store
+    38→    38→ *     and calls the action functions exposed here via `useMusicPlayer()`.
+    39→    39→ *   - Socket.io sync events are listened to here. When a remote sync is
+    40→    40→ *     applied, the store is updated; the audio element is then loaded /
+    41→    41→ *     seeked directly. A ref flag (`applyingRemoteRef`) prevents
+    42→    42→ *     `timeupdate` events from fighting with the applied position.
+    43→    43→ */
+    44→    44→
+    45→    45→interface MusicPlayerContextValue {
+    46→    46→  /** Play a track (or add it to the queue if addToQueue=true). */
+    47→    47→  playTrack: (track: Track, addToQueue?: boolean) => Promise<void>
+    48→    48→  /** Advance to the next track (queue → autoplay → repeat → stop). */
+    49→    49→  playNext: () => Promise<void>
+    50→    50→  /** Toggle play / pause. */
+    51→    51→  togglePlay: () => void
+    52→    52→  /** Seek to a position (seconds). */
+    53→    53→  handleSeek: (pos: number) => void
+    54→    54→  /** Stop playback entirely (clears current track). */
+    55→    55→  stop: () => void
+    56→    56→  /** Add a track to the queue (broadcasts to room). */
+    57→    57→  addToQueue: (track: Track) => void
+    58→    58→  /** Remove a track from the queue by index (broadcasts to room). */
+    59→    59→  removeFromQueue: (index: number) => void
+    60→    60→  /** Clear the entire queue (broadcasts to room). */
+    61→    61→  clearQueue: () => void
+    62→    62→}
+    63→    63→
+    64→    64→const MusicPlayerContext = createContext<MusicPlayerContextValue | null>(null)
+    65→    65→
+    66→    66→const NOOP_PLAYER: MusicPlayerContextValue = {
+    67→    67→  playTrack: async () => {},
+    68→    68→  playNext: async () => {},
+    69→    69→  togglePlay: () => {},
+    70→    70→  handleSeek: () => {},
+    71→    71→  stop: () => {},
+    72→    72→  addToQueue: () => {},
+    73→    73→  removeFromQueue: () => {},
+    74→    74→  clearQueue: () => {},
+    75→    75→}
+    76→    76→
+    77→    77→/**
+    78→    78→ * Access the global music player's action functions.
+    79→    79→ *
+    80→    80→ * Safe to call from any component rendered inside <GlobalMusicPlayer>.
+    81→    81→ * Returns no-op functions if no provider is present (defensive).
+    82→    82→ */
+    83→    83→export function useMusicPlayer(): MusicPlayerContextValue {
+    84→    84→  const ctx = useContext(MusicPlayerContext)
+    85→    85→  return ctx ?? NOOP_PLAYER
+    86→    86→}
+    87→    87→
+    88→    88→export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
+    89→    89→  const audioRef = useRef<HTMLAudioElement>(null)
+    90→    90→  const { socket } = useSocket()
+    91→    91→
+    92→    92→  // ─── Store state (subscribe to slices) ────────────────────────────────
+    93→    93→  const currentTrack = useMusicStore((s) => s.currentTrack)
+    94→    94→  const isPlaying = useMusicStore((s) => s.isPlaying)
+    95→    95→  const position = useMusicStore((s) => s.position)
+    96→    96→  const volume = useMusicStore((s) => s.volume)
+    97→    97→  const queue = useMusicStore((s) => s.queue)
+    98→    98→  const shuffle = useMusicStore((s) => s.shuffle)
+    99→    99→  const repeat = useMusicStore((s) => s.repeat)
+   100→   100→  const activeRoomId = useMusicStore((s) => s.activeRoomId)
+   101→   101→
+   102→   102→  // ─── Store actions ────────────────────────────────────────────────────
+   103→   103→  const setCurrentTrack = useMusicStore((s) => s.setCurrentTrack)
+   104→   104→  const setIsPlaying = useMusicStore((s) => s.setIsPlaying)
+   105→   105→  const setPosition = useMusicStore((s) => s.setPosition)
+   106→   106→  const setVolume = useMusicStore((s) => s.setVolume)
+   107→   107→  const setQueue = useMusicStore((s) => s.setQueue)
+   108→   108→  const storeAddToQueue = useMusicStore((s) => s.addToQueue)
+   109→   109→  const storeRemoveFromQueue = useMusicStore((s) => s.removeFromQueue)
+   110→   110→  const storeClearQueue = useMusicStore((s) => s.clearQueue)
+   111→   111→
+   112→   112→  // ─── Refs for cross-render coordination ───────────────────────────────
+   113→   113→  // The videoId currently loaded into the <audio> element. Used to detect
+   114→   114→  // when currentTrack.videoId changes so we know to (re)load the stream.
+   115→   115→  const loadedVideoIdRef = useRef<string | null>(null)
+   116→   116→  // When applying a remote sync that changes the track, this holds the
+   117→   117→  // position we should seek to once the new stream has loaded.
+   118→   118→  const pendingSeekRef = useRef<number | null>(null)
+   119→   119→  // True while we're applying state that arrived from a remote sync event.
+   120→   120→  // Prevents local `timeupdate` from overwriting the freshly-applied
+   121→   121→  // position and prevents echoing sync events back to the room.
+   122→   122→  const applyingRemoteRef = useRef(false)
+   123→   123→
+   124→   124→  // ─── Helper: broadcast a sync event to the active room ────────────────
+   125→   125→  const broadcastSync = useCallback(
+   126→   126→    (payload: {
+   127→   127→      state: string
+   128→   128→      position: number
+   129→   129→      videoId?: string
+   130→   130→      trackInfo?: Partial<Track>
+   131→   131→      queue?: Track[]
+   132→   132→    }) => {
+   133→   133→      if (!activeRoomId || !socket) return
+   134→   134→      socket.emit('music:sync', {
+   135→   135→        roomId: activeRoomId,
+   136→   136→        ...payload,
+   137→   137→      })
+   138→   138→    },
+   139→   139→    [activeRoomId, socket],
+   140→   140→  )
+   141→   141→
+   142→   142→  // ─── Action: play a track ─────────────────────────────────────────────
+   143→   143→  const playTrack = useCallback(
+   144→   144→    async (track: Track, addToQueue = false) => {
+   145→   145→      const state = useMusicStore.getState()
+   146→   146→
+   147→   147→      if (addToQueue && state.currentTrack) {
+   148→   148→        state.addToQueue(track)
+   149→   149→        toast.success(`Added to queue: ${track.title}`)
+   150→   150→        // Broadcast the updated queue so members see it
+   151→   151→        broadcastSync({
+   152→   152→          state: state.isPlaying ? 'playing' : 'paused',
+   153→   153→          position: audioRef.current?.currentTime || 0,
+   154→   154→          queue: useMusicStore.getState().queue,
+   155→   155→        })
+   156→   156→        return
+   157→   157→      }
+   158→   158→
+   159→   159→      // Set state first so the UI updates instantly
+   160→   160→      setCurrentTrack(track)
+   161→   161→      setIsPlaying(true)
+   162→   162→      setPosition(0)
+   163→   163→
+   164→   164→      // Broadcast to room (include the full queue so members sync)
+   165→   165→      broadcastSync({
+   166→   166→        state: 'playing',
+   167→   167→        position: 0,
+   168→   168→        videoId: track.videoId,
+   169→   169→        trackInfo: {
+   170→   170→          title: track.title,
+   171→   171→          artist: track.artist,
+   172→   172→          thumbnail: track.thumbnail,
+   173→   173→          durationSeconds: track.durationSeconds,
+   174→   174→        },
+   175→   175→        queue: useMusicStore.getState().queue,
+   176→   176→      })
+   177→   177→
+   178→   178→      // Load + play the audio
+   179→   179→      if (audioRef.current) {
+   180→   180→        audioRef.current.src = `/api/music/stream/${track.videoId}`
+   181→   181→        audioRef.current.volume = useMusicStore.getState().volume
+   182→   182→        loadedVideoIdRef.current = track.videoId
+   183→   183→        pendingSeekRef.current = null
+   184→   184→        try {
+   185→   185→          await audioRef.current.play()
+   186→   186→        } catch (e: any) {
+   187→   187→          if (e?.name === 'NotSupportedError' || e?.name === 'MediaError') {
+   188→   188→            try {
+   189→   189→              const res = await fetch(`/api/music/stream/${track.videoId}`, {
+   190→   190→                method: 'HEAD',
+   191→   191→              })
+   192→   192→              if (!res.ok) {
+   193→   193→                const data = await res.json().catch(() => ({}))
+   194→   194→                toast.error(data.error || 'Could not download this track.')
+   195→   195→                setCurrentTrack(null)
+   196→   196→                setIsPlaying(false)
+   197→   197→              }
+   198→   198→            } catch {
+   199→   199→              toast.error(
+   200→   200→                'The server is downloading this track — try again in a moment.',
+   201→   201→              )
+   202→   202→            }
+   203→   203→          }
+   204→   204→        }
+   205→   205→      }
+   206→   206→    },
+   207→   207→    [broadcastSync, setCurrentTrack, setIsPlaying, setPosition],
+   208→   208→  )
+   209→   209→
+   210→   210→  // ─── Action: play next track ──────────────────────────────────────────
+   211→   211→  const playNext = useCallback(async () => {
+   212→   212→    const state = useMusicStore.getState()
+   213→   213→    let nextTrack: Track | null = state.popNextFromQueue()
+   214→   214→
+   215→   215→    if (!nextTrack && state.autoplay && state.currentTrack) {
+   216→   216→      try {
+   217→   217→        const res = await fetch(
+   218→   218→          `/api/music/related/${state.currentTrack.videoId}`,
+   219→   219→        )
+   220→   220→        if (res.ok) {
+   221→   221→          const data = await res.json()
+   222→   222→          if (data.tracks?.length > 0) {
+   223→   223→            nextTrack = data.tracks[0] as Track
+   224→   224→          }
+   225→   225→        }
+   226→   226→      } catch {
+   227→   227→        // Autoplay failed — just stop
+   228→   228→      }
+   229→   229→    }
+   230→   230→
+   231→   231→    if (nextTrack) {
+   232→   232→      await playTrack(nextTrack)
+   233→   233→    } else if (state.repeat && state.currentTrack) {
+   234→   234→      await playTrack(state.currentTrack)
+   235→   235→    } else {
+   236→   236→      setIsPlaying(false)
+   237→   237→      setPosition(0)
+   238→   238→    }
+   239→   239→  }, [playTrack, setIsPlaying, setPosition])
+   240→   240→
+   241→   241→  // ─── Action: toggle play / pause ──────────────────────────────────────
+   242→   242→  const togglePlay = useCallback(() => {
+   243→   243→    const audio = audioRef.current
+   244→   244→    const state = useMusicStore.getState()
+   245→   245→    if (!audio || !state.currentTrack) return
+   246→   246→
+   247→   247→    if (state.isPlaying) {
+   248→   248→      audio.pause()
+   249→   249→      setIsPlaying(false)
+   250→   250→      broadcastSync({
+   251→   251→        state: 'paused',
+   252→   252→        position: audio.currentTime,
+   253→   253→        queue: state.queue,
+   254→   254→      })
+   255→   255→    } else {
+   256→   256→      audio.play().catch(() => {})
+   257→   257→      setIsPlaying(true)
+   258→   258→      broadcastSync({
+   259→   259→        state: 'playing',
+   260→   260→        position: audio.currentTime,
+   261→   261→        queue: state.queue,
+   262→   262→      })
+   263→   263→    }
+   264→   264→  }, [broadcastSync, setIsPlaying])
+   265→   265→
+   266→   266→  // ─── Action: seek ─────────────────────────────────────────────────────
+   267→   267→  const handleSeek = useCallback(
+   268→   268→    (pos: number) => {
+   269→   269→      const audio = audioRef.current
+   270→   270→      const state = useMusicStore.getState()
+   271→   271→      if (!audio) return
+   272→   272→      audio.currentTime = pos
+   273→   273→      setPosition(pos)
+   274→   274→      broadcastSync({
+   275→   275→        state: state.isPlaying ? 'playing' : 'paused',
+   276→   276→        position: pos,
+   277→   277→        queue: state.queue,
+   278→   278→      })
+   279→   279→    },
+   280→   280→    [broadcastSync, setPosition],
+   281→   281→  )
+   282→   282→
+   283→   283→  // ─── Action: stop playback entirely ───────────────────────────────────
+   284→   284→  const stop = useCallback(() => {
+   285→   285→    setCurrentTrack(null)
+   286→   286→    setIsPlaying(false)
+   287→   287→    setPosition(0)
+   288→   288→    if (audioRef.current) {
+   289→   289→      audioRef.current.pause()
+   290→   290→      audioRef.current.src = ''
+   291→   291→    }
+   292→   292→    loadedVideoIdRef.current = null
+   293→   293→  }, [setCurrentTrack, setIsPlaying, setPosition])
+   294→   294→
+   295→   295→  // ─── Action: add to queue (broadcasts) ────────────────────────────────
+   296→   296→  const addToQueue = useCallback(
+   297→   297→    (track: Track) => {
+   298→   298→      const state = useMusicStore.getState()
+   299→   299→      storeAddToQueue(track)
+   300→   300→      broadcastSync({
+   301→   301→        state: state.isPlaying ? 'playing' : 'paused',
+   302→   302→        position: audioRef.current?.currentTime || 0,
+   303→   303→        queue: useMusicStore.getState().queue,
+   304→   304→      })
+   305→   305→    },
+   306→   306→    [broadcastSync, storeAddToQueue],
+   307→   307→  )
+   308→   308→
+   309→   309→  // ─── Action: remove from queue (broadcasts) ───────────────────────────
+   310→   310→  const removeFromQueue = useCallback(
+   311→   311→    (index: number) => {
+   312→   312→      const state = useMusicStore.getState()
+   313→   313→      storeRemoveFromQueue(index)
+   314→   314→      broadcastSync({
+   315→   315→        state: state.isPlaying ? 'playing' : 'paused',
+   316→   316→        position: audioRef.current?.currentTime || 0,
+   317→   317→        queue: useMusicStore.getState().queue,
+   318→   318→      })
+   319→   319→    },
+   320→   320→    [broadcastSync, storeRemoveFromQueue],
+   321→   321→  )
+   322→   322→
+   323→   323→  // ─── Action: clear queue (broadcasts) ─────────────────────────────────
+   324→   324→  const clearQueue = useCallback(() => {
+   325→   325→    const state = useMusicStore.getState()
+   326→   326→    storeClearQueue()
+   327→   327→    broadcastSync({
+   328→   328→      state: state.isPlaying ? 'playing' : 'paused',
+   329→   329→      position: audioRef.current?.currentTime || 0,
+   330→   330→      queue: [],
+   331→   331→    })
+   332→   332→  }, [broadcastSync, storeClearQueue])
+   333→   333→
+   334→   334→  // ─── Effect: keep <audio> volume in sync with the store ───────────────
+   335→   335→  useEffect(() => {
+   336→   336→    if (audioRef.current) audioRef.current.volume = volume
+   337→   337→  }, [volume])
+   338→   338→
+   339→   339→  // ─── Effect: wire up <audio> event listeners ──────────────────────────
+   340→   340→  // Re-attaches whenever playNext changes (which it does when its deps
+   341→   341→  // change). The listeners read fresh state via `useMusicStore.getState()`
+   342→   342→  // so they never see stale data.
+   343→   343→  useEffect(() => {
+   344→   344→    const audio = audioRef.current
+   345→   345→    if (!audio) return
+   346→   346→
+   347→   347→    const onTimeUpdate = () => {
+   348→   348→      // Don't fight with a freshly-applied remote position
+   349→   349→      if (applyingRemoteRef.current) return
+   350→   350→      setPosition(audio.currentTime)
+   351→   351→    }
+   352→   352→    const onEnded = () => {
+   353→   353→      void playNext()
+   354→   354→    }
+   355→   355→    const onError = () => {
+   356→   356→      const state = useMusicStore.getState()
+   357→   357→      if (state.currentTrack) {
+   358→   358→        toast.error('Could not play this track — skipping...')
+   359→   359→        void playNext()
+   360→   360→      }
+   361→   361→    }
+   362→   362→
+   363→   363→    audio.addEventListener('timeupdate', onTimeUpdate)
+   364→   364→    audio.addEventListener('ended', onEnded)
+   365→   365→    audio.addEventListener('error', onError)
+   366→   366→    return () => {
+   367→   367→      audio.removeEventListener('timeupdate', onTimeUpdate)
+   368→   368→      audio.removeEventListener('ended', onEnded)
+   369→   369→      audio.removeEventListener('error', onError)
+   370→   370→    }
+   371→   371→  }, [playNext, setPosition])
+   372→   372→
+   373→   373→  // ─── Effect: Socket.io room sync ──────────────────────────────────────
+   374→   374→  // Joins the music room's socket channel, requests the host's current
+   375→   375→  // state, and listens for incoming sync events. Re-subscribes whenever
+   376→   376→  // the active room changes.
+   377→   377→  useEffect(() => {
+   378→   378→    if (!socket || !activeRoomId) return
+   379→   379→
+   380→   380→    socket.emit('music:join', activeRoomId)
+   381→   381→
+   382→   382→    // Ask the host for the current state shortly after joining. The small
+   383→   383→    // delay gives the join room propagation time to complete.
+   384→   384→    const requestTimer = setTimeout(() => {
+   385→   385→      socket.emit('music:request-sync', activeRoomId)
+   386→   386→    }, 500)
+   387→   387→
+   388→   388→    // ── Incoming sync from the host (or another member's broadcast) ──
+   389→   389→    const onSync = (data: {
+   390→   390→      roomId: string
+   391→   391→      state: string
+   392→   392→      position: number
+   393→   393→      videoId?: string
+   394→   394→      trackInfo?: Track
+   395→   395→      queue?: Track[]
+   396→   396→      serverTimestamp: number
+   397→   397→    }) => {
+   398→   398→      if (data.roomId !== activeRoomId) return
+   399→   399→
+   400→   400→      applyingRemoteRef.current = true
+   401→   401→
+   402→   402→      const networkDelay = (Date.now() - data.serverTimestamp) / 1000
+   403→   403→      const adjustedPosition =
+   404→   404→        data.position + (data.state === 'playing' ? networkDelay : 0)
+   405→   405→
+   406→   406→      const state = useMusicStore.getState()
+   407→   407→      const audio = audioRef.current
+   408→   408→
+   409→   409→      // Track changed → load the new stream and seek to host's position
+   410→   410→      if (
+   411→   411→        data.videoId &&
+   412→   412→        (!state.currentTrack || state.currentTrack.videoId !== data.videoId)
+   413→   413→      ) {
+   414→   414→        const track: Track = data.trackInfo || {
+   415→   415→          videoId: data.videoId,
+   416→   416→          title: 'Now Playing',
+   417→   417→          artist: '',
+   418→   418→          thumbnail: null,
+   419→   419→          durationSeconds: null,
+   420→   420→        }
+   421→   421→        pendingSeekRef.current = adjustedPosition
+   422→   422→        setCurrentTrack(track)
+   423→   423→        setIsPlaying(data.state === 'playing')
+   424→   424→        setPosition(adjustedPosition)
+   425→   425→
+   426→   426→        if (audio) {
+   427→   427→          audio.src = `/api/music/stream/${data.videoId}`
+   428→   428→          audio.volume = state.volume
+   429→   429→          loadedVideoIdRef.current = data.videoId
+   430→   430→          // Wait a tick for the new src to be accepted before seeking
+   431→   431→          setTimeout(() => {
+   432→   432→            if (audioRef.current) {
+   433→   433→              try {
+   434→   434→                audioRef.current.currentTime = adjustedPosition
+   435→   435→              } catch {
+   436→   436→                // Stream not seekable yet — ignore
+   437→   437→              }
+   438→   438→              if (data.state === 'playing') {
+   439→   439→                audioRef.current.play().catch(() => {})
+   440→   440→              }
+   441→   441→            }
+   442→   442→            applyingRemoteRef.current = false
+   443→   443→          }, 200)
+   444→   444→        } else {
+   445→   445→          applyingRemoteRef.current = false
+   446→   446→        }
+   447→   447→      } else if (audio && state.currentTrack) {
+   448→   448→        // Same track — sync position + play/pause state only
+   449→   449→        const drift = Math.abs(audio.currentTime - adjustedPosition)
+   450→   450→        if (drift > 1.5) {
+   451→   451→          try {
+   452→   452→            audio.currentTime = adjustedPosition
+   453→   453→          } catch {
+   454→   454→            // ignore
+   455→   455→          }
+   456→   456→          setPosition(adjustedPosition)
+   457→   457→        }
+   458→   458→        if (data.state === 'playing' && !state.isPlaying) {
+   459→   459→          audio.play().catch(() => {})
+   460→   460→          setIsPlaying(true)
+   461→   461→        } else if (data.state === 'paused' && state.isPlaying) {
+   462→   462→          audio.pause()
+   463→   463→          setIsPlaying(false)
+   464→   464→        }
+   465→   465→        applyingRemoteRef.current = false
+   466→   466→      } else {
+   467→   467→        applyingRemoteRef.current = false
+   468→   468→      }
+   469→   469→
+   470→   470→      // Apply queue update from remote (broadcast by host)
+   471→   471→      if (Array.isArray(data.queue)) {
+   472→   472→        setQueue(data.queue)
+   473→   473→      }
+   474→   474→    }
+   475→   475→
+   476→   476→    // ── A member just joined and is requesting our current state ──
+   477→   477→    // Only the host (or anyone with a current track) responds.
+   478→   478→    const onRequestSync = (data: {
+   479→   479→      roomId: string
+   480→   480→      fromUserId: string
+   481→   481→    }) => {
+   482→   482→      if (data.roomId !== activeRoomId) return
+   483→   483→      const state = useMusicStore.getState()
+   484→   484→      if (!state.currentTrack || !socket) return
+   485→   485→
+   486→   486→      socket.emit('music:sync', {
+   487→   487→        roomId: activeRoomId,
+   488→   488→        state: state.isPlaying ? 'playing' : 'paused',
+   489→   489→        position: audioRef.current?.currentTime || 0,
+   490→   490→        videoId: state.currentTrack.videoId,
+   491→   491→        trackInfo: {
+   492→   492→          title: state.currentTrack.title,
+   493→   493→          artist: state.currentTrack.artist,
+   494→   494→          thumbnail: state.currentTrack.thumbnail,
+   495→   495→          durationSeconds: state.currentTrack.durationSeconds,
+   496→   496→        },
+   497→   497→        queue: state.queue,
+   498→   498→      })
+   499→   499→    }
+   500→   500→
+   501→   501→    socket.on('music:sync', onSync)
+   502→   502→    socket.on('music:request-sync', onRequestSync)
+   503→   503→
+   504→   504→    return () => {
+   505→   505→      clearTimeout(requestTimer)
+   506→   506→      socket.off('music:sync', onSync)
+   507→   507→      socket.off('music:request-sync', onRequestSync)
+   508→   508→      socket.emit('music:leave', activeRoomId)
+   509→   509→      applyingRemoteRef.current = false
+   510→   510→    }
+   511→   511→  }, [
+   512→   512→    socket,
+   513→   513→    activeRoomId,
+   514→   514→    setCurrentTrack,
+   515→   515→    setIsPlaying,
+   516→   516→    setPosition,
+   517→   517→    setQueue,
+   518→   518→  ])
+   519→   519→
+   520→   520→  // ─── Memoized context value ───────────────────────────────────────────
+   521→   521→  const contextValue = useMemo<MusicPlayerContextValue>(
+   522→   522→    () => ({
+   523→   523→      playTrack,
+   524→   524→      playNext,
+   525→   525→      togglePlay,
+   526→   526→      handleSeek,
+   527→   527→      stop,
+   528→   528→      addToQueue,
+   529→   529→      removeFromQueue,
+   530→   530→      clearQueue,
+   531→   531→    }),
+   532→   532→    [
+   533→   533→      playTrack,
+   534→   534→      playNext,
+   535→   535→      togglePlay,
+   536→   536→      handleSeek,
+   537→   537→      stop,
+   538→   538→      addToQueue,
+   539→   539→      removeFromQueue,
+   540→   540→      clearQueue,
+   541→   541→    ],
+   542→   542→  )
+   543→   543→
+   544→   544→  return (
+   545→   545→    <MusicPlayerContext.Provider value={contextValue}>
+   546→   546→      {children}
+   547→   547→      {/* The hidden audio element — persists across all tabs */}
+   548→   548→      <audio ref={audioRef} />
+   549→   549→      {/* The persistent floating player — collapses to a mini FAB */}
+   550→   550→      <AnimatePresence>
+   551→   551→        {currentTrack && (
+   552→   552→          <PlayerBar
+   553→   553→            currentTrack={currentTrack}
+   554→   554→            isPlaying={isPlaying}
+   555→   555→            position={position}
+   556→   556→            volume={volume}
+   557→   557→            queue={queue}
+   558→   558→            shuffle={shuffle}
+   559→   559→            repeat={repeat}
+   560→   560→            onTogglePlay={togglePlay}
+   561→   561→            onSeek={handleSeek}
+   562→   562→            onNext={playNext}
+   563→   563→            onStop={stop}
+   564→   564→            onVolumeChange={setVolume}
+   565→   565→            onShuffleToggle={() =>
+   566→   566→              useMusicStore.getState().setShuffle(!shuffle)
+   567→   567→            }
+   568→   568→            onRepeatToggle={() =>
+   569→   569→              useMusicStore.getState().setRepeat(!repeat)
+   570→   570→            }
+   571→   571→          />
+   572→   572→        )}
+   573→   573→      </AnimatePresence>
+   574→   574→    </MusicPlayerContext.Provider>
+   575→   575→  )
+   576→   576→}
+   577→   577→
+   578→   578→// ─── Player Bar — Collapsible Floating Mini-Player ───────────────────────
+   579→   579→// When collapsed: a small floating circle (FAB) with album art + play/pause.
+   580→   580→// When expanded: a full player bar with all controls.
+   581→   581→// The player collapses automatically when the user switches away from the
+   582→   582→// Music tab, so it doesn't block content on other pages.
+   583→   583→
+   584→   584→function PlayerBar({
+   585→   585→  currentTrack,
+   586→   586→  isPlaying,
+   587→   587→  position,
+   588→   588→  volume,
+   589→   589→  queue,
+   590→   590→  shuffle,
+   591→   591→  repeat,
+   592→   592→  onTogglePlay,
+   593→   593→  onSeek,
+   594→   594→  onNext,
+   595→   595→  onStop,
+   596→   596→  onVolumeChange,
+   597→   597→  onShuffleToggle,
+   598→   598→  onRepeatToggle,
+   599→   599→}: {
+   600→   600→  currentTrack: Track
+   601→   601→  isPlaying: boolean
+   602→   602→  position: number
+   603→   603→  volume: number
+   604→   604→  queue: Track[]
+   605→   605→  shuffle: boolean
+   606→   606→  repeat: boolean
+   607→   607→  onTogglePlay: () => void
+   608→   608→  onSeek: (pos: number) => void
+   609→   609→  onNext: () => Promise<void>
+   610→   610→  onStop: () => void
+   611→   611→  onVolumeChange: (v: number) => void
+   612→   612→  onShuffleToggle: () => void
+   613→   613→  onRepeatToggle: () => void
+   614→   614→}) {
+   615→   615→  const [expanded, setExpanded] = useState(false)
+   616→   616→  const { view } = useAppStore()
+   617→   617→  const isDraggingRef = useRef(false)
+   618→   618→
+   619→   619→  // Auto-collapse when not on the Music tab
+   620→   620→  useEffect(() => {
+   621→   621→    if (view !== 'music') setExpanded(false)
+   622→   622→  }, [view])
+   623→   623→
+   624→   624→  // Prevent clicks from firing after a drag ends
+   625→   625→  const handlePlayPauseClick = useCallback(() => {
+   626→   626→    if (isDraggingRef.current) return
+   627→   627→    onTogglePlay()
+   628→   628→  }, [onTogglePlay])
+   629→   629→
+   630→   630→  return (
+   631→   631→    <>
+   632→   632→      {/* ─── Collapsed: Draggable Floating Mini-Player (FAB) ─── */}
+   633→   633→      <AnimatePresence>
+   634→   634→        {!expanded && (
+   635→   635→          <motion.div
+   636→   636→            initial={{ scale: 0, opacity: 0 }}
+   637→   637→            animate={{ scale: 1, opacity: 1 }}
+   638→   638→            exit={{ scale: 0, opacity: 0 }}
+   639→   639→            transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+   640→   640→            drag
+   641→   641→            dragMomentum={false}
+   642→   642→            dragElastic={0.1}
+   643→   643→            dragTransition={{ bounceStiffness: 300, bounceDamping: 20 }}
+   644→   644→            whileDrag={{ scale: 1.08, cursor: 'grabbing' }}
+   645→   645→            onDragStart={() => { isDraggingRef.current = true }}
+   646→   646→            onDragEnd={() => { setTimeout(() => { isDraggingRef.current = false }, 100) }}
+   647→   647→            className="fixed bottom-20 lg:bottom-6 right-4 z-[60] cursor-grab touch-none"
+   648→   648→          >
+   649→   649→            <div className="flex items-center gap-2.5 glass-dark rounded-full p-1.5 pr-3 shadow-xl pointer-events-auto">
+   650→   650→              {/* Album art / Play-pause */}
+   651→   651→              <button
+   652→   652→                onClick={handlePlayPauseClick}
+   653→   653→                onPointerDown={(e) => e.stopPropagation()}
+   654→   654→                className="relative w-12 h-12 rounded-full gradient-primary shadow-glow hover:scale-105 active:scale-95 transition-transform flex items-center justify-center shrink-0"
+   655→   655→                aria-label={isPlaying ? 'Pause' : 'Play'}
+   656→   656→              >
+   657→   657→                {currentTrack.thumbnail ? (
+   658→   658→                  <img
+   659→   659→                    src={currentTrack.thumbnail}
+   660→   660→                    alt=""
+   661→   661→                    className="absolute inset-0 w-full h-full rounded-full object-cover opacity-80"
+   662→   662→                  />
+   663→   663→                ) : (
+   664→   664→                  <MusicIcon className="w-5 h-5 text-primary-foreground relative z-10" />
+   665→   665→                )}
+   666→   666→                <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center">
+   667→   667→                  {isPlaying ? (
+   668→   668→                    <Pause className="w-5 h-5 text-white relative z-10" />
+   669→   669→                  ) : (
+   670→   670→                    <Play className="w-5 h-5 text-white ml-0.5 relative z-10" />
+   671→   671→                  )}
+   672→   672→                </div>
+   673→   673→              </button>
+   674→   674→
+   675→   675→              {/* Track title — visible on desktop, tap target for expand on mobile */}
+   676→   676→              <button
+   677→   677→                onClick={() => setExpanded(true)}
+   678→   678→                onPointerDown={(e) => e.stopPropagation()}
+   679→   679→                className="hidden sm:block min-w-0 max-w-[140px] text-left"
+   680→   680→              >
+   681→   681→                <div className="text-xs font-medium truncate text-foreground">{currentTrack.title}</div>
+   682→   682→                <div className="text-[10px] text-muted-foreground truncate">{currentTrack.artist}</div>
+   683→   683→              </button>
+   684→   684→
+   685→   685→              {/* Expand button */}
+   686→   686→              <button
+   687→   687→                onClick={() => setExpanded(true)}
+   688→   688→                onPointerDown={(e) => e.stopPropagation()}
+   689→   689→                className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-foreground hover:bg-white/20 hover:scale-105 active:scale-95 transition-all shrink-0"
+   690→   690→                aria-label="Expand player"
+   691→   691→              >
+   692→   692→                <ChevronUp className="w-4 h-4" />
+   693→   693→              </button>
+   694→   694→            </div>
+   695→   695→          </motion.div>
+   696→   696→        )}
+   697→   697→      </AnimatePresence>
+   698→   698→
+   699→   699→      {/* ─── Expanded: Full Player Bar ─── */}
+   700→   700→      <AnimatePresence>
+   701→   701→        {expanded && (
+   702→   702→          <motion.div
+   703→   703→            initial={{ y: 120, opacity: 0 }}
+   704→   704→            animate={{ y: 0, opacity: 1 }}
+   705→   705→            exit={{ y: 120, opacity: 0 }}
+   706→   706→            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+   707→   707→            className="fixed bottom-16 lg:bottom-4 left-3 right-3 lg:left-1/2 lg:-translate-x-1/2 lg:right-auto lg:w-[660px] z-[60] glass-dark rounded-2xl shadow-2xl overflow-hidden"
+   708→   708→          >
+   709→   709→            {/* Mobile layout */}
+   710→   710→            <div className="lg:hidden px-4 py-3 space-y-2.5">
+   711→   711→              <div className="flex items-center gap-3">
+   712→   712→                {currentTrack.thumbnail ? (
+   713→   713→                  <img src={currentTrack.thumbnail} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0 ring-1 ring-white/10 shadow-md" />
+   714→   714→                ) : (
+   715→   715→                  <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shrink-0 shadow-md">
+   716→   716→                    <MusicIcon className="w-5 h-5 text-primary-foreground" />
+   717→   717→                  </div>
+   718→   718→                )}
+   719→   719→                <div className="min-w-0 flex-1">
+   720→   720→                  <div className="text-sm font-semibold truncate">{currentTrack.title}</div>
+   721→   721→                  <div className="text-xs text-muted-foreground truncate">{currentTrack.artist}</div>
+   722→   722→                </div>
+   723→   723→                <div className="flex items-center gap-1 shrink-0">
+   724→   724→                  <Button onClick={onTogglePlay} size="icon" className="rounded-full h-10 w-10 gradient-primary shadow-glow">
+   725→   725→                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+   726→   726→                  </Button>
+   727→   727→                  <Button onClick={onNext} variant="ghost" size="icon" className="h-9 w-9 text-foreground">
+   728→   728→                    <SkipForward className="w-4 h-4" />
+   729→   729→                  </Button>
+   730→   730→                  <Button onClick={() => setExpanded(false)} variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground">
+   731→   731→                    <ChevronDown className="w-4 h-4" />
+   732→   732→                  </Button>
+   733→   733→                </div>
+   734→   734→              </div>
+   735→   735→              {/* Progress bar */}
+   736→   736→              <div className="flex items-center gap-2">
+   737→   737→                <span className="text-[10px] text-muted-foreground tabular-nums w-8 text-right">{formatTime(position)}</span>
+   738→   738→                <input
+   739→   739→                  type="range"
+   740→   740→                  min={0}
+   741→   741→                  max={currentTrack.durationSeconds || 300}
+   742→   742→                  value={position}
+   743→   743→                  onChange={(e) => onSeek(parseFloat(e.target.value))}
+   744→   744→                  className="flex-1 player-slider"
+   745→   745→                />
+   746→   746→                <span className="text-[10px] text-muted-foreground tabular-nums w-8">{formatTime(currentTrack.durationSeconds || 0)}</span>
+   747→   747→              </div>
+   748→   748→            </div>
+   749→   749→
+   750→   750→            {/* Desktop layout */}
+   751→   751→            <div className="hidden lg:flex px-5 py-4 items-center gap-5">
+   752→   752→              {/* Track info */}
+   753→   753→              <div className="flex items-center gap-3 min-w-0 w-52 shrink-0">
+   754→   754→                {currentTrack.thumbnail ? (
+   755→   755→                  <img src={currentTrack.thumbnail} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0 ring-1 ring-white/10 shadow-md" />
+   756→   756→                ) : (
+   757→   757→                  <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shrink-0 shadow-md">
+   758→   758→                    <MusicIcon className="w-5 h-5 text-primary-foreground" />
+   759→   759→                  </div>
+   760→   760→                )}
+   761→   761→                <div className="min-w-0">
+   762→   762→                  <div className="text-sm font-semibold truncate">{currentTrack.title}</div>
+   763→   763→                  <div className="text-xs text-muted-foreground truncate">{currentTrack.artist}</div>
+   764→   764→                </div>
+   765→   765→              </div>
+   766→   766→
+   767→   767→              {/* Controls + seek bar */}
+   768→   768→              <div className="flex-1 flex flex-col items-center gap-2">
+   769→   769→                <div className="flex items-center gap-3">
+   770→   770→                  <button onClick={onShuffleToggle} className={cn('p-2 rounded-xl transition-all', shuffle ? 'text-primary bg-primary/15 shadow-glow' : 'text-muted-foreground hover:text-foreground hover:bg-white/5')} aria-label="Shuffle">
+   771→   771→                    <Shuffle className="w-4 h-4" />
+   772→   772→                  </button>
+   773→   773→                  <button onClick={onNext} className="p-2 rounded-xl text-foreground hover:bg-white/10 transition-colors" aria-label="Next">
+   774→   774→                    <SkipForward className="w-4 h-4" />
+   775→   775→                  </button>
+   776→   776→                  <button onClick={onTogglePlay} className="w-10 h-10 rounded-full gradient-primary flex items-center justify-center hover:scale-110 active:scale-95 transition-transform shadow-glow" aria-label={isPlaying ? 'Pause' : 'Play'}>
+   777→   777→                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+   778→   778→                  </button>
+   779→   779→                  <button onClick={onStop} className="p-2 rounded-xl text-foreground hover:bg-white/10 transition-colors" aria-label="Stop">
+   780→   780→                    <X className="w-4 h-4" />
+   781→   781→                  </button>
+   782→   782→                  <button onClick={onRepeatToggle} className={cn('p-2 rounded-xl transition-all', repeat ? 'text-primary bg-primary/15 shadow-glow' : 'text-muted-foreground hover:text-foreground hover:bg-white/5')} aria-label="Repeat">
+   783→   783→                    <Repeat className="w-4 h-4" />
+   784→   784→                  </button>
+   785→   785→                </div>
+   786→   786→                <div className="flex items-center gap-2.5 w-full max-w-sm">
+   787→   787→                  <span className="text-[10px] text-muted-foreground tabular-nums w-9 text-right">{formatTime(position)}</span>
+   788→   788→                  <input
+   789→   789→                    type="range"
+   790→   790→                    min={0}
+   791→   791→                    max={currentTrack.durationSeconds || 300}
+   792→   792→                    value={position}
+   793→   793→                    onChange={(e) => onSeek(parseFloat(e.target.value))}
+   794→   794→                    className="flex-1 player-slider"
+   795→   795→                  />
+   796→   796→                  <span className="text-[10px] text-muted-foreground tabular-nums w-9">{formatTime(currentTrack.durationSeconds || 0)}</span>
+   797→   797→                </div>
+   798→   798→              </div>
+   799→   799→
+   800→   800→              {/* Volume + collapse */}
+   801→   801→              <div className="flex items-center gap-2.5 shrink-0">
+   802→   802→                <Volume2 className="w-4 h-4 text-muted-foreground shrink-0" />
+   803→   803→                <input
+   804→   804→                  type="range"
+   805→   805→                  min={0}
+   806→   806→                  max={1}
+   807→   807→                  step={0.01}
+   808→   808→                  value={volume}
+   809→   809→                  onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
+   810→   810→                  className="w-20 volume-slider"
+   811→   811→                />
+   812→   812→                <button onClick={() => setExpanded(false)} className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors" aria-label="Collapse player">
+   813→   813→                  <ChevronDown className="w-4 h-4" />
+   814→   814→                </button>
+   815→   815→              </div>
+   816→   816→            </div>
+   817→   817→          </motion.div>
+   818→   818→        )}
+   819→   819→      </AnimatePresence>
+   820→   820→    </>
+   821→   821→  )
+   822→   822→}
+   823→   823→
+   824→   824→function formatTime(seconds: number): string {
+   825→   825→  const m = Math.floor(seconds / 60)
+   826→   826→  const s = Math.floor(seconds % 60)
+   827→   827→  return `${m}:${s.toString().padStart(2, '0')}`
+   828→   828→}
+   829→   829→
