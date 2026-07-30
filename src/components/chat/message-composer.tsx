@@ -443,6 +443,7 @@ function TtsDialog({
   const [selectedCustomVoiceId, setSelectedCustomVoiceId] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
   const [sending, setSending] = useState(false)
   const qc = useQueryClient()
@@ -475,7 +476,10 @@ function TtsDialog({
   const handleGenerate = async () => {
     if (!text.trim() || generating) return
     setGenerating(true)
+    // Clear any previous preview (revoke blob URL to avoid leaks)
+    if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
     setPreviewUrl(null)
+    setPreviewBlob(null)
     setIsStreaming(true)
     try {
       const body: any = { text }
@@ -494,13 +498,15 @@ function TtsDialog({
         throw new Error(err.error || 'Generation failed')
       }
 
-      // The API route streams the TTS audio AND saves to disk in the
-      // background. It returns the saved URL in the X-Tts-Url header.
-      // We read the stream for immediate playback via Web Audio API,
-      // then use the header URL for the preview player and sending.
-      const ttsUrl = res.headers.get('X-Tts-Url')
-
-      // Stream playback via Web Audio API (like the official Pocket TTS UI)
+      // The API route streams the TTS audio directly (no server-side save).
+      // We read the stream for TWO purposes simultaneously:
+      //   1. Instant playback via Web Audio API (chunks played as they arrive)
+      //   2. Collect ALL chunks into a Blob for upload when the user sends
+      //
+      // When the user clicks "Send", we upload the Blob to /api/upload which
+      // saves synchronously and returns a URL. This avoids the race condition
+      // where a background server-side save hadn't finished before the
+      // message URL was accessed (which caused 0-length audio in production).
       const reader = res.body!.getReader()
       let audioCtx: AudioContext | null = null
       let headerParsed = false
@@ -509,6 +515,7 @@ function TtsDialog({
       let pcmBuffer = new Uint8Array(0)
       let sampleRate = 24000
       let nextStartTime = 0
+      const collectedChunks: Uint8Array[] = []
 
       const playChunk = (data: Uint8Array) => {
         if (!audioCtx) return
@@ -532,6 +539,9 @@ function TtsDialog({
         const { done, value } = await reader.read()
         if (done) break
         if (value) {
+          // Collect every chunk for the final Blob
+          collectedChunks.push(value)
+
           if (!headerParsed) {
             const needed = 44 - headerBytes
             const copy = Math.min(needed, value.length)
@@ -563,12 +573,13 @@ function TtsDialog({
       }
       if (pcmBuffer.length > 0) playChunk(pcmBuffer)
 
-      // Use the server-saved URL for the preview player and sending.
-      // NO blob upload — the file is already on disk via the background tee.
-      // This fixes the "audio length 0" issue in production.
-      if (ttsUrl) {
-        setPreviewUrl(ttsUrl)
-      }
+      // Build the final Blob from all collected chunks and create a blob URL
+      // for the preview player. The Blob is kept in state so handleSend can
+      // upload it to /api/upload.
+      const wavBlob = new Blob(collectedChunks as BlobPart[], { type: 'audio/wav' })
+      const blobUrl = URL.createObjectURL(wavBlob)
+      setPreviewBlob(wavBlob)
+      setPreviewUrl(blobUrl)
       setIsStreaming(false)
       toast.success('Voice generated — preview and send')
     } catch (e: any) {
@@ -580,14 +591,31 @@ function TtsDialog({
   }
 
   const handleSend = async () => {
-    if (!previewUrl || sending) return
+    if (!previewBlob || sending) return
     setSending(true)
     try {
-      // The audio is already saved on the server (by the background tee in
-      // the API route). Just send the URL directly — no blob upload needed.
-      await onSend(previewUrl)
+      // Upload the collected Blob to /api/upload. This route saves the file
+      // synchronously to public/uploads/ and only returns the URL after the
+      // file is fully written to disk. This guarantees the URL is immediately
+      // playable — no race condition, no 0-length audio.
+      const formData = new FormData()
+      formData.append('file', previewBlob, `tts-${Date.now()}.wav`)
+      const uploadRes = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      })
+      if (!uploadRes.ok) {
+        throw new Error('Failed to upload voice message')
+      }
+      const data = await uploadRes.json()
+
+      // Revoke the blob URL — the uploaded file URL is now the source of truth
+      if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
+
+      await onSend(data.url)
       setText('')
       setPreviewUrl(null)
+      setPreviewBlob(null)
     } catch {
       toast.error('Failed to send voice message')
     } finally {
@@ -805,7 +833,7 @@ function TtsDialog({
                 }} disabled={sending}>
                   Regenerate
                 </Button>
-                <Button onClick={handleSend} disabled={sending}>
+                <Button onClick={handleSend} disabled={sending || !previewBlob}>
                   {sending ? (
                     <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
                   ) : (

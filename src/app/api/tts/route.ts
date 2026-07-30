@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { writeFile, mkdir, readFile } from 'fs/promises'
+import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
@@ -22,11 +22,12 @@ const execFileAsync = promisify(execFile)
  * playback as soon as the first bytes arrive (this is what the official
  * Pocket TTS web UI does to feel "instantaneous").
  *
- * We intentionally do NOT save the audio to disk in this route. The client
- * receives the WAV blob, creates an object URL for an instant preview, and
- * uploads the blob to /api/upload only when the user actually sends the
- * message. This keeps the route as fast as possible and avoids writing
- * throwaway files to disk when the user cancels.
+ * We do NOT save the audio to disk in this route. The client receives the
+ * WAV stream, plays it instantly via Web Audio API, AND collects the chunks
+ * into a Blob. When the user clicks "Send", the client uploads that Blob to
+ * /api/upload (which saves synchronously and returns a URL). This avoids the
+ * race condition where a background save hadn't finished writing before the
+ * message URL was accessed — which caused 0-length audio in production.
  *
  * The TTS service is expected to be running on the VM at the URL specified
  * by the TTS_URL environment variable (default: http://localhost:8000).
@@ -83,7 +84,7 @@ export async function POST(req: Request) {
         }
 
         const wavBuffer = await ensureWav(audioPath)
-        const audioBlob = new Blob([wavBuffer], { type: 'audio/wav' })
+        const audioBlob = new Blob([wavBuffer as BlobPart], { type: 'audio/wav' })
         formData.append('voice_wav', audioBlob, 'voice.wav')
       }
     } else {
@@ -119,50 +120,23 @@ export async function POST(req: Request) {
       )
     }
 
-    // Stream the TTS server's response directly to the client AND save to
-    // disk in the background. The TTS server uses StreamingResponse — it
-    // sends the WAV header immediately and streams audio chunks as they're
-    // generated. By piping through, the client can start playing audio
-    // within ~200ms via Web Audio API.
+    // Stream the TTS server's response directly to the client. The TTS server
+    // uses StreamingResponse — it sends the WAV header immediately and streams
+    // audio chunks as they're generated. The client reads this stream to:
+    //   1. Play audio instantly via Web Audio API (~200ms to first sound)
+    //   2. Collect all chunks into a Blob for later upload on send
     //
-    // The background save writes the full audio to disk so the client can
-    // upload it as a message when sending.
-    const [streamForClient, streamForDisk] = ttsRes.body.tee()
-
-    // Save to disk in the background
-    const savedFilename = `tts-${crypto.randomUUID()}.wav`
-    const savedPath = path.join(process.cwd(), 'public', 'uploads', savedFilename)
-    ;(async () => {
-      try {
-        if (!existsSync(path.dirname(savedPath))) {
-          await mkdir(path.dirname(savedPath), { recursive: true })
-        }
-        const chunks: Uint8Array[] = []
-        const reader = streamForDisk.getReader()
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          if (value) chunks.push(value)
-        }
-        const buffer = Buffer.concat(chunks)
-        await writeFile(savedPath, buffer)
-        console.log(`[tts] background save complete: ${savedFilename} (${buffer.length} bytes) in ${Date.now() - ttsStartTime}ms total`)
-      } catch (e) {
-        console.error('[tts] background save failed:', e)
-      }
-    })()
-
-    // Return the stream to the client immediately — they can start playing
-    // via Web Audio API while generation continues.
-    // Include the saved filename in a header so the client can use it
-    // directly instead of uploading a blob.
-    return new Response(streamForClient, {
+    // We do NOT save to disk here. Previously we used body.tee() to save in
+    // the background, but that created a race condition in production: the
+    // client would send the message URL before the background write finished,
+    // resulting in 0-length audio. Now the client uploads the Blob via
+    // /api/upload when sending — that route saves synchronously and only
+    // returns the URL after the file is fully on disk.
+    return new Response(ttsRes.body, {
       status: 200,
       headers: {
         'Content-Type': 'audio/wav',
         'Cache-Control': 'no-store',
-        'X-Tts-Filename': savedFilename,
-        'X-Tts-Url': `/uploads/${savedFilename}`,
       },
     })
   } catch (e: any) {

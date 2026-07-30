@@ -255,3 +255,23 @@ Stage Summary:
 - Spotify-style UI with trending grid, search results, room management, player bar
 - Real-time sync via Socket.io with drift compensation (>1.5s threshold)
 - All changes pushed to GitHub (commit 56094a7)
+
+---
+Task ID: tts-prod-fix
+Agent: main
+Task: Fix TTS audio showing as 0-length in production after sending. User confirmed: audio generates fast and plays in preview, but sent message shows 0:00/0:00. Hard refresh doesn't fix it, but server restart does. Running on Azure VM (not Cloudflare).
+
+Work Log:
+- Read /api/tts/route.ts — found it used body.tee() with a fire-and-forget background IIFE to save to disk while streaming to client. The X-Tts-Url header gave the client the file path before the background write completed.
+- Read /api/upload/route.ts — confirmed it saves synchronously (await writeFile) and only returns URL after file is on disk. Voice recordings use this path and work fine in production.
+- Read message-composer.tsx TtsDialog — found handleGenerate used the X-Tts-Url header directly as previewUrl, and handleSend passed it straight to onSend with no upload. Also found setPreviewBlob(null) calls referencing an undeclared state (leftover from old blob approach).
+- Root cause: Race condition. The background tee() save hadn't finished writing (or wasn't visible to Next.js static file serving) when the client sent the message URL. The file only became available after server restart because that's when the process flushed/released whatever was blocking it.
+- Fix: Removed tee()/background save from API route. API now just streams TTS response directly. Client collects all chunks into a Blob while playing via Web Audio API (streaming playback unchanged — still fast). On send, client uploads the Blob to /api/upload (synchronous save, proven reliable). The returned URL is immediately playable because the file is fully on disk before the URL is returned.
+- Re-added previewBlob state (was referenced but never declared).
+- Fixed pre-existing TS error: Buffer -> BlobPart cast in custom voice section.
+- Verified: npx tsc --noEmit shows zero errors in both modified files.
+
+Stage Summary:
+- /api/tts/route.ts: Removed tee(), background IIFE, X-Tts-* headers, writeFile/mkdir imports. Now just pipes TTS stream to client.
+- message-composer.tsx: Added previewBlob state. handleGenerate collects chunks into Blob + creates blob URL for preview. handleSend uploads Blob to /api/upload, uses returned URL. Streaming playback via Web Audio API unchanged (still ~200ms to first sound).
+- The production 0-length audio issue is eliminated because /api/upload saves synchronously — the file is guaranteed on disk before the URL is used in a message.
