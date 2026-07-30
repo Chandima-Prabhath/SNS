@@ -405,7 +405,6 @@ function TtsDialog({
   const [selectedCustomVoiceId, setSelectedCustomVoiceId] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null)
   const [sending, setSending] = useState(false)
   const qc = useQueryClient()
 
@@ -438,7 +437,6 @@ function TtsDialog({
     if (!text.trim() || generating) return
     setGenerating(true)
     setPreviewUrl(null)
-    setPreviewBlob(null)
     try {
       const body: any = { text }
       if (selectedCustomVoiceId) {
@@ -452,18 +450,12 @@ function TtsDialog({
         body: JSON.stringify(body),
       })
       if (!res.ok) {
-        // Error responses are JSON, success responses are streamed audio
         const err = await res.json().catch(() => ({ error: 'Generation failed' }))
         throw new Error(err.error || 'Generation failed')
       }
-      // The route streams the WAV audio back to us — get the blob and create
-      // an object URL for an instant local preview. We do NOT persist the
-      // audio on the server here; when the user clicks Send, we upload the
-      // blob to /api/upload and send the resulting URL as the message.
-      const blob = await res.blob()
-      const blobUrl = URL.createObjectURL(blob)
-      setPreviewBlob(blob)
-      setPreviewUrl(blobUrl)
+      // The route saves the audio to disk and returns a URL
+      const data = await res.json()
+      setPreviewUrl(data.url)
       toast.success('Voice generated — preview and send')
     } catch (e: any) {
       toast.error(e.message || 'Failed to generate voice')
@@ -473,23 +465,13 @@ function TtsDialog({
   }
 
   const handleSend = async () => {
-    if (!previewBlob || !previewUrl || sending) return
+    if (!previewUrl || sending) return
     setSending(true)
     try {
-      // Upload the preview blob to /api/upload, then send the resulting
-      // hosted URL as the voice message.
-      const fd = new FormData()
-      fd.append('file', previewBlob, 'tts.wav')
-      const upRes = await fetch('/api/upload', { method: 'POST', body: fd })
-      if (!upRes.ok) {
-        throw new Error('Failed to upload audio')
-      }
-      const { url } = await upRes.json()
-      await onSend(url)
+      // The audio is already saved on the server — just send the URL
+      await onSend(previewUrl)
       setText('')
-      if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
       setPreviewUrl(null)
-      setPreviewBlob(null)
     } catch {
       toast.error('Failed to send voice message')
     } finally {

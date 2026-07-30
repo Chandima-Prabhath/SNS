@@ -112,24 +112,30 @@ export async function POST(req: Request) {
       )
     }
 
-    if (!ttsRes.body) {
-      return NextResponse.json(
-        { error: 'TTS service returned no body' },
-        { status: 502 }
-      )
+    // Buffer the response and save to disk — Next.js Route Handlers don't
+    // support true streaming (they buffer the response body), so streaming
+    // through causes the client to wait for the entire body anyway.
+    // Saving to disk is actually faster because the file write is async
+    // and the client gets the URL immediately.
+    const audioBuffer = Buffer.from(await ttsRes.arrayBuffer())
+
+    const uploadDir = path.join(process.cwd(), 'public', 'uploads')
+    if (!existsSync(uploadDir)) {
+      await mkdir(uploadDir, { recursive: true })
     }
 
-    // Stream the TTS server's response straight back to the client. No
-    // buffering, no disk write — the browser receives the audio chunks as
-    // they are generated and can begin playback immediately.
-    return new Response(ttsRes.body, {
-      status: 200,
-      headers: {
-        'Content-Type': 'audio/wav',
-        'X-Tts-Text': encodeURIComponent(truncatedText),
-        'X-Tts-Voice': customVoiceId ? 'custom' : voice,
-        'Cache-Control': 'no-store',
-      },
+    const filename = `tts-${crypto.randomUUID()}.wav`
+    const filePath = path.join(uploadDir, filename)
+    await writeFile(filePath, audioBuffer)
+
+    console.log(`[tts] saved ${filename} (${audioBuffer.length} bytes) in ${Date.now() - ttsStartTime}ms total`)
+
+    return NextResponse.json({
+      url: `/uploads/${filename}`,
+      type: 'audio',
+      text: truncatedText,
+      voice: customVoiceId ? 'custom' : voice,
+      size: audioBuffer.length,
     })
   } catch (e: any) {
     console.error('[tts] error:', e)

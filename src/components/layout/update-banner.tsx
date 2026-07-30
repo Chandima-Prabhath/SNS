@@ -64,37 +64,36 @@ export function UpdateBanner() {
     })
 
     // ── Mechanism 2: Version polling (catches ALL updates) ────────────
-    // Fetch the initial build ID on page load
+    // Fetch the initial version on page load
     fetch('/api/version', { cache: 'no-store' })
       .then((r) => r.json())
       .then((data) => {
-        initialBuildIdRef.current = data.buildId
-        console.log('[update-banner] initial build ID:', data.buildId)
+        initialBuildIdRef.current = data.version
+        console.log('[update-banner] initial version:', data.version)
       })
       .catch(() => {})
 
-    // Poll every 60 seconds for a new build
+    // Poll every 30 seconds for a new build
     const versionInterval = setInterval(async () => {
       try {
         const res = await fetch('/api/version', { cache: 'no-store' })
         if (!res.ok) return
         const data = await res.json()
 
-        // If we have an initial build ID and it's different now, update!
+        // If we have an initial version and it's different now, update!
         if (
           initialBuildIdRef.current &&
-          data.buildId &&
-          data.buildId !== initialBuildIdRef.current
+          data.version &&
+          data.version !== initialBuildIdRef.current
         ) {
-          console.log('[update-banner] build ID changed:', initialBuildIdRef.current, '→', data.buildId)
+          console.log('[update-banner] version changed:', initialBuildIdRef.current, '→', data.version)
           setUpdateAvailable(true)
-          // No SW registration to message — just reload
           setRegistration(null)
         }
       } catch {
         // Network error — ignore
       }
-    }, 60 * 1000) // every 60 seconds
+    }, 30 * 1000) // every 30 seconds
 
     // Also check when the tab becomes visible
     const onVisibilityChange = () => {
@@ -111,10 +110,10 @@ export function UpdateBanner() {
           .then((data) => {
             if (
               initialBuildIdRef.current &&
-              data.buildId &&
-              data.buildId !== initialBuildIdRef.current
+              data.version &&
+              data.version !== initialBuildIdRef.current
             ) {
-              console.log('[update-banner] build ID changed (visibility):', data.buildId)
+              console.log('[update-banner] version changed (visibility):', data.version)
               setUpdateAvailable(true)
               setRegistration(null)
             }
