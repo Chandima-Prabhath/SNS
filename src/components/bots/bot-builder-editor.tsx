@@ -36,13 +36,16 @@ import {
   Save, Trash2, Plus, X, AlertTriangle, Info, Sparkles,
   Image as ImageIcon, Split, Hash, Braces, Terminal,
   Bug, CheckCircle2, Play, ChevronRight, Activity,
+  Download, Upload, FileText,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import {
   type BotFlow, type FlowNode, type NodeType, type NodeCategory,
   NODE_DEFS, CATEGORY_ORDER, CATEGORY_LABELS, defaultNodeData,
 } from '@/lib/bot/flow-types'
 import { validateFlow, getFlowSummary, type ValidationIssue } from '@/lib/bot/flow-validation'
 import { debugRunFlow, formatTraceEvent, type DebugResult, type MockInput } from '@/lib/bot/flow-debug'
+import { EXAMPLE_BOT_FLOW } from '@/lib/bot/example-flow'
 import { cn } from '@/lib/utils'
 
 // ─── Icon registry ───────────────────────────────────────────────────────────
@@ -416,6 +419,99 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
     onSave(flow)
   }
 
+  // ── Export flow as JSON file download ───────────────────────────────
+  const handleExport = () => {
+    const flow: BotFlow = {
+      nodes: nodes.map((n) => ({
+        id: n.id,
+        type: n.data.type as NodeType,
+        position: n.position,
+        data: { ...n.data },
+      })) as FlowNode[],
+      edges: edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle || null,
+        label: typeof e.label === 'string' ? e.label : undefined,
+      })),
+    }
+    const json = JSON.stringify(flow, null, 2)
+    const blob = new Blob([json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `bot-flow-${bot?.username || 'export'}-${Date.now()}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  // ── Import flow from JSON file ──────────────────────────────────────
+  const handleImport = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json,application/json'
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (!file) return
+      try {
+        const text = await file.text()
+        const flow = JSON.parse(text) as BotFlow
+        if (!flow.nodes || !flow.edges || !Array.isArray(flow.nodes) || !Array.isArray(flow.edges)) {
+          throw new Error('Invalid flow file: missing nodes or edges')
+        }
+        if (!confirm('Import this flow? It will replace the current canvas (you still need to Save to persist).')) return
+        setNodes(flow.nodes.map((n) => ({
+          id: n.id,
+          type: 'custom',
+          position: n.position,
+          data: { ...n.data },
+        })))
+        setEdges(flow.edges.map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          sourceHandle: e.sourceHandle || undefined,
+          label: e.label || undefined,
+          animated: true,
+          style: { stroke: '#5865F2', strokeWidth: 2 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#5865F2' },
+        })))
+        setSelectedNodeId(null)
+        toast.success(`Imported ${flow.nodes.length} nodes and ${flow.edges.length} edges`)
+      } catch (err: any) {
+        toast.error(`Import failed: ${err.message || 'invalid JSON'}`)
+      }
+    }
+    input.click()
+  }
+
+  // ── Load example flow ───────────────────────────────────────────────
+  const handleLoadExample = () => {
+    if (!confirm('Load the example "Smart Assistant" bot? It will replace the current canvas (you still need to Save to persist).')) return
+    const flow = EXAMPLE_BOT_FLOW
+    setNodes(flow.nodes.map((n) => ({
+      id: n.id,
+      type: 'custom',
+      position: n.position,
+      data: { ...n.data },
+    })))
+    setEdges(flow.edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      sourceHandle: e.sourceHandle || undefined,
+      label: e.label || undefined,
+      animated: true,
+      style: { stroke: '#5865F2', strokeWidth: 2 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: '#5865F2' },
+    })))
+    setSelectedNodeId(null)
+    toast.success('Loaded example bot — Save to persist it')
+  }
+
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null
 
   // ── Build current flow object (used by validation + debug) ──────────
@@ -501,6 +597,20 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
           <Button onClick={handleSave} className="w-full" size="sm">
             <Save className="w-4 h-4 mr-1.5" /> Save Flow
           </Button>
+
+          {/* Export / Import / Example */}
+          <div className="grid grid-cols-3 gap-1">
+            <Button onClick={handleExport} variant="ghost" className="text-white/60 hover:text-white" size="sm" title="Export flow as JSON file">
+              <Download className="w-3.5 h-3.5" />
+            </Button>
+            <Button onClick={handleImport} variant="ghost" className="text-white/60 hover:text-white" size="sm" title="Import flow from JSON file">
+              <Upload className="w-3.5 h-3.5" />
+            </Button>
+            <Button onClick={handleLoadExample} variant="ghost" className="text-white/60 hover:text-white" size="sm" title="Load example bot">
+              <FileText className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+
           <Button onClick={clearAll} variant="ghost" className="w-full text-red-400 hover:text-red-300" size="sm">
             <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Clear All
           </Button>
