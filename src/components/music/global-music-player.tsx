@@ -614,11 +614,18 @@ function PlayerBar({
 }) {
   const [expanded, setExpanded] = useState(false)
   const { view } = useAppStore()
+  const isDraggingRef = useRef(false)
 
   // Auto-collapse when not on the Music tab
   useEffect(() => {
     if (view !== 'music') setExpanded(false)
   }, [view])
+
+  // Prevent clicks from firing after a drag ends
+  const handlePlayPauseClick = useCallback(() => {
+    if (isDraggingRef.current) return
+    onTogglePlay()
+  }, [onTogglePlay])
 
   return (
     <>
@@ -630,21 +637,21 @@ function PlayerBar({
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-            // Draggable: user can move the FAB anywhere on screen.
-            // dragMomentum=false so it stays where dropped (no sliding).
-            // z-[60] so it's above the chat view (z-40) and below dialogs (z-50).
             drag
             dragMomentum={false}
-            dragElastic={0}
-            whileDrag={{ scale: 1.1, cursor: 'grabbing' }}
+            dragElastic={0.1}
+            dragTransition={{ bounceStiffness: 300, bounceDamping: 20 }}
+            whileDrag={{ scale: 1.08, cursor: 'grabbing' }}
+            onDragStart={() => { isDraggingRef.current = true }}
+            onDragEnd={() => { setTimeout(() => { isDraggingRef.current = false }, 100) }}
             className="fixed bottom-20 lg:bottom-6 right-4 z-[60] cursor-grab touch-none"
           >
-            <div className="flex items-center gap-2 pointer-events-auto">
-              {/* Play/pause button — floating circle */}
+            <div className="flex items-center gap-2.5 glass-dark rounded-full p-1.5 pr-3 shadow-xl pointer-events-auto">
+              {/* Album art / Play-pause */}
               <button
-                onClick={onTogglePlay}
+                onClick={handlePlayPauseClick}
                 onPointerDown={(e) => e.stopPropagation()}
-                className="relative w-14 h-14 rounded-full gradient-primary shadow-glow hover:scale-105 transition-transform flex items-center justify-center shrink-0 touch-none"
+                className="relative w-12 h-12 rounded-full gradient-primary shadow-glow hover:scale-105 active:scale-95 transition-transform flex items-center justify-center shrink-0"
                 aria-label={isPlaying ? 'Pause' : 'Play'}
               >
                 {currentTrack.thumbnail ? (
@@ -656,7 +663,7 @@ function PlayerBar({
                 ) : (
                   <MusicIcon className="w-5 h-5 text-primary-foreground relative z-10" />
                 )}
-                <div className="absolute inset-0 rounded-full bg-black/30 flex items-center justify-center">
+                <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center">
                   {isPlaying ? (
                     <Pause className="w-5 h-5 text-white relative z-10" />
                   ) : (
@@ -665,11 +672,21 @@ function PlayerBar({
                 </div>
               </button>
 
-              {/* Expand button — chevron up */}
+              {/* Track title — visible on desktop, tap target for expand on mobile */}
               <button
                 onClick={() => setExpanded(true)}
                 onPointerDown={(e) => e.stopPropagation()}
-                className="w-10 h-10 rounded-full glass-dark flex items-center justify-center text-foreground hover:scale-105 transition-transform shrink-0 touch-none"
+                className="hidden sm:block min-w-0 max-w-[140px] text-left"
+              >
+                <div className="text-xs font-medium truncate text-foreground">{currentTrack.title}</div>
+                <div className="text-[10px] text-muted-foreground truncate">{currentTrack.artist}</div>
+              </button>
+
+              {/* Expand button */}
+              <button
+                onClick={() => setExpanded(true)}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-foreground hover:bg-white/20 hover:scale-105 active:scale-95 transition-all shrink-0"
                 aria-label="Expand player"
               >
                 <ChevronUp className="w-4 h-4" />
@@ -687,92 +704,112 @@ function PlayerBar({
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 120, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className="fixed bottom-16 lg:bottom-4 left-4 right-4 lg:left-1/2 lg:-translate-x-1/2 lg:right-auto lg:w-[640px] z-[60] bg-popover/95 backdrop-blur-2xl border border-border/50 rounded-2xl shadow-2xl overflow-hidden"
+            className="fixed bottom-16 lg:bottom-4 left-3 right-3 lg:left-1/2 lg:-translate-x-1/2 lg:right-auto lg:w-[660px] z-[60] glass-dark rounded-2xl shadow-2xl overflow-hidden"
           >
             {/* Mobile layout */}
-            <div className="lg:hidden px-3 py-3 flex items-center gap-3">
-              {currentTrack.thumbnail ? (
-                <img src={currentTrack.thumbnail} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
-              ) : (
-                <div className="w-12 h-12 rounded-lg gradient-primary flex items-center justify-center shrink-0">
-                  <MusicIcon className="w-5 h-5 text-primary-foreground" />
+            <div className="lg:hidden px-4 py-3 space-y-2.5">
+              <div className="flex items-center gap-3">
+                {currentTrack.thumbnail ? (
+                  <img src={currentTrack.thumbnail} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0 ring-1 ring-white/10 shadow-md" />
+                ) : (
+                  <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shrink-0 shadow-md">
+                    <MusicIcon className="w-5 h-5 text-primary-foreground" />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold truncate">{currentTrack.title}</div>
+                  <div className="text-xs text-muted-foreground truncate">{currentTrack.artist}</div>
                 </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-medium truncate">{currentTrack.title}</div>
-                <div className="text-[10px] text-muted-foreground truncate">{currentTrack.artist}</div>
-                <div className="flex items-center gap-1.5 mt-1">
-                  <span className="text-[8px] text-muted-foreground tabular-nums">{formatTime(position)}</span>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button onClick={onTogglePlay} size="icon" className="rounded-full h-10 w-10 gradient-primary shadow-glow">
+                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                  </Button>
+                  <Button onClick={onNext} variant="ghost" size="icon" className="h-9 w-9 text-foreground">
+                    <SkipForward className="w-4 h-4" />
+                  </Button>
+                  <Button onClick={() => setExpanded(false)} variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground">
+                    <ChevronDown className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+              {/* Progress bar */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground tabular-nums w-8 text-right">{formatTime(position)}</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={currentTrack.durationSeconds || 300}
+                  value={position}
+                  onChange={(e) => onSeek(parseFloat(e.target.value))}
+                  className="flex-1 player-slider"
+                />
+                <span className="text-[10px] text-muted-foreground tabular-nums w-8">{formatTime(currentTrack.durationSeconds || 0)}</span>
+              </div>
+            </div>
+
+            {/* Desktop layout */}
+            <div className="hidden lg:flex px-5 py-4 items-center gap-5">
+              {/* Track info */}
+              <div className="flex items-center gap-3 min-w-0 w-52 shrink-0">
+                {currentTrack.thumbnail ? (
+                  <img src={currentTrack.thumbnail} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0 ring-1 ring-white/10 shadow-md" />
+                ) : (
+                  <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shrink-0 shadow-md">
+                    <MusicIcon className="w-5 h-5 text-primary-foreground" />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold truncate">{currentTrack.title}</div>
+                  <div className="text-xs text-muted-foreground truncate">{currentTrack.artist}</div>
+                </div>
+              </div>
+
+              {/* Controls + seek bar */}
+              <div className="flex-1 flex flex-col items-center gap-2">
+                <div className="flex items-center gap-3">
+                  <button onClick={onShuffleToggle} className={cn('p-2 rounded-xl transition-all', shuffle ? 'text-primary bg-primary/15 shadow-glow' : 'text-muted-foreground hover:text-foreground hover:bg-white/5')} aria-label="Shuffle">
+                    <Shuffle className="w-4 h-4" />
+                  </button>
+                  <button onClick={onNext} className="p-2 rounded-xl text-foreground hover:bg-white/10 transition-colors" aria-label="Next">
+                    <SkipForward className="w-4 h-4" />
+                  </button>
+                  <button onClick={onTogglePlay} className="w-10 h-10 rounded-full gradient-primary flex items-center justify-center hover:scale-110 active:scale-95 transition-transform shadow-glow" aria-label={isPlaying ? 'Pause' : 'Play'}>
+                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                  </button>
+                  <button onClick={onStop} className="p-2 rounded-xl text-foreground hover:bg-white/10 transition-colors" aria-label="Stop">
+                    <X className="w-4 h-4" />
+                  </button>
+                  <button onClick={onRepeatToggle} className={cn('p-2 rounded-xl transition-all', repeat ? 'text-primary bg-primary/15 shadow-glow' : 'text-muted-foreground hover:text-foreground hover:bg-white/5')} aria-label="Repeat">
+                    <Repeat className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-2.5 w-full max-w-sm">
+                  <span className="text-[10px] text-muted-foreground tabular-nums w-9 text-right">{formatTime(position)}</span>
                   <input
                     type="range"
                     min={0}
                     max={currentTrack.durationSeconds || 300}
                     value={position}
                     onChange={(e) => onSeek(parseFloat(e.target.value))}
-                    className="flex-1 h-0.5 rounded-full bg-muted appearance-none cursor-pointer accent-primary"
+                    className="flex-1 player-slider"
                   />
-                  <span className="text-[8px] text-muted-foreground tabular-nums">{formatTime(currentTrack.durationSeconds || 0)}</span>
-                </div>
-              </div>
-              <Button onClick={onTogglePlay} size="icon" className="rounded-full h-9 w-9 shrink-0 gradient-primary">
-                {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
-              </Button>
-              <Button onClick={onNext} variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-foreground">
-                <SkipForward className="w-4 h-4" />
-              </Button>
-              <Button onClick={() => setExpanded(false)} variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-muted-foreground">
-                <ChevronDown className="w-4 h-4" />
-              </Button>
-            </div>
-
-            {/* Desktop layout */}
-            <div className="hidden lg:flex px-4 py-3 items-center gap-4">
-              {/* Track info */}
-              <div className="flex items-center gap-3 min-w-0 w-48 shrink-0">
-                {currentTrack.thumbnail ? (
-                  <img src={currentTrack.thumbnail} alt="" className="w-11 h-11 rounded-lg object-cover shrink-0" />
-                ) : (
-                  <div className="w-11 h-11 rounded-lg gradient-primary flex items-center justify-center shrink-0">
-                    <MusicIcon className="w-5 h-5 text-primary-foreground" />
-                  </div>
-                )}
-                <div className="min-w-0">
-                  <div className="text-sm font-medium truncate">{currentTrack.title}</div>
-                  <div className="text-xs text-muted-foreground truncate">{currentTrack.artist}</div>
-                </div>
-              </div>
-
-              {/* Controls + seek bar */}
-              <div className="flex-1 flex flex-col items-center gap-1.5">
-                <div className="flex items-center gap-2">
-                  <button onClick={onShuffleToggle} className={cn('p-1.5 rounded-lg transition-colors', shuffle ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground')} aria-label="Shuffle">
-                    <Shuffle className="w-3.5 h-3.5" />
-                  </button>
-                  <button onClick={onNext} className="p-1.5 rounded-lg text-foreground hover:bg-accent transition-colors" aria-label="Next">
-                    <SkipForward className="w-4 h-4" />
-                  </button>
-                  <button onClick={onTogglePlay} className="w-9 h-9 rounded-full gradient-primary flex items-center justify-center hover:scale-105 transition-transform shadow-glow" aria-label={isPlaying ? 'Pause' : 'Play'}>
-                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
-                  </button>
-                  <button onClick={onStop} className="p-1.5 rounded-lg text-foreground hover:bg-accent transition-colors" aria-label="Stop">
-                    <X className="w-4 h-4" />
-                  </button>
-                  <button onClick={onRepeatToggle} className={cn('p-1.5 rounded-lg transition-colors', repeat ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground')} aria-label="Repeat">
-                    <Repeat className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <div className="flex items-center gap-2 w-full max-w-xs">
-                  <span className="text-[10px] text-muted-foreground tabular-nums w-8 text-right">{formatTime(position)}</span>
-                  <input type="range" min={0} max={currentTrack.durationSeconds || 300} value={position} onChange={(e) => onSeek(parseFloat(e.target.value))} className="flex-1 h-1 rounded-full bg-muted appearance-none cursor-pointer accent-primary" />
-                  <span className="text-[10px] text-muted-foreground tabular-nums w-8">{formatTime(currentTrack.durationSeconds || 0)}</span>
+                  <span className="text-[10px] text-muted-foreground tabular-nums w-9">{formatTime(currentTrack.durationSeconds || 0)}</span>
                 </div>
               </div>
 
               {/* Volume + collapse */}
-              <div className="flex items-center gap-2 shrink-0">
-                <Volume2 className="w-4 h-4 text-muted-foreground" />
-                <input type="range" min={0} max={1} step={0.01} value={volume} onChange={(e) => onVolumeChange(parseFloat(e.target.value))} className="w-16 h-1 rounded-full bg-muted appearance-none cursor-pointer accent-primary" />
-                <button onClick={() => setExpanded(false)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors" aria-label="Collapse player">
+              <div className="flex items-center gap-2.5 shrink-0">
+                <Volume2 className="w-4 h-4 text-muted-foreground shrink-0" />
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={volume}
+                  onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
+                  className="w-20 volume-slider"
+                />
+                <button onClick={() => setExpanded(false)} className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors" aria-label="Collapse player">
                   <ChevronDown className="w-4 h-4" />
                 </button>
               </div>

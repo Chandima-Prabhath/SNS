@@ -152,20 +152,6 @@ function DesktopServerRail() {
             </RailButton>
           )
         })}
-
-        {/* User avatar */}
-        <button
-          onClick={() => setView('settings')}
-          title={session?.user ? (session.user as any).displayName : 'Settings'}
-          className="w-12 h-12 lg:w-[52px] lg:h-[52px] rounded-2xl flex items-center justify-center transition-all hover:rounded-xl active:scale-95 overflow-hidden ring-2 ring-border/50 hover:ring-primary/40"
-        >
-          <Avatar className="w-full h-full">
-            <AvatarImage src={(session?.user as any)?.avatarUrl || undefined} />
-            <AvatarFallback className="bg-sidebar-accent text-sm font-semibold">
-              {(session?.user as any)?.displayName?.charAt(0).toUpperCase() || '?'}
-            </AvatarFallback>
-          </Avatar>
-        </button>
       </div>
     </div>
   )
@@ -258,7 +244,6 @@ function MobileServerRail() {
 
               <CreateOrJoinGroupButton
                 onCreated={() => setOpen(false)}
-                onOpen={() => setOpen(false)}
               />
             </div>
 
@@ -281,17 +266,6 @@ function MobileServerRail() {
                   </RailButton>
                 )
               })}
-              <button
-                onClick={() => { setView('settings'); setOpen(false) }}
-                className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all hover:rounded-xl active:scale-95 overflow-hidden ring-2 ring-border/50"
-              >
-                <Avatar className="w-full h-full">
-                  <AvatarImage src={(session?.user as any)?.avatarUrl || undefined} />
-                  <AvatarFallback className="bg-sidebar-accent text-sm font-semibold">
-                    {(session?.user as any)?.displayName?.charAt(0).toUpperCase() || '?'}
-                  </AvatarFallback>
-                </Avatar>
-              </button>
             </div>
           </motion.div>
         </>
@@ -318,22 +292,21 @@ function RailButton({
 }) {
   return (
     <div className="group relative">
-      {/* Active indicator — vertical bar on the left */}
       <div
         className={cn(
-          'absolute -left-3 top-1/2 -translate-y-1/2 w-1 rounded-r-full bg-foreground transition-all',
-          active ? 'h-7' : 'h-0 group-hover:h-3'
+          'absolute -left-3 top-1/2 -translate-y-1/2 w-1.5 rounded-r-full bg-primary shadow-glow transition-all duration-300',
+          active ? 'h-8 opacity-100' : 'h-0 opacity-0 group-hover:h-4 group-hover:opacity-50'
         )}
       />
       <button
         onClick={onClick}
         title={label}
         className={cn(
-          'relative w-12 h-12 lg:w-[52px] lg:h-[52px] rounded-2xl flex items-center justify-center transition-all overflow-hidden',
+          'relative w-12 h-12 lg:w-[52px] lg:h-[52px] rounded-2xl flex items-center justify-center transition-all duration-300 overflow-hidden',
           'hover:rounded-xl active:scale-95',
           active
-            ? 'bg-primary text-primary-foreground shadow-glow'
-            : 'bg-sidebar-accent text-sidebar-accent-foreground hover:bg-primary hover:text-primary-foreground'
+            ? 'bg-primary/20 text-primary ring-1 ring-primary/50 shadow-glow backdrop-blur-md'
+            : 'bg-white/[0.03] text-muted-foreground hover:bg-white/[0.08] hover:text-foreground ring-1 ring-white/5 backdrop-blur-sm'
         )}
       >
         {children}

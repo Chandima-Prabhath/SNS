@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "shadcn": {
+      "command": "bunx",
+      "args": [
+        "shadcn@latest",
+        "mcp"
+      ]
+    }
+  }
+}

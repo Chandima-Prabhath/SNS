@@ -99,46 +99,46 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
   }
 
   return (
-    <div className="border-t bg-background/80 backdrop-blur-xl px-3 md:px-6 py-3 pb-safe">
+    <div className="border-t border-white/5 bg-background/60 backdrop-blur-3xl px-3 md:px-6 py-4 pb-safe relative z-20">
       {/* Reply banner */}
       {replyTo && (
-        <div className="flex items-center gap-2 text-xs bg-muted rounded-lg p-2 mb-2">
-          <Reply className="w-3 h-3 shrink-0" />
+        <div className="flex items-center gap-3 text-xs bg-black/40 border border-white/10 backdrop-blur-md rounded-xl p-3 mb-3 shadow-lg">
+          <Reply className="w-4 h-4 shrink-0 text-primary" />
           <div className="flex-1 min-w-0">
-            <div className="font-medium">{replyTo.senderName}</div>
-            <div className="text-muted-foreground truncate">{replyTo.body}</div>
+            <div className="font-semibold text-primary">{replyTo.senderName}</div>
+            <div className="text-muted-foreground truncate mt-0.5">{replyTo.body}</div>
           </div>
-          <button onClick={() => setReplyTo(null)} className="p-1 hover:bg-accent rounded">
-            <X className="w-3 h-3" />
+          <button onClick={() => setReplyTo(null)} className="p-1.5 hover:bg-white/10 rounded-full transition-colors">
+            <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
-      <div className="flex items-end gap-2">
+      <div className="flex items-end gap-2.5">
         {/* Upload button */}
-        <label className="cursor-pointer p-2.5 hover:bg-accent rounded-full transition-colors shrink-0">
-          <ImageIcon className="w-5 h-5 text-muted-foreground" />
+        <label className="cursor-pointer w-10 h-10 flex items-center justify-center hover:bg-white/5 rounded-full transition-colors shrink-0 border border-transparent hover:border-white/10">
+          <ImageIcon className="w-[22px] h-[22px] text-muted-foreground hover:text-foreground transition-colors" />
           <input type="file" className="hidden" accept="image/*,video/*,audio/*" onChange={handleUpload} disabled={uploading} />
         </label>
 
         {/* TTS voice message button */}
         <button
           onClick={() => setTtsOpen(true)}
-          className="p-2.5 hover:bg-accent rounded-full transition-colors shrink-0 group"
+          className="w-10 h-10 flex items-center justify-center hover:bg-white/5 rounded-full transition-colors shrink-0 group border border-transparent hover:border-white/10"
           title="Send AI voice message"
         >
-          <AudioLines className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+          <AudioLines className="w-[22px] h-[22px] text-muted-foreground group-hover:text-primary transition-colors" />
         </button>
 
         {/* Text input — grows up to ~4 lines */}
-        <div className="flex-1 bg-muted/70 backdrop-blur-sm rounded-2xl px-4 py-2 flex items-end border border-border/30">
+        <div className="flex-1 bg-black/20 backdrop-blur-xl rounded-[24px] px-5 py-3 flex items-end border border-white/10 shadow-inner ring-1 ring-transparent focus-within:ring-primary/30 transition-all">
           <Textarea
             ref={textareaRef}
             value={text}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            placeholder="Message..."
-            className="flex-1 resize-none min-h-[24px] max-h-[160px] bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 p-0 text-[15px] leading-snug shadow-none"
+            placeholder="iMessage..."
+            className="flex-1 resize-none min-h-[24px] max-h-[160px] bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 p-0 text-[16px] leading-relaxed shadow-none placeholder:text-muted-foreground/50"
             disabled={sending || uploading}
             rows={1}
           />
@@ -149,9 +149,9 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
           onClick={handleSend}
           disabled={!text.trim() || sending}
           size="icon"
-          className="rounded-full h-10 w-10 shrink-0 transition-transform active:scale-90 gradient-primary"
+          className="rounded-full h-11 w-11 shrink-0 transition-transform hover:scale-105 active:scale-95 gradient-primary shadow-glow disabled:opacity-50 disabled:shadow-none"
         >
-          {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
         </Button>
       </div>
 

@@ -15,7 +15,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useMusicStore, type Track } from '@/stores/useMusicStore'
 import { useMusicPlayer } from '@/components/music/global-music-player'
-import { SpotlightCard, GlassSurface, GradientText, BorderGlow } from '@/components/reactbits'
+import { SpotlightCard, GlassSurface, GradientText, BorderGlow, ShinyText, StarBorder } from '@/components/reactbits'
 
 interface Room {
   id: string
@@ -203,24 +203,26 @@ export function MusicView() {
                 className="space-y-6"
               >
                 {/* Search */}
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <div className="relative group">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
                   <Input
                     value={searchQuery}
                     onChange={(e) => handleSearchChange(e.target.value)}
                     placeholder="Search songs, artists..."
-                    className="pl-9 h-11 bg-card/50 backdrop-blur-sm border-border/30"
+                    className="pl-12 h-14 bg-black/20 backdrop-blur-xl border-white/10 rounded-2xl text-lg focus-visible:ring-primary/50 focus-visible:border-primary/50 transition-all shadow-inner"
                   />
                   {searching && (
-                    <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-muted-foreground" />
+                    <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 animate-spin text-muted-foreground" />
                   )}
                 </div>
 
                 {/* Search results */}
                 {searchResults.length > 0 ? (
                   <div className="space-y-1.5">
-                    <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                      Results
+                    <h2 className="text-sm font-bold uppercase tracking-wider mb-3">
+                      <ShinyText shimmerDuration={4} className="text-sm">
+                        Results
+                      </ShinyText>
                     </h2>
                     {searchResults.map((track) => (
                       <TrackRow
@@ -239,8 +241,10 @@ export function MusicView() {
                   <>
                     {/* Trending */}
                     <div>
-                      <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                        Trending Now
+                      <h2 className="text-sm font-bold uppercase tracking-wider mb-4">
+                        <ShinyText shimmerDuration={5} className="text-sm">
+                          🔥 Trending Now
+                        </ShinyText>
                       </h2>
                       {trendingLoading ? (
                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -345,8 +349,10 @@ export function MusicView() {
                 className="space-y-4"
               >
                 <div className="flex items-center justify-between">
-                  <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Play Queue
+                  <h2 className="text-sm font-bold uppercase tracking-wider">
+                    <ShinyText shimmerDuration={4} className="text-sm">
+                      🎧 Play Queue
+                    </ShinyText>
                   </h2>
                   {queue.length > 0 && (
                     <Button
@@ -363,38 +369,42 @@ export function MusicView() {
 
                 {/* Currently playing */}
                 {currentTrack && (
-                  <div className="p-3 rounded-xl bg-primary/10 border border-primary/20">
-                    <div className="text-[10px] uppercase tracking-wider text-primary font-bold mb-2">
-                      Now Playing
-                    </div>
-                    <div className="flex items-center gap-3">
+                  <StarBorder color="oklch(0.68 0.24 264)" className="w-full">
+                    <SpotlightCard spotlightColor="rgba(var(--primary), 0.15)" className="p-5 rounded-2xl border-0 bg-gradient-to-br from-primary/8 to-transparent">
+                      <div className="text-[10px] uppercase tracking-widest text-primary font-bold mb-3 flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_oklch(0.68_0.24_264/0.6)]" />
+                        <ShinyText shimmerDuration={3} className="text-[10px]">Now Playing</ShinyText>
+                      </div>
+                    <div className="flex items-center gap-4">
                       {currentTrack.thumbnail ? (
-                        <img
-                          src={currentTrack.thumbnail}
-                          alt=""
-                          className="w-12 h-12 rounded-lg object-cover"
-                        />
+                        <div className="relative w-16 h-16 rounded-xl overflow-hidden shadow-lg ring-1 ring-white/10">
+                          <img
+                            src={currentTrack.thumbnail}
+                            alt=""
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
                       ) : (
-                        <div className="w-12 h-12 rounded-lg gradient-primary flex items-center justify-center">
-                          <Radio className="w-5 h-5 text-primary-foreground" />
+                        <div className="w-16 h-16 rounded-xl gradient-primary flex items-center justify-center shadow-lg">
+                          <Radio className="w-6 h-6 text-primary-foreground" />
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium truncate">
+                        <div className="text-base font-semibold truncate text-foreground">
                           {currentTrack.title}
                         </div>
-                        <div className="text-xs text-muted-foreground truncate">
+                        <div className="text-sm text-muted-foreground truncate">
                           {currentTrack.artist}
                         </div>
                       </div>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1.5">
                         <button
                           onClick={() => setShuffle(!shuffle)}
                           className={cn(
-                            'p-2 rounded-lg transition-colors',
+                            'p-2.5 rounded-xl transition-all',
                             shuffle
-                              ? 'text-primary bg-primary/10'
-                              : 'text-muted-foreground hover:text-foreground',
+                              ? 'text-primary bg-primary/10 shadow-glow'
+                              : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
                           )}
                           aria-label="Toggle shuffle"
                         >
@@ -403,10 +413,10 @@ export function MusicView() {
                         <button
                           onClick={() => setRepeat(!repeat)}
                           className={cn(
-                            'p-2 rounded-lg transition-colors',
+                            'p-2.5 rounded-xl transition-all',
                             repeat
-                              ? 'text-primary bg-primary/10'
-                              : 'text-muted-foreground hover:text-foreground',
+                              ? 'text-primary bg-primary/10 shadow-glow'
+                              : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
                           )}
                           aria-label="Toggle repeat"
                         >
@@ -415,10 +425,10 @@ export function MusicView() {
                         <button
                           onClick={() => setAutoplay(!autoplay)}
                           className={cn(
-                            'p-2 rounded-lg transition-colors',
+                            'p-2.5 rounded-xl transition-all',
                             autoplay
-                              ? 'text-primary bg-primary/10'
-                              : 'text-muted-foreground hover:text-foreground',
+                              ? 'text-primary bg-primary/10 shadow-glow'
+                              : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
                           )}
                           title="Autoplay recommendations"
                           aria-label="Toggle autoplay"
@@ -427,7 +437,8 @@ export function MusicView() {
                         </button>
                       </div>
                     </div>
-                  </div>
+                    </SpotlightCard>
+                  </StarBorder>
                 )}
 
                 {/* Queue list */}
@@ -442,15 +453,14 @@ export function MusicView() {
                     </p>
                   </Card>
                 ) : (
-                  <div className="space-y-1">
-                    {queue.map((track, i) => (
-                      <div
-                        key={`${track.videoId}-${i}`}
-                        className="flex items-center gap-3 p-2 rounded-lg hover:bg-accent/50 transition-colors group"
-                      >
-                        <span className="text-xs text-muted-foreground w-5 text-center">
-                          {i + 1}
-                        </span>
+                    <div className="space-y-1.5">
+                      {queue.map((track, i) => (
+                        <div
+                          key={`${track.videoId}-${i}`}
+                          className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/[0.06] transition-all group border border-transparent hover:border-white/5">
+                          <span className="text-xs text-muted-foreground w-6 text-center font-medium">
+                            {i + 1}
+                          </span>
                         {track.thumbnail ? (
                           <img
                             src={track.thumbnail}
@@ -478,17 +488,17 @@ export function MusicView() {
                         >
                           <Play className="w-3.5 h-3.5" />
                         </button>
-                        <button
-                          onClick={() => removeFromQueue(i)}
-                          className="p-1.5 rounded-lg text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Remove from queue"
-                          aria-label="Remove from queue"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                          <button
+                            onClick={() => removeFromQueue(i)}
+                            className="p-1.5 rounded-lg text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Remove from queue"
+                            aria-label="Remove from queue"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                 )}
 
                 {/* Quick action: skip to next */}
@@ -529,55 +539,55 @@ function TrackRow({
   return (
     <div
       className={cn(
-        'flex items-center gap-3 p-2.5 rounded-xl transition-colors group',
-        isCurrent ? 'bg-primary/10' : 'hover:bg-accent/50',
+        'flex items-center gap-4 p-3 rounded-2xl transition-all group hover:bg-white/[0.04]',
+        isCurrent && 'bg-primary/5 hover:bg-primary/10',
       )}
     >
       <button
         onClick={onPlay}
-        className="flex items-center gap-3 flex-1 min-w-0 text-left"
+        className="flex items-center gap-4 flex-1 min-w-0 text-left"
       >
         {track.thumbnail ? (
-          <div className="relative w-12 h-12 rounded-lg overflow-hidden shrink-0">
+          <div className="relative w-14 h-14 rounded-xl overflow-hidden shrink-0 shadow-sm ring-1 ring-white/5">
             <img
               src={track.thumbnail}
               alt=""
               className="w-full h-full object-cover"
             />
-            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-[2px]">
               {isCurrent && isPlaying ? (
-                <Pause className="w-4 h-4 text-white" />
+                <Pause className="w-5 h-5 text-white drop-shadow-md" />
               ) : (
-                <Play className="w-4 h-4 text-white ml-0.5" />
+                <Play className="w-5 h-5 text-white ml-1 drop-shadow-md" />
               )}
             </div>
           </div>
         ) : (
-          <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center shrink-0">
-            <ListMusic className="w-5 h-5 text-muted-foreground" />
+          <div className="w-14 h-14 rounded-xl bg-muted flex items-center justify-center shrink-0">
+            <ListMusic className="w-6 h-6 text-muted-foreground" />
           </div>
         )}
         <div className="flex-1 min-w-0">
           <div
             className={cn(
-              'text-sm font-medium truncate',
-              isCurrent && 'text-primary',
+              'text-[15px] font-semibold truncate transition-colors',
+              isCurrent ? 'text-primary' : 'text-foreground',
             )}
           >
             {track.title}
           </div>
-          <div className="text-xs text-muted-foreground truncate">
+          <div className="text-sm text-muted-foreground truncate">
             {track.artist}
           </div>
         </div>
       </button>
       <button
         onClick={onAddToQueue}
-        className="p-2 rounded-lg text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-primary transition-all"
+        className="p-2.5 rounded-full text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-primary hover:bg-primary/10 transition-all shrink-0"
         title="Add to queue"
         aria-label="Add to queue"
       >
-        <Plus className="w-4 h-4" />
+        <Plus className="w-5 h-5" />
       </button>
     </div>
   )
@@ -600,8 +610,8 @@ function TrackCard({
   return (
     <SpotlightCard
       className={cn(
-        'group transition-all',
-        isCurrent ? 'ring-2 ring-primary' : 'hover:scale-[1.02]',
+        'group transition-all rounded-2xl overflow-hidden',
+        isCurrent ? 'ring-2 ring-primary shadow-glow' : 'hover:scale-[1.02] border border-white/5',
       )}
     >
       <button onClick={onPlay} className="w-full">
@@ -610,45 +620,46 @@ function TrackCard({
             <img
               src={track.thumbnail}
               alt=""
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             />
-            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-colors flex items-center justify-center">
-              <div className="w-12 h-12 rounded-full gradient-primary flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-glow">
+            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-60 group-hover:opacity-80 transition-opacity" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="w-14 h-14 rounded-full gradient-primary flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all scale-75 group-hover:scale-100 shadow-glow">
                 {isCurrent && isPlaying ? (
-                  <Pause className="w-5 h-5 text-primary-foreground" />
+                  <Pause className="w-6 h-6 text-primary-foreground" />
                 ) : (
-                  <Play className="w-5 h-5 text-primary-foreground ml-0.5" />
+                  <Play className="w-6 h-6 text-primary-foreground ml-1" />
                 )}
               </div>
             </div>
           </div>
         ) : (
           <div className="aspect-square bg-muted flex items-center justify-center">
-            <ListMusic className="w-8 h-8 text-muted-foreground" />
+            <ListMusic className="w-10 h-10 text-muted-foreground" />
           </div>
         )}
       </button>
-      <div className="p-2 flex items-start gap-1">
+      <div className="p-3 flex items-start gap-2 bg-card/50 backdrop-blur-md absolute bottom-0 inset-x-0">
         <div className="flex-1 min-w-0">
           <div
             className={cn(
-              'text-xs font-medium truncate',
-              isCurrent && 'text-primary',
+              'text-[13px] font-semibold truncate',
+              isCurrent ? 'text-primary' : 'text-foreground',
             )}
           >
             {track.title}
           </div>
-          <div className="text-[10px] text-muted-foreground truncate">
+          <div className="text-[11px] text-muted-foreground truncate">
             {track.artist}
           </div>
         </div>
         <button
           onClick={onAddToQueue}
-          className="p-1 rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-primary transition-all shrink-0"
+          className="p-1.5 rounded-full bg-white/10 text-white opacity-0 group-hover:opacity-100 hover:bg-primary hover:text-primary-foreground transition-all shrink-0"
           title="Add to queue"
           aria-label="Add to queue"
         >
-          <Plus className="w-3 h-3" />
+          <Plus className="w-3.5 h-3.5" />
         </button>
       </div>
     </SpotlightCard>
@@ -674,65 +685,75 @@ function RoomCard({
 }) {
   const isPlaying = room.currentState === 'playing'
   return (
-    <div
-      className={cn(
-        'w-full flex items-center gap-3 p-3.5 rounded-2xl transition-all border group',
-        isActive
-          ? 'bg-primary/10 border-primary/30 shadow-glow'
-          : 'bg-card/50 border-border/30 hover:bg-accent/50 hover:border-primary/20',
+    <div className="relative group">
+      {isActive && (
+        <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-primary/50 to-purple-500/50 opacity-50 blur-md transition-opacity group-hover:opacity-75" />
       )}
-    >
-      <button
-        onClick={onJoin}
-        className="flex items-center gap-3 flex-1 min-w-0 text-left"
+      <GlassSurface
+        blur={12}
+        opacity={isActive ? 0.08 : 0.02}
+        className={cn(
+          'w-full flex items-center gap-4 p-4 transition-all',
+          isActive
+            ? 'border-primary/50'
+            : 'border-white/5 hover:bg-white/[0.03]',
+        )}
       >
-        <div
-          className={cn(
-            'w-12 h-12 rounded-xl flex items-center justify-center shrink-0 transition-all',
-            isPlaying
-              ? 'bg-primary/20 text-primary pulse-glow'
-              : 'bg-muted text-muted-foreground',
-          )}
-        >
-          <Radio className={cn('w-5 h-5', isPlaying && 'animate-pulse')} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="font-medium text-sm truncate">{room.name}</div>
-          <div className="text-xs text-muted-foreground flex items-center gap-2">
-            <span>Hosted by {room.host?.displayName || 'Unknown'}</span>
-            {isPlaying ? (
-              <>
-                <span>·</span>
-                <span className="text-status-online flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-status-online animate-pulse" />
-                  Listening now
-                </span>
-              </>
-            ) : (
-              <>
-                <span>·</span>
-                <span className="text-muted-foreground">Idle</span>
-              </>
-            )}
-          </div>
-        </div>
-        <div className="shrink-0 text-xs font-medium text-primary px-3 py-1.5 rounded-lg bg-primary/10">
-          {isActive ? 'In Room' : 'Join'}
-        </div>
-      </button>
-      {onDelete && (
         <button
-          onClick={(e) => {
-            e.stopPropagation()
-            if (confirm(`Delete room "${room.name}"?`)) onDelete()
-          }}
-          className="shrink-0 p-2 rounded-lg text-red-400 opacity-0 group-hover:opacity-100 hover:bg-red-500/10 transition-all"
-          title="Delete room"
-          aria-label="Delete room"
+          onClick={onJoin}
+          className="flex items-center gap-4 flex-1 min-w-0 text-left"
         >
-          <Trash2 className="w-4 h-4" />
+          <div
+            className={cn(
+              'w-14 h-14 rounded-xl flex items-center justify-center shrink-0 transition-all shadow-sm',
+              isPlaying
+                ? 'bg-primary/20 text-primary pulse-glow ring-1 ring-primary/30'
+                : 'bg-black/30 text-muted-foreground ring-1 ring-white/10',
+            )}
+          >
+            <Radio className={cn('w-6 h-6', isPlaying && 'animate-pulse')} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold text-base truncate text-foreground">{room.name}</div>
+            <div className="text-sm text-muted-foreground flex items-center gap-2 mt-0.5">
+              <span>Hosted by {room.host?.displayName || 'Unknown'}</span>
+              {isPlaying ? (
+                <>
+                  <span className="text-white/30">•</span>
+                  <span className="text-status-online flex items-center gap-1.5 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-status-online shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse" />
+                    Listening now
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="text-white/30">•</span>
+                  <span className="text-muted-foreground">Idle</span>
+                </>
+              )}
+            </div>
+          </div>
+          <div className={cn(
+            "shrink-0 text-sm font-semibold px-4 py-2 rounded-xl transition-all shadow-sm",
+            isActive ? "bg-primary text-primary-foreground shadow-glow" : "bg-white/5 text-foreground hover:bg-white/10 border border-white/10"
+          )}>
+            {isActive ? 'In Room' : 'Join'}
+          </div>
         </button>
-      )}
+        {onDelete && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              if (confirm(`Delete room "${room.name}"?`)) onDelete()
+            }}
+            className="shrink-0 p-2.5 rounded-full text-red-400 opacity-0 group-hover:opacity-100 hover:bg-red-500/10 hover:text-red-300 transition-all"
+            title="Delete room"
+            aria-label="Delete room"
+          >
+            <Trash2 className="w-5 h-5" />
+          </button>
+        )}
+      </GlassSurface>
     </div>
   )
 }

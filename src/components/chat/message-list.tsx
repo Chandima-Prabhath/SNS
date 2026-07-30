@@ -112,8 +112,10 @@ export function MessageList({ channelId }: MessageListProps) {
   }, [messages])
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-background overflow-hidden">
-      <div ref={scrollRef as any} className="flex-1 min-h-0 overflow-y-auto">
+    <div className="flex-1 flex flex-col min-h-0 bg-background relative overflow-hidden">
+      {/* Subtle cinematic glow in the background */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(var(--primary),0.05),transparent)] pointer-events-none" />
+      <div ref={scrollRef as any} className="flex-1 min-h-0 overflow-y-auto relative z-10 scroll-smooth">
         <div className="px-3 md:px-6 py-4 space-y-3 max-w-4xl mx-auto">
           {isLoading && <LoadingState />}
 
@@ -244,10 +246,10 @@ function MessageGroup(props: MessageGroupProps) {
             <UserX className="w-4 h-4 text-muted-foreground" />
           </div>
         ) : (
-          <Avatar className="w-8 h-8">
+          <Avatar className="w-9 h-9 shadow-sm ring-1 ring-white/10">
             <AvatarImage src={avatarUrl || undefined} />
-            <AvatarFallback className={cn('text-xs', isBot && 'bg-primary/15 text-primary')}>
-              {isBot ? <Bot className="w-4 h-4" /> : senderName.charAt(0).toUpperCase()}
+            <AvatarFallback className={cn('text-xs font-semibold', isBot && 'bg-primary/20 text-primary')}>
+              {isBot ? <Bot className="w-[18px] h-[18px]" /> : senderName.charAt(0).toUpperCase()}
             </AvatarFallback>
           </Avatar>
         )}
@@ -399,11 +401,11 @@ function MessageItem(props: MessageItemProps) {
           el.addEventListener('touchcancel', clear, { once: true })
         }}
         className={cn(
-          'relative max-w-[78%] md:max-w-[65%] px-3.5 py-2 text-[15px] leading-snug break-words select-none cursor-default',
+          'relative max-w-[78%] md:max-w-[65%] px-4 py-2.5 text-[15px] leading-relaxed break-words select-none cursor-default backdrop-blur-md',
           isMine
-            ? 'bg-bubble-mine text-bubble-mine-foreground rounded-2xl rounded-br-md'
-            : 'bg-bubble-other text-bubble-other-foreground rounded-2xl rounded-bl-md',
-          isLastOfGroup && 'mb-1'
+            ? 'bg-gradient-to-br from-primary/90 to-primary text-primary-foreground rounded-[22px] rounded-br-sm shadow-[0_4px_12px_rgba(var(--primary),0.2)] border border-primary/20'
+            : 'bg-black/30 text-foreground rounded-[22px] rounded-bl-sm shadow-sm border border-white/10',
+          isLastOfGroup && 'mb-1.5'
         )}
       >
         {/* Reply context */}

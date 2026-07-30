@@ -115,21 +115,17 @@ export function SettingsView() {
           </AnimatePresence>
         </div>
 
-        {/* Sign out — always visible at bottom.
-            We use redirect:false and navigate manually with window.location
-            so the redirect always targets '/' relative to the current origin
-            (no absolute localhost URL leaked through next-auth's callbackUrl
-            resolution, which breaks behind reverse proxies / gateways). */}
-        <div className="pt-4 border-t shrink-0">
+        {/* Sign out */}
+        <div className="pt-6 shrink-0 flex justify-center">
           <Button
             variant="outline"
             onClick={async () => {
               await signOut({ callbackUrl: '/', redirect: false })
               window.location.replace('/')
             }}
-            className="text-red-500 hover:text-red-500 hover:bg-red-500/10"
+            className="w-full sm:w-auto h-12 px-8 rounded-xl text-red-500 border-red-500/20 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/30 transition-all bg-red-500/5 shadow-[0_0_15px_rgba(239,68,68,0.1)]"
           >
-            <LogOut className="w-4 h-4 mr-2" /> Sign out
+            <LogOut className="w-4 h-4 mr-2" /> Sign out securely
           </Button>
         </div>
       </div>
@@ -223,56 +219,69 @@ function ProfileSection() {
   if (isLoading) return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin" /></div>
 
   return (
-    <SpotlightCard className="p-6 space-y-5">
-      {/* Avatar picker — generated avatars + upload option */}
-      <AvatarPicker
-        currentAvatarUrl={avatarUrl}
-        userId={me?.id || 'seed'}
-        onPick={(url) => { setAvatarUrl(url); toast.success('Avatar selected — click Save to apply') }}
-        onUpload={handleAvatar}
-        uploading={uploading}
-      />
+    <div className="space-y-6">
+      <GlassSurface blur={16} opacity={0.03} className="p-6">
+        <div className="flex flex-col md:flex-row gap-8 items-start md:items-center">
+          <AvatarPicker
+            currentAvatarUrl={avatarUrl}
+            userId={me?.id || 'seed'}
+            onPick={(url) => { setAvatarUrl(url); toast.success('Avatar selected — click Save to apply') }}
+            onUpload={handleAvatar}
+            uploading={uploading}
+          />
+          <div className="flex-1 space-y-1">
+            <h2 className="text-xl font-semibold"><ShinyText shimmerDuration={3}>{displayName || 'Your Profile'}</ShinyText></h2>
+            <p className="text-sm text-muted-foreground">Manage your public persona</p>
+          </div>
+        </div>
+      </GlassSurface>
 
-      <div className="space-y-2">
-        <Label htmlFor="displayName">Display name</Label>
-        <Input id="displayName" value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="h-11 bg-muted/50" />
-      </div>
+      <GlassSurface blur={16} opacity={0.03} className="p-6 space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-2">
+            <Label htmlFor="displayName" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Display name</Label>
+            <Input id="displayName" value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="h-12 bg-black/20 border-white/10 rounded-xl px-4 focus-visible:ring-primary/50 transition-all" />
+          </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="username">Username</Label>
-        <Input id="username" value={me?.username || ''} disabled className="h-11 bg-muted/50" />
-        <p className="text-xs text-muted-foreground">Username cannot be changed.</p>
-      </div>
+          <div className="space-y-2">
+            <Label htmlFor="username" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Username</Label>
+            <Input id="username" value={me?.username || ''} disabled className="h-12 bg-black/20 border-white/5 rounded-xl px-4 opacity-70 cursor-not-allowed" />
+            <p className="text-[10px] text-muted-foreground pl-1">Username cannot be changed.</p>
+          </div>
+        </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="bio">Bio</Label>
-        <Textarea
-          id="bio"
-          value={bio}
-          onChange={(e) => setBio(e.target.value)}
-          placeholder="Tell your friends a bit about yourself."
-          rows={3}
-          className="bg-muted/50"
-        />
-      </div>
+        <div className="space-y-2">
+          <Label htmlFor="customStatus" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Custom status</Label>
+          <Input
+            id="customStatus"
+            value={customStatus}
+            onChange={(e) => setCustomStatus(e.target.value)}
+            placeholder="🎧 Listening to lofi"
+            maxLength={80}
+            className="h-12 bg-black/20 border-white/10 rounded-xl px-4 focus-visible:ring-primary/50 transition-all"
+          />
+        </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="customStatus">Custom status</Label>
-        <Input
-          id="customStatus"
-          value={customStatus}
-          onChange={(e) => setCustomStatus(e.target.value)}
-          placeholder="🎧 Listening to lofi"
-          maxLength={80}
-          className="h-11 bg-muted/50"
-        />
-      </div>
+        <div className="space-y-2">
+          <Label htmlFor="bio" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Bio</Label>
+          <Textarea
+            id="bio"
+            value={bio}
+            onChange={(e) => setBio(e.target.value)}
+            placeholder="Tell your friends a bit about yourself."
+            rows={3}
+            className="bg-black/20 border-white/10 rounded-xl p-4 focus-visible:ring-primary/50 transition-all resize-none"
+          />
+        </div>
 
-      <Button onClick={handleSave} disabled={update.isPending} className="h-11 gradient-primary">
-        {update.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-        Save changes
-      </Button>
-    </SpotlightCard>
+        <div className="pt-2 flex justify-end">
+          <Button onClick={handleSave} disabled={update.isPending} className="h-11 px-6 rounded-xl gradient-primary shadow-glow hover:scale-105 active:scale-95 transition-all font-semibold">
+            {update.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+            Save changes
+          </Button>
+        </div>
+      </GlassSurface>
+    </div>
   )
 }
 
@@ -328,37 +337,39 @@ function PrivacySection() {
   }
 
   return (
-    <Card className="p-2">
-      <PrivacyRow
-        title="Last seen visible"
-        desc="Show when you were last active"
-        checked={lastSeenVisible}
-        onChange={(v) => handleToggle('lastSeenVisible', v)}
-      />
-      <PrivacyRow
-        title="Read receipts"
-        desc="Let others know when you've read their messages"
-        checked={readReceipts}
-        onChange={(v) => handleToggle('readReceiptsEnabled', v)}
-      />
-      <PrivacyRow
-        title="Typing indicators"
-        desc="Show others when you're typing"
-        checked={typingIndicators}
-        onChange={(v) => handleToggle('typingIndicatorsEnabled', v)}
-      />
-    </Card>
+    <GlassSurface blur={16} opacity={0.03} className="overflow-hidden">
+      <div className="divide-y divide-white/5">
+        <PrivacyRow
+          title="Last seen visible"
+          desc="Show when you were last active"
+          checked={lastSeenVisible}
+          onChange={(v) => handleToggle('lastSeenVisible', v)}
+        />
+        <PrivacyRow
+          title="Read receipts"
+          desc="Let others know when you've read their messages"
+          checked={readReceipts}
+          onChange={(v) => handleToggle('readReceiptsEnabled', v)}
+        />
+        <PrivacyRow
+          title="Typing indicators"
+          desc="Show others when you're typing"
+          checked={typingIndicators}
+          onChange={(v) => handleToggle('typingIndicatorsEnabled', v)}
+        />
+      </div>
+    </GlassSurface>
   )
 }
 
 function PrivacyRow({ title, desc, checked, onChange }: { title: string; desc: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <div className="flex items-center justify-between p-4 hover:bg-accent/50 rounded-xl transition-colors">
-      <div className="flex-1 min-w-0 pr-4">
-        <div className="font-medium text-[15px]">{title}</div>
-        <div className="text-xs text-muted-foreground mt-0.5">{desc}</div>
+    <div className="flex items-center justify-between p-5 hover:bg-white/[0.02] transition-colors">
+      <div className="flex-1 min-w-0 pr-6">
+        <div className="font-semibold text-[15px]">{title}</div>
+        <div className="text-sm text-muted-foreground mt-0.5">{desc}</div>
       </div>
-      <Switch checked={checked} onCheckedChange={onChange} />
+      <Switch checked={checked} onCheckedChange={onChange} className="data-[state=checked]:bg-primary" />
     </div>
   )
 }
@@ -875,24 +886,27 @@ function AvatarPicker({
   const candidates = useMemo(() => generateAvatarCandidates(userId), [userId])
 
   return (
-    <div className="space-y-3">
-      <Label>Avatar</Label>
-      <div className="flex items-center gap-4">
-        <Avatar className="w-20 h-20">
+    <div className="space-y-4 w-full">
+      <div className="flex items-center gap-6">
+        <Avatar className="w-24 h-24 shadow-2xl ring-4 ring-white/5 hover:ring-primary/50 transition-all cursor-pointer">
           <AvatarImage src={currentAvatarUrl || undefined} />
-          <AvatarFallback className="text-2xl">?</AvatarFallback>
+          <AvatarFallback className="text-3xl font-light">?</AvatarFallback>
         </Avatar>
-        <div className="flex flex-col gap-2">
-          <Button size="sm" variant="outline" onClick={() => setShowPicker(!showPicker)}>
-            <Sparkles className="w-4 h-4 mr-1.5" />
-            {showPicker ? 'Hide' : 'Pick avatar'}
-          </Button>
-          <label className="cursor-pointer">
-            <span className="inline-flex items-center justify-center bg-secondary text-secondary-foreground px-3 py-1.5 rounded-lg text-sm hover:bg-secondary/80">
-              {uploading ? 'Uploading...' : 'Upload'}
-            </span>
-            <input type="file" className="hidden" accept="image/*" onChange={onUpload} disabled={uploading} />
-          </label>
+        <div className="flex flex-col gap-3">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Profile Picture</Label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setShowPicker(!showPicker)} className="rounded-xl h-9 px-4 font-medium hover:bg-white/10 transition-colors">
+              <Sparkles className="w-4 h-4 mr-2 text-primary" />
+              {showPicker ? 'Hide Gallery' : 'Pick Avatar'}
+            </Button>
+            <label className="cursor-pointer">
+              <span className="inline-flex items-center justify-center bg-primary/10 text-primary border border-primary/20 h-9 px-4 rounded-xl text-sm font-medium hover:bg-primary/20 transition-all shadow-glow">
+                {uploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                {uploading ? 'Uploading...' : 'Upload Image'}
+              </span>
+              <input type="file" className="hidden" accept="image/*" onChange={onUpload} disabled={uploading} />
+            </label>
+          </div>
         </div>
       </div>
 

@@ -236,9 +236,9 @@ export function ChatList() {
   }, [allChats, filter, search])
 
   return (
-    <div className="flex flex-col h-full w-full bg-sidebar/80 backdrop-blur-xl">
+    <div className="flex flex-col h-full w-full bg-sidebar/50 backdrop-blur-2xl">
       {/* Header — shows the selected group name or "Direct Messages" */}
-      <div className="px-4 pt-4 pb-3 space-y-3 border-b border-sidebar-border/50">
+      <div className="px-4 pt-4 pb-3 space-y-4 border-b border-white/5 bg-background/30 backdrop-blur-3xl shadow-sm">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5 min-w-0">
             {/* Mobile: hamburger to open server rail drawer */}
@@ -286,13 +286,13 @@ export function ChatList() {
         </div>
 
         {/* Search */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <div className="relative group">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={isViewingDms ? "Search DMs..." : "Search channels..."}
-            className="pl-9 h-10 bg-background/50"
+            className="pl-10 h-10 bg-black/20 border-white/10 focus-visible:ring-primary/30 rounded-xl shadow-inner transition-all"
           />
         </div>
 
@@ -423,8 +423,10 @@ export function ChatList() {
                         el.addEventListener('touchcancel', clear, { once: true })
                       }}
                       className={cn(
-                        'w-full flex items-center gap-3 p-2.5 rounded-xl transition-colors text-left select-none',
-                        active ? 'bg-accent' : 'hover:bg-accent/50'
+                        'w-full flex items-center gap-3.5 p-3 rounded-2xl transition-all text-left select-none relative overflow-hidden',
+                        active 
+                          ? 'bg-primary/10 ring-1 ring-primary/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)]' 
+                          : 'hover:bg-white/[0.04]'
                       )}
                     >
                       {/* Avatar */}

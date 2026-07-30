@@ -114,79 +114,79 @@
 .dark {
   /* ── Base layers (from darkest to lightest) ── */
 
-  /* Main background — near-black with navy undertone */
-  --background: oklch(0.12 0.01 264);
-  --foreground: oklch(0.97 0.004 250);
+  /* Main background — soft charcoal with cool navy undertone */
+  --background: oklch(0.16 0.012 264);
+  --foreground: oklch(0.95 0.005 250);
 
-  /* Sidebar — deepest, anchors the visual hierarchy */
-  --sidebar: oklch(0.10 0.008 264);
-  --sidebar-foreground: oklch(0.97 0.004 250);
-  --sidebar-primary: oklch(0.66 0.22 264);
+  /* Sidebar — slightly deeper, anchors the visual hierarchy */
+  --sidebar: oklch(0.14 0.010 264);
+  --sidebar-foreground: oklch(0.95 0.005 250);
+  --sidebar-primary: oklch(0.68 0.22 264);
   --sidebar-primary-foreground: oklch(0.98 0 0);
-  --sidebar-accent: oklch(0.17 0.01 264);
-  --sidebar-accent-foreground: oklch(0.97 0.004 250);
-  --sidebar-border: oklch(1 0 0 / 6%);
-  --sidebar-ring: oklch(0.66 0.22 264);
+  --sidebar-accent: oklch(0.22 0.014 264);
+  --sidebar-accent-foreground: oklch(0.95 0.005 250);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.68 0.22 264);
 
   /* Muted — recessed surface, below background */
-  --muted: oklch(0.15 0.008 264);
-  --muted-foreground: oklch(0.62 0.01 250);
+  --muted: oklch(0.20 0.010 264);
+  --muted-foreground: oklch(0.68 0.012 250);
 
   /* Card — elevated surface, first step up from background */
-  --card: oklch(0.18 0.01 264);
-  --card-foreground: oklch(0.97 0.004 250);
+  --card: oklch(0.22 0.012 264);
+  --card-foreground: oklch(0.95 0.005 250);
 
   /* Popover — floating panel, highest surface */
-  --popover: oklch(0.20 0.012 264);
-  --popover-foreground: oklch(0.97 0.004 250);
+  --popover: oklch(0.24 0.014 264);
+  --popover-foreground: oklch(0.95 0.005 250);
 
   /* Secondary — for hover states */
-  --secondary: oklch(0.24 0.01 264);
-  --secondary-foreground: oklch(0.97 0.004 250);
+  --secondary: oklch(0.28 0.012 264);
+  --secondary-foreground: oklch(0.95 0.005 250);
 
   /* Accent — primary-tinted surface for active/selected states */
-  --accent: oklch(0.28 0.05 264);
-  --accent-foreground: oklch(0.97 0.004 250);
+  --accent: oklch(0.30 0.05 264);
+  --accent-foreground: oklch(0.95 0.005 250);
 
   /* ── Brand colors ── */
 
   /* Primary — electric blurple, vibrant against dark */
-  --primary: oklch(0.66 0.24 264);
+  --primary: oklch(0.68 0.24 264);
   --primary-foreground: oklch(0.99 0 0);
 
   --destructive: oklch(0.68 0.26 25);
-  --border: oklch(1 0 0 / 8%);
-  --input: oklch(1 0 0 / 10%);
-  --ring: oklch(0.66 0.24 264);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.68 0.24 264);
 
-  --chart-1: oklch(0.66 0.24 264);
+  --chart-1: oklch(0.68 0.24 264);
   --chart-2: oklch(0.72 0.16 200);
   --chart-3: oklch(0.70 0.18 264);
   --chart-4: oklch(0.82 0.20 75);
   --chart-5: oklch(0.72 0.24 16);
 
   /* ── Chat bubbles ── */
-  --bubble-mine: oklch(0.58 0.22 264);
+  --bubble-mine: oklch(0.60 0.22 264);
   --bubble-mine-foreground: oklch(0.98 0 0);
-  --bubble-other: oklch(0.22 0.01 264);
-  --bubble-other-foreground: oklch(0.97 0.004 250);
+  --bubble-other: oklch(0.26 0.014 264);
+  --bubble-other-foreground: oklch(0.95 0.005 250);
 
   /* ── Status dots — vibrant ── */
   --status-online: oklch(0.72 0.20 145);
   --status-idle: oklch(0.84 0.18 75);
   --status-dnd: oklch(0.68 0.26 25);
-  --status-offline: oklch(0.45 0.01 250);
+  --status-offline: oklch(0.50 0.012 250);
 
   /* ── 3D Shadow system — soft, diffuse, layered ── */
-  --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.3);
-  --shadow-sm: 0 2px 4px oklch(0 0 0 / 0.35), 0 1px 2px oklch(0 0 0 / 0.2);
-  --shadow-md: 0 4px 12px oklch(0 0 0 / 0.4), 0 2px 4px oklch(0 0 0 / 0.2);
-  --shadow-lg: 0 8px 24px oklch(0 0 0 / 0.45), 0 4px 8px oklch(0 0 0 / 0.25);
-  --shadow-xl: 0 16px 48px oklch(0 0 0 / 0.5), 0 8px 16px oklch(0 0 0 / 0.3);
-  --shadow-glow: 0 0 24px oklch(0.66 0.24 264 / 0.40);
-  --shadow-glow-strong: 0 0 40px oklch(0.66 0.24 264 / 0.55);
-  --shadow-inner-light: inset 0 1px 0 oklch(1 0 0 / 6%);
-  --shadow-inner-dark: inset 0 -1px 0 oklch(0 0 0 / 20%);
+  --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.25);
+  --shadow-sm: 0 2px 4px oklch(0 0 0 / 0.30), 0 1px 2px oklch(0 0 0 / 0.15);
+  --shadow-md: 0 4px 12px oklch(0 0 0 / 0.35), 0 2px 4px oklch(0 0 0 / 0.18);
+  --shadow-lg: 0 8px 24px oklch(0 0 0 / 0.40), 0 4px 8px oklch(0 0 0 / 0.20);
+  --shadow-xl: 0 16px 48px oklch(0 0 0 / 0.45), 0 8px 16px oklch(0 0 0 / 0.25);
+  --shadow-glow: 0 0 24px oklch(0.68 0.24 264 / 0.35);
+  --shadow-glow-strong: 0 0 40px oklch(0.68 0.24 264 / 0.50);
+  --shadow-inner-light: inset 0 1px 0 oklch(1 0 0 / 8%);
+  --shadow-inner-dark: inset 0 -1px 0 oklch(0 0 0 / 15%);
 }
 
 @layer base {
@@ -208,9 +208,9 @@
        Two slow-moving radial gradients in primary and cyan, fixed to the
        viewport so they don't scroll with content. */
     background-image:
-      radial-gradient(at 15% 20%, oklch(0.66 0.24 264 / 0.07) 0px, transparent 50%),
-      radial-gradient(at 85% 80%, oklch(0.55 0.16 200 / 0.05) 0px, transparent 50%),
-      radial-gradient(at 50% 50%, oklch(0.72 0.20 264 / 0.03) 0px, transparent 60%);
+      radial-gradient(at 15% 20%, oklch(0.68 0.24 264 / 0.10) 0px, transparent 50%),
+      radial-gradient(at 85% 80%, oklch(0.58 0.18 200 / 0.08) 0px, transparent 50%),
+      radial-gradient(at 50% 50%, oklch(0.72 0.20 264 / 0.05) 0px, transparent 60%);
     background-attachment: fixed;
     background-size: 100% 100%;
   }
@@ -233,13 +233,13 @@
 
   /* ── Selection — primary-tinted ── */
   ::selection {
-    background: oklch(0.64 0.22 264 / 0.3);
+    background: oklch(0.68 0.24 264 / 0.3);
     color: oklch(0.99 0 0);
   }
 
   /* ── Focus ring — subtle glow ── */
   :focus-visible {
-    outline: 2px solid oklch(0.64 0.22 264 / 0.5);
+    outline: 2px solid oklch(0.68 0.24 264 / 0.5);
     outline-offset: 2px;
   }
 }
@@ -257,44 +257,44 @@
 
   /* Standard glass — for floating bars, headers */
   .glass {
-    background: oklch(0.19 0.008 264 / 0.72);
+    background: oklch(0.22 0.010 264 / 0.68);
     backdrop-filter: blur(24px) saturate(180%);
     -webkit-backdrop-filter: blur(24px) saturate(180%);
-    border: 1px solid oklch(1 0 0 / 7%);
+    border: 1px solid oklch(1 0 0 / 10%);
     box-shadow:
-      inset 0 1px 0 oklch(1 0 0 / 6%),
-      inset 0 -1px 0 oklch(0 0 0 / 15%),
-      0 4px 16px oklch(0 0 0 / 0.35);
+      inset 0 1px 0 oklch(1 0 0 / 8%),
+      inset 0 -1px 0 oklch(0 0 0 / 12%),
+      0 4px 16px oklch(0 0 0 / 0.30);
   }
   /* Light glass — for overlays on dark backgrounds */
   .glass-light {
-    background: oklch(0.22 0.01 264 / 0.60);
+    background: oklch(0.26 0.012 264 / 0.55);
     backdrop-filter: blur(20px) saturate(160%);
     -webkit-backdrop-filter: blur(20px) saturate(160%);
-    border: 1px solid oklch(1 0 0 / 6%);
-    box-shadow: inset 0 1px 0 oklch(1 0 0 / 5%);
+    border: 1px solid oklch(1 0 0 / 10%);
+    box-shadow: inset 0 1px 0 oklch(1 0 0 / 7%);
   }
   /* Dark glass — for premium floating panels, call controls, bottom nav */
   .glass-dark {
-    background: oklch(0.13 0.006 264 / 0.82);
+    background: oklch(0.17 0.008 264 / 0.78);
     backdrop-filter: blur(32px) saturate(180%);
     -webkit-backdrop-filter: blur(32px) saturate(180%);
-    border: 1px solid oklch(1 0 0 / 9%);
+    border: 1px solid oklch(1 0 0 / 12%);
     box-shadow:
-      inset 0 1px 0 oklch(1 0 0 / 7%),
-      0 8px 32px oklch(0 0 0 / 0.45),
-      0 2px 8px oklch(0 0 0 / 0.25);
+      inset 0 1px 0 oklch(1 0 0 / 9%),
+      0 8px 32px oklch(0 0 0 / 0.38),
+      0 2px 8px oklch(0 0 0 / 0.20);
   }
   /* Glass card — elevated surface with strong depth */
   .glass-card {
-    background: oklch(0.21 0.01 264 / 0.78);
+    background: oklch(0.25 0.012 264 / 0.72);
     backdrop-filter: blur(28px) saturate(170%);
     -webkit-backdrop-filter: blur(28px) saturate(170%);
-    border: 1px solid oklch(1 0 0 / 8%);
+    border: 1px solid oklch(1 0 0 / 11%);
     box-shadow:
-      inset 0 1px 0 oklch(1 0 0 / 6%),
-      0 12px 40px oklch(0 0 0 / 0.4),
-      0 4px 12px oklch(0 0 0 / 0.2);
+      inset 0 1px 0 oklch(1 0 0 / 8%),
+      0 12px 40px oklch(0 0 0 / 0.35),
+      0 4px 12px oklch(0 0 0 / 0.18);
   }
 
   /* ── 3D Surface depth — for cards and panels ── */
@@ -324,14 +324,14 @@
   .gradient-primary {
     background: linear-gradient(
       135deg,
-      oklch(0.66 0.24 264) 0%,
+      oklch(0.68 0.24 264) 0%,
       oklch(0.58 0.20 280) 100%
     );
   }
   /* Cinematic backdrop — for full-screen views (calls, status) */
   .gradient-cinematic {
     background:
-      radial-gradient(ellipse 80% 60% at 50% 0%, oklch(0.66 0.24 264 / 0.12), transparent 60%),
+      radial-gradient(ellipse 80% 60% at 50% 0%, oklch(0.68 0.24 264 / 0.12), transparent 60%),
       radial-gradient(ellipse 60% 40% at 100% 100%, oklch(0.55 0.16 200 / 0.08), transparent 60%),
       var(--background);
   }
@@ -339,7 +339,7 @@
   .mesh-gradient {
     background-color: var(--background);
     background-image:
-      radial-gradient(at 20% 30%, oklch(0.66 0.24 264 / 0.10) 0px, transparent 50%),
+      radial-gradient(at 20% 30%, oklch(0.68 0.24 264 / 0.10) 0px, transparent 50%),
       radial-gradient(at 80% 20%, oklch(0.55 0.16 200 / 0.07) 0px, transparent 50%),
       radial-gradient(at 50% 80%, oklch(0.72 0.20 264 / 0.06) 0px, transparent 50%);
   }
@@ -354,7 +354,7 @@
     position: absolute;
     inset: -50%;
     background:
-      radial-gradient(circle at 30% 40%, oklch(0.66 0.24 264 / 0.12), transparent 40%),
+      radial-gradient(circle at 30% 40%, oklch(0.68 0.24 264 / 0.12), transparent 40%),
       radial-gradient(circle at 70% 60%, oklch(0.55 0.16 200 / 0.10), transparent 40%),
       radial-gradient(circle at 50% 50%, oklch(0.72 0.20 280 / 0.08), transparent 50%);
     animation: aurora-drift 20s ease-in-out infinite;
@@ -369,10 +369,10 @@
 
   /* ── Glow effects ── */
   .glow-primary {
-    box-shadow: 0 0 24px oklch(0.66 0.24 264 / 0.40);
+    box-shadow: 0 0 24px oklch(0.68 0.24 264 / 0.40);
   }
   .glow-primary-strong {
-    box-shadow: 0 0 40px oklch(0.66 0.24 264 / 0.55);
+    box-shadow: 0 0 40px oklch(0.68 0.24 264 / 0.55);
   }
   .glow-success {
     box-shadow: 0 0 24px oklch(0.72 0.20 145 / 0.35);
@@ -402,7 +402,7 @@
     padding: 1px;
     background: linear-gradient(
       135deg,
-      oklch(0.64 0.22 264 / 0.6),
+      oklch(0.68 0.24 264 / 0.6),
       oklch(0.70 0.14 200 / 0.3),
       transparent
     );
@@ -470,5 +470,99 @@
   }
   .animate-slide-in-right {
     animation: slide-in-right 0.25s ease-out;
+  }
+
+  /* ── Custom Range Sliders — for music player progress & volume ── */
+  /* These replace the invisible native black sliders with visible,
+     styled tracks and primary-colored thumbs. */
+  .player-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    border-radius: 999px;
+    background: oklch(0.35 0.012 264);
+    outline: none;
+    cursor: pointer;
+    transition: height 0.15s ease;
+  }
+  .player-slider:hover {
+    height: 8px;
+  }
+  .player-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: oklch(0.68 0.24 264);
+    box-shadow: 0 0 8px oklch(0.68 0.24 264 / 0.5), 0 2px 4px oklch(0 0 0 / 0.3);
+    cursor: grab;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .player-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+    box-shadow: 0 0 14px oklch(0.68 0.24 264 / 0.6), 0 2px 6px oklch(0 0 0 / 0.3);
+  }
+  .player-slider::-webkit-slider-thumb:active {
+    cursor: grabbing;
+    transform: scale(1.1);
+  }
+  .player-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: oklch(0.68 0.24 264);
+    box-shadow: 0 0 8px oklch(0.68 0.24 264 / 0.5), 0 2px 4px oklch(0 0 0 / 0.3);
+    border: none;
+    cursor: grab;
+  }
+  .player-slider::-moz-range-track {
+    height: 6px;
+    border-radius: 999px;
+    background: oklch(0.35 0.012 264);
+  }
+
+  /* Volume slider — smaller thumb */
+  .volume-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 999px;
+    background: oklch(0.35 0.012 264);
+    outline: none;
+    cursor: pointer;
+    transition: height 0.15s ease;
+  }
+  .volume-slider:hover {
+    height: 6px;
+  }
+  .volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: oklch(0.90 0.005 250);
+    box-shadow: 0 0 6px oklch(1 0 0 / 0.3), 0 1px 3px oklch(0 0 0 / 0.3);
+    cursor: grab;
+    transition: transform 0.15s ease;
+  }
+  .volume-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+  }
+  .volume-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: oklch(0.90 0.005 250);
+    border: none;
+    cursor: grab;
+  }
+  .volume-slider::-moz-range-track {
+    height: 4px;
+    border-radius: 999px;
+    background: oklch(0.35 0.012 264);
   }
 }

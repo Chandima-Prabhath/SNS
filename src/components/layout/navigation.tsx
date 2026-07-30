@@ -36,8 +36,8 @@ export function BottomNav() {
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/40 z-40 md:hidden" onClick={() => setSidebarOpen(false)} />
       )}
-      <nav className="lg:hidden shrink-0 glass-dark border-t border-border/50 pb-safe" aria-label="Primary">
-        <div className="grid grid-cols-5 max-w-md mx-auto">
+      <nav className="lg:hidden shrink-0 bg-background/60 backdrop-blur-2xl border-t border-white/10 pb-safe relative z-50" aria-label="Primary">
+        <div className="grid grid-cols-5 max-w-md mx-auto relative px-2">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon
             const active = view === item.key
@@ -48,26 +48,28 @@ export function BottomNav() {
                 key={item.key}
                 onClick={() => { setView(item.key); setSidebarOpen(false) }}
                 className={cn(
-                  'relative flex flex-col items-center justify-center gap-1 py-2.5 transition-all active:scale-90',
-                  active ? 'text-primary' : 'text-muted-foreground'
+                  'relative flex flex-col items-center justify-center gap-1 py-3 transition-all duration-300',
+                  active ? 'text-primary scale-[1.05]' : 'text-muted-foreground hover:text-foreground active:scale-95'
                 )}
                 aria-current={active ? 'page' : undefined}
               >
-                {active && (
-                  <div className="absolute inset-x-3 top-0 h-0.5 rounded-full bg-primary shadow-glow" />
-                )}
-                <div className="relative">
-                  <Icon className="w-6 h-6" strokeWidth={active ? 2.4 : 2} fill={active && item.key === 'status' ? 'currentColor' : 'none'} />
+                {/* Active Indicator */}
+                <div className={cn(
+                  "absolute inset-x-4 top-0 h-1 rounded-b-full bg-primary shadow-[0_0_12px_rgba(var(--primary),0.6)] transition-all duration-300",
+                  active ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-full"
+                )} />
+                <div className="relative mt-1">
+                  <Icon className="w-[26px] h-[26px]" strokeWidth={active ? 2.5 : 2} fill={active && item.key === 'status' ? 'currentColor' : 'none'} />
                   {showBadge && (
-                    <span className="absolute -top-1.5 -right-2 min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center shadow-sm">
+                    <span className="absolute -top-1.5 -right-2 min-w-[20px] h-[20px] px-1 rounded-full bg-primary text-primary-foreground text-[11px] font-bold flex items-center justify-center shadow-md border-2 border-background">
                       {totalUnread > 99 ? '99+' : totalUnread}
                     </span>
                   )}
                   {showCallIndicator && (
-                    <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-500 animate-pulse border-2 border-background" />
+                    <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-status-online animate-pulse border-2 border-background shadow-glow" />
                   )}
                 </div>
-                <span className="text-[10px] font-medium">{item.label}</span>
+                <span className={cn("text-[10px] font-semibold tracking-tight mt-0.5", active ? "opacity-100" : "opacity-70")}>{item.label}</span>
               </button>
             )
           })}
