@@ -10,6 +10,7 @@ import {
   Search, Play, Pause, SkipForward, Plus,
   Loader2, Radio, Headphones, X, ListMusic, Compass,
   Trash2, Repeat, Shuffle, Music as MusicIcon, Users,
+  Flame, Sparkles,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -69,6 +70,18 @@ export function MusicView() {
     queryKey: ['music-trending'],
     queryFn: async () => {
       const res = await fetch('/api/music/trending')
+      if (!res.ok) throw new Error('failed')
+      return res.json()
+    },
+  })
+
+  // Fetch personalized home feed ("For You" recommendations).
+  // The endpoint returns { sections: [{ title, tracks }] } — empty array on
+  // failure (e.g. no YouTube cookies), so we can silently hide the area.
+  const { data: homeData, isLoading: homeLoading } = useQuery({
+    queryKey: ['music-home'],
+    queryFn: async () => {
+      const res = await fetch('/api/music/home')
       if (!res.ok) throw new Error('failed')
       return res.json()
     },
@@ -144,6 +157,7 @@ export function MusicView() {
   }
 
   const trendingTracks = trendingData?.tracks || []
+  const homeSections: { title: string; tracks: Track[] }[] = homeData?.sections || []
   const rooms = roomsData?.rooms || []
 
   return (
@@ -239,13 +253,74 @@ export function MusicView() {
                   </div>
                 ) : (
                   <>
+                    {/* For You — personalized recommendation sections.
+                        Each section is rendered as a horizontal scrolling row
+                        so the user can swipe through tracks without leaving
+                        the browse tab. Hidden entirely when the home feed is
+                        unavailable (empty sections array). */}
+                    {homeLoading && (
+                      <div className="space-y-3">
+                        <div className="h-4 w-40 bg-muted rounded animate-pulse" />
+                        <div className="flex gap-3 overflow-hidden">
+                          {[1, 2, 3, 4].map((i) => (
+                            <div
+                              key={i}
+                              className="shrink-0 w-40 md:w-44 space-y-2 animate-pulse"
+                            >
+                              <div className="aspect-square rounded-xl bg-muted" />
+                              <div className="h-3 bg-muted rounded w-3/4" />
+                              <div className="h-2 bg-muted rounded w-1/2" />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {!homeLoading &&
+                      homeSections.map((section) => (
+                        <div key={section.title} className="space-y-3">
+                          <div className="flex items-center gap-2">
+                            <Sparkles className="w-4 h-4 text-primary" />
+                            <h2 className="text-sm font-bold uppercase tracking-wider">
+                              <ShinyText shimmerDuration={5} className="text-sm">
+                                {section.title}
+                              </ShinyText>
+                            </h2>
+                          </div>
+                          <div className="flex gap-3 overflow-x-auto pb-3 -mx-1 px-1 snap-x no-scrollbar">
+                            {section.tracks.map((track: Track) => (
+                              <div
+                                key={track.videoId}
+                                className="snap-start shrink-0 w-40 md:w-44"
+                              >
+                                <TrackCard
+                                  track={track}
+                                  onPlay={() => playTrack(track)}
+                                  onAddToQueue={() => playTrack(track, true)}
+                                  isCurrent={
+                                    currentTrack?.videoId === track.videoId
+                                  }
+                                  isPlaying={
+                                    isPlaying &&
+                                    currentTrack?.videoId === track.videoId
+                                  }
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+
                     {/* Trending */}
-                    <div>
-                      <h2 className="text-sm font-bold uppercase tracking-wider mb-4">
-                        <ShinyText shimmerDuration={5} className="text-sm">
-                          🔥 Trending Now
-                        </ShinyText>
-                      </h2>
+                    <div className="pt-2">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Flame className="w-4 h-4 text-primary" />
+                        <h2 className="text-sm font-bold uppercase tracking-wider">
+                          <ShinyText shimmerDuration={5} className="text-sm">
+                            Trending Now
+                          </ShinyText>
+                        </h2>
+                      </div>
                       {trendingLoading ? (
                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                           {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -349,11 +424,14 @@ export function MusicView() {
                 className="space-y-4"
               >
                 <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-bold uppercase tracking-wider">
-                    <ShinyText shimmerDuration={4} className="text-sm">
-                      🎧 Play Queue
-                    </ShinyText>
-                  </h2>
+                  <div className="flex items-center gap-2">
+                    <Headphones className="w-4 h-4 text-primary" />
+                    <h2 className="text-sm font-bold uppercase tracking-wider">
+                      <ShinyText shimmerDuration={4} className="text-sm">
+                        Play Queue
+                      </ShinyText>
+                    </h2>
+                  </div>
                   {queue.length > 0 && (
                     <Button
                       variant="ghost"

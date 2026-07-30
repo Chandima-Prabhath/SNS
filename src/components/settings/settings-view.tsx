@@ -256,7 +256,7 @@ function ProfileSection() {
             id="customStatus"
             value={customStatus}
             onChange={(e) => setCustomStatus(e.target.value)}
-            placeholder="🎧 Listening to lofi"
+            placeholder="Listening to lofi beats"
             maxLength={80}
             className="h-12 bg-black/20 border-white/10 rounded-xl px-4 focus-visible:ring-primary/50 transition-all"
           />

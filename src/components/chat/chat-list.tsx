@@ -20,7 +20,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
-import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn, UserX, Settings, Crown, Shield, Video, Phone, Menu, Pin, BellOff, Trash2 } from 'lucide-react'
+import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn, UserX, Settings, Crown, Shield, Video, Phone, Menu, Pin, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
@@ -119,11 +119,6 @@ export function ChatList() {
             toast.success('Marked as read')
           })
         },
-      },
-      {
-        label: 'Mute notifications',
-        icon: <BellOff className="w-4 h-4" />,
-        onClick: () => toast.info('Mute coming soon'),
       },
       {
         label: row.isDm ? 'Delete conversation' : 'Leave channel',

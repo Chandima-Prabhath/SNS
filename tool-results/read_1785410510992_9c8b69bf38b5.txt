@@ -1,0 +1,760 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import { useState, useRef } from 'react'
+     4→     4→import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+     5→     5→import { motion, AnimatePresence } from 'framer-motion'
+     6→     6→import { Button } from '@/components/ui/button'
+     7→     7→import { Input } from '@/components/ui/input'
+     8→     8→import { Card } from '@/components/ui/card'
+     9→     9→import {
+    10→    10→  Search, Play, Pause, SkipForward, Plus,
+    11→    11→  Loader2, Radio, Headphones, X, ListMusic, Compass,
+    12→    12→  Trash2, Repeat, Shuffle, Music as MusicIcon, Users,
+    13→    13→} from 'lucide-react'
+    14→    14→import { toast } from 'sonner'
+    15→    15→import { cn } from '@/lib/utils'
+    16→    16→import { useMusicStore, type Track } from '@/stores/useMusicStore'
+    17→    17→import { useMusicPlayer } from '@/components/music/global-music-player'
+    18→    18→import { SpotlightCard, GlassSurface, GradientText, BorderGlow, ShinyText, StarBorder } from '@/components/reactbits'
+    19→    19→
+    20→    20→interface Room {
+    21→    21→  id: string
+    22→    22→  name: string
+    23→    23→  host: any
+    24→    24→  currentVideoId: string | null
+    25→    25→  currentState: string
+    26→    26→  currentPosition: number
+    27→    27→  queue: string
+    28→    28→  members: any[]
+    29→    29→}
+    30→    30→
+    31→    31→type Tab = 'browse' | 'rooms' | 'queue'
+    32→    32→
+    33→    33→/**
+    34→    34→ * MusicView — Browse / Rooms / Queue UI for the music feature.
+    35→    35→ *
+    36→    36→ * NOTE: This component does NOT own the audio element or the player bar.
+    37→    37→ * Those live in <GlobalMusicPlayer /> (rendered at the app root) so that
+    38→    38→ * playback persists across all tabs (Chats, Status, Calls, Settings, Music).
+    39→    39→ *
+    40→    40→ * This view reads playback state from `useMusicStore` and triggers actions
+    41→    41→ * via `useMusicPlayer()`.
+    42→    42→ */
+    43→    43→export function MusicView() {
+    44→    44→  const [tab, setTab] = useState<Tab>('browse')
+    45→    45→  const [searchQuery, setSearchQuery] = useState('')
+    46→    46→  const [searchResults, setSearchResults] = useState<Track[]>([])
+    47→    47→  const [searching, setSearching] = useState(false)
+    48→    48→  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    49→    49→  const qc = useQueryClient()
+    50→    50→
+    51→    51→  // ─── Playback state from the global store ─────────────────────────────
+    52→    52→  const currentTrack = useMusicStore((s) => s.currentTrack)
+    53→    53→  const isPlaying = useMusicStore((s) => s.isPlaying)
+    54→    54→  const queue = useMusicStore((s) => s.queue)
+    55→    55→  const autoplay = useMusicStore((s) => s.autoplay)
+    56→    56→  const shuffle = useMusicStore((s) => s.shuffle)
+    57→    57→  const repeat = useMusicStore((s) => s.repeat)
+    58→    58→  const activeRoomId = useMusicStore((s) => s.activeRoomId)
+    59→    59→  const setActiveRoomId = useMusicStore((s) => s.setActiveRoomId)
+    60→    60→  const setShuffle = useMusicStore((s) => s.setShuffle)
+    61→    61→  const setRepeat = useMusicStore((s) => s.setRepeat)
+    62→    62→  const setAutoplay = useMusicStore((s) => s.setAutoplay)
+    63→    63→
+    64→    64→  // ─── Player actions (broadcast + audio handled by global player) ──────
+    65→    65→  const { playTrack, playNext, removeFromQueue, clearQueue } = useMusicPlayer()
+    66→    66→
+    67→    67→  // Fetch trending
+    68→    68→  const { data: trendingData, isLoading: trendingLoading } = useQuery({
+    69→    69→    queryKey: ['music-trending'],
+    70→    70→    queryFn: async () => {
+    71→    71→      const res = await fetch('/api/music/trending')
+    72→    72→      if (!res.ok) throw new Error('failed')
+    73→    73→      return res.json()
+    74→    74→    },
+    75→    75→  })
+    76→    76→
+    77→    77→  // Fetch rooms
+    78→    78→  const { data: roomsData } = useQuery({
+    79→    79→    queryKey: ['music-rooms'],
+    80→    80→    queryFn: async () => {
+    81→    81→      const res = await fetch('/api/music/rooms')
+    82→    82→      if (!res.ok) throw new Error('failed')
+    83→    83→      return res.json()
+    84→    84→    },
+    85→    85→    refetchInterval: 10000,
+    86→    86→  })
+    87→    87→
+    88→    88→  // Create room
+    89→    89→  const createRoom = useMutation({
+    90→    90→    mutationFn: async (name: string) => {
+    91→    91→      const res = await fetch('/api/music/rooms', {
+    92→    92→        method: 'POST',
+    93→    93→        headers: { 'Content-Type': 'application/json' },
+    94→    94→        body: JSON.stringify({ name }),
+    95→    95→      })
+    96→    96→      if (!res.ok) throw new Error('failed')
+    97→    97→      return res.json()
+    98→    98→    },
+    99→    99→    onSuccess: (data) => {
+   100→   100→      qc.invalidateQueries({ queryKey: ['music-rooms'] })
+   101→   101→      setActiveRoomId(data.room.id)
+   102→   102→      setTab('rooms')
+   103→   103→      toast.success('Room created')
+   104→   104→    },
+   105→   105→  })
+   106→   106→
+   107→   107→  // Delete room
+   108→   108→  const deleteRoom = useMutation({
+   109→   109→    mutationFn: async (roomId: string) => {
+   110→   110→      const res = await fetch(`/api/music/rooms/${roomId}`, {
+   111→   111→        method: 'DELETE',
+   112→   112→      })
+   113→   113→      if (!res.ok) throw new Error('failed')
+   114→   114→    },
+   115→   115→    onSuccess: () => {
+   116→   116→      qc.invalidateQueries({ queryKey: ['music-rooms'] })
+   117→   117→      if (activeRoomId) setActiveRoomId(null)
+   118→   118→      toast.success('Room deleted')
+   119→   119→    },
+   120→   120→    onError: () => toast.error('Failed to delete room'),
+   121→   121→  })
+   122→   122→
+   123→   123→  // Debounced search
+   124→   124→  const handleSearchChange = (value: string) => {
+   125→   125→    setSearchQuery(value)
+   126→   126→    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
+   127→   127→    if (!value.trim()) {
+   128→   128→      setSearchResults([])
+   129→   129→      return
+   130→   130→    }
+   131→   131→    searchTimeoutRef.current = setTimeout(async () => {
+   132→   132→      setSearching(true)
+   133→   133→      try {
+   134→   134→        const res = await fetch(`/api/music/search?q=${encodeURIComponent(value)}`)
+   135→   135→        if (!res.ok) throw new Error('Search failed')
+   136→   136→        const data = await res.json()
+   137→   137→        setSearchResults(data.tracks || [])
+   138→   138→      } catch (e: any) {
+   139→   139→        toast.error(e.message || 'Search failed')
+   140→   140→      } finally {
+   141→   141→        setSearching(false)
+   142→   142→      }
+   143→   143→    }, 500)
+   144→   144→  }
+   145→   145→
+   146→   146→  const trendingTracks = trendingData?.tracks || []
+   147→   147→  const rooms = roomsData?.rooms || []
+   148→   148→
+   149→   149→  return (
+   150→   150→    <div className="h-full flex flex-col mesh-gradient overflow-hidden">
+   151→   151→      {/* Header with gradient title and glassmorphic tabs */}
+   152→   152→      <div className="shrink-0 px-4 pt-4 pb-2 border-b border-border/30">
+   153→   153→        <div className="max-w-5xl mx-auto">
+   154→   154→          <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-2 mb-3">
+   155→   155→            <MusicIcon className="w-7 h-7 text-primary" />
+   156→   156→            <GradientText>Musical</GradientText>
+   157→   157→          </h1>
+   158→   158→
+   159→   159→          {/* Tab navigation — glassmorphic pill bar */}
+   160→   160→          <GlassSurface className="max-w-xs" blur={12} opacity={0.05}>
+   161→   161→            <div className="flex gap-1 p-1">
+   162→   162→              {([
+   163→   163→                ['browse', 'Browse', Compass],
+   164→   164→                ['rooms', 'Rooms', Radio],
+   165→   165→                ['queue', 'Queue', ListMusic],
+   166→   166→              ] as const).map(([key, label, Icon]) => (
+   167→   167→                <button
+   168→   168→                  key={key}
+   169→   169→                  onClick={() => setTab(key)}
+   170→   170→                  className={cn(
+   171→   171→                    'flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-sm font-medium transition-all',
+   172→   172→                    tab === key
+   173→   173→                      ? 'gradient-primary text-primary-foreground shadow-glow'
+   174→   174→                      : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+   175→   175→                  )}
+   176→   176→                >
+   177→   177→                  <Icon className="w-4 h-4" />
+   178→   178→                  {label}
+   179→   179→                  {key === 'queue' && queue.length > 0 && (
+   180→   180→                    <span className="text-[10px] bg-primary-foreground/20 text-primary-foreground px-1.5 py-0.5 rounded-full">
+   181→   181→                      {queue.length}
+   182→   182→                    </span>
+   183→   183→                  )}
+   184→   184→                </button>
+   185→   185→              ))}
+   186→   186→            </div>
+   187→   187→          </GlassSurface>
+   188→   188→        </div>
+   189→   189→      </div>
+   190→   190→
+   191→   191→      {/* Main content area — extra bottom padding so content isn't hidden
+   192→   192→          behind the persistent global player bar. */}
+   193→   193→      <div className="flex-1 overflow-y-auto pb-40 lg:pb-28">
+   194→   194→        <div className="max-w-5xl mx-auto p-4 md:p-6">
+   195→   195→          <AnimatePresence mode="wait">
+   196→   196→            {tab === 'browse' && (
+   197→   197→              <motion.div
+   198→   198→                key="browse"
+   199→   199→                initial={{ opacity: 0, y: 10 }}
+   200→   200→                animate={{ opacity: 1, y: 0 }}
+   201→   201→                exit={{ opacity: 0, y: -10 }}
+   202→   202→                transition={{ duration: 0.2 }}
+   203→   203→                className="space-y-6"
+   204→   204→              >
+   205→   205→                {/* Search */}
+   206→   206→                <div className="relative group">
+   207→   207→                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
+   208→   208→                  <Input
+   209→   209→                    value={searchQuery}
+   210→   210→                    onChange={(e) => handleSearchChange(e.target.value)}
+   211→   211→                    placeholder="Search songs, artists..."
+   212→   212→                    className="pl-12 h-14 bg-black/20 backdrop-blur-xl border-white/10 rounded-2xl text-lg focus-visible:ring-primary/50 focus-visible:border-primary/50 transition-all shadow-inner"
+   213→   213→                  />
+   214→   214→                  {searching && (
+   215→   215→                    <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 animate-spin text-muted-foreground" />
+   216→   216→                  )}
+   217→   217→                </div>
+   218→   218→
+   219→   219→                {/* Search results */}
+   220→   220→                {searchResults.length > 0 ? (
+   221→   221→                  <div className="space-y-1.5">
+   222→   222→                    <h2 className="text-sm font-bold uppercase tracking-wider mb-3">
+   223→   223→                      <ShinyText shimmerDuration={4} className="text-sm">
+   224→   224→                        Results
+   225→   225→                      </ShinyText>
+   226→   226→                    </h2>
+   227→   227→                    {searchResults.map((track) => (
+   228→   228→                      <TrackRow
+   229→   229→                        key={track.videoId}
+   230→   230→                        track={track}
+   231→   231→                        onPlay={() => playTrack(track)}
+   232→   232→                        onAddToQueue={() => playTrack(track, true)}
+   233→   233→                        isCurrent={currentTrack?.videoId === track.videoId}
+   234→   234→                        isPlaying={
+   235→   235→                          isPlaying && currentTrack?.videoId === track.videoId
+   236→   236→                        }
+   237→   237→                      />
+   238→   238→                    ))}
+   239→   239→                  </div>
+   240→   240→                ) : (
+   241→   241→                  <>
+   242→   242→                    {/* Trending */}
+   243→   243→                    <div>
+   244→   244→                      <h2 className="text-sm font-bold uppercase tracking-wider mb-4">
+   245→   245→                        <ShinyText shimmerDuration={5} className="text-sm">
+   246→   246→                          🔥 Trending Now
+   247→   247→                        </ShinyText>
+   248→   248→                      </h2>
+   249→   249→                      {trendingLoading ? (
+   250→   250→                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+   251→   251→                          {[1, 2, 3, 4, 5, 6].map((i) => (
+   252→   252→                            <div key={i} className="space-y-2 animate-pulse">
+   253→   253→                              <div className="aspect-square rounded-xl bg-muted" />
+   254→   254→                              <div className="h-3 bg-muted rounded w-3/4" />
+   255→   255→                              <div className="h-2 bg-muted rounded w-1/2" />
+   256→   256→                            </div>
+   257→   257→                          ))}
+   258→   258→                        </div>
+   259→   259→                      ) : (
+   260→   260→                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+   261→   261→                          {trendingTracks.map((track: Track) => (
+   262→   262→                            <TrackCard
+   263→   263→                              key={track.videoId}
+   264→   264→                              track={track}
+   265→   265→                              onPlay={() => playTrack(track)}
+   266→   266→                              onAddToQueue={() => playTrack(track, true)}
+   267→   267→                              isCurrent={currentTrack?.videoId === track.videoId}
+   268→   268→                              isPlaying={
+   269→   269→                                isPlaying &&
+   270→   270→                                currentTrack?.videoId === track.videoId
+   271→   271→                              }
+   272→   272→                            />
+   273→   273→                          ))}
+   274→   274→                        </div>
+   275→   275→                      )}
+   276→   276→                    </div>
+   277→   277→                  </>
+   278→   278→                )}
+   279→   279→              </motion.div>
+   280→   280→            )}
+   281→   281→
+   282→   282→            {tab === 'rooms' && (
+   283→   283→              <motion.div
+   284→   284→                key="rooms"
+   285→   285→                initial={{ opacity: 0, y: 10 }}
+   286→   286→                animate={{ opacity: 1, y: 0 }}
+   287→   287→                exit={{ opacity: 0, y: -10 }}
+   288→   288→                transition={{ duration: 0.2 }}
+   289→   289→                className="space-y-4"
+   290→   290→              >
+   291→   291→                <div className="flex items-center justify-between">
+   292→   292→                  <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+   293→   293→                    Listening Rooms
+   294→   294→                  </h2>
+   295→   295→                  <Button
+   296→   296→                    variant="outline"
+   297→   297→                    size="sm"
+   298→   298→                    onClick={() => {
+   299→   299→                      const name = prompt('Room name?')
+   300→   300→                      if (name?.trim()) createRoom.mutate(name)
+   301→   301→                    }}
+   302→   302→                  >
+   303→   303→                    <Plus className="w-4 h-4 mr-1" />
+   304→   304→                    Create Room
+   305→   305→                  </Button>
+   306→   306→                </div>
+   307→   307→
+   308→   308→                {rooms.length === 0 ? (
+   309→   309→                  <Card className="p-12 text-center border-dashed">
+   310→   310→                    <Headphones
+   311→   311→                      className="w-12 h-12 mx-auto text-muted-foreground mb-3"
+   312→   312→                      strokeWidth={1.5}
+   313→   313→                    />
+   314→   314→                    <p className="font-medium">No rooms yet</p>
+   315→   315→                    <p className="text-sm text-muted-foreground mt-1">
+   316→   316→                      Create a room to listen together with friends.
+   317→   317→                    </p>
+   318→   318→                  </Card>
+   319→   319→                ) : (
+   320→   320→                  <div className="grid gap-2">
+   321→   321→                    {rooms.map((room: Room) => (
+   322→   322→                      <RoomCard
+   323→   323→                        key={room.id}
+   324→   324→                        room={room}
+   325→   325→                        isActive={activeRoomId === room.id}
+   326→   326→                        onJoin={() => {
+   327→   327→                          // Just set the active room — the global player's
+   328→   328→                          // socket effect joins the channel and requests
+   329→   329→                          // the host's current state automatically.
+   330→   330→                          setActiveRoomId(room.id)
+   331→   331→                          // Also call the API to auto-join as a member
+   332→   332→                          fetch(`/api/music/rooms/${room.id}`).catch(() => {})
+   333→   333→                        }}
+   334→   334→                        onDelete={() => deleteRoom.mutate(room.id)}
+   335→   335→                      />
+   336→   336→                    ))}
+   337→   337→                  </div>
+   338→   338→                )}
+   339→   339→              </motion.div>
+   340→   340→            )}
+   341→   341→
+   342→   342→            {tab === 'queue' && (
+   343→   343→              <motion.div
+   344→   344→                key="queue"
+   345→   345→                initial={{ opacity: 0, y: 10 }}
+   346→   346→                animate={{ opacity: 1, y: 0 }}
+   347→   347→                exit={{ opacity: 0, y: -10 }}
+   348→   348→                transition={{ duration: 0.2 }}
+   349→   349→                className="space-y-4"
+   350→   350→              >
+   351→   351→                <div className="flex items-center justify-between">
+   352→   352→                  <h2 className="text-sm font-bold uppercase tracking-wider">
+   353→   353→                    <ShinyText shimmerDuration={4} className="text-sm">
+   354→   354→                      🎧 Play Queue
+   355→   355→                    </ShinyText>
+   356→   356→                  </h2>
+   357→   357→                  {queue.length > 0 && (
+   358→   358→                    <Button
+   359→   359→                      variant="ghost"
+   360→   360→                      size="sm"
+   361→   361→                      onClick={clearQueue}
+   362→   362→                      className="text-red-400 hover:text-red-300"
+   363→   363→                    >
+   364→   364→                      <Trash2 className="w-4 h-4 mr-1" />
+   365→   365→                      Clear
+   366→   366→                    </Button>
+   367→   367→                  )}
+   368→   368→                </div>
+   369→   369→
+   370→   370→                {/* Currently playing */}
+   371→   371→                {currentTrack && (
+   372→   372→                  <StarBorder color="oklch(0.68 0.24 264)" className="w-full">
+   373→   373→                    <SpotlightCard spotlightColor="rgba(var(--primary), 0.15)" className="p-5 rounded-2xl border-0 bg-gradient-to-br from-primary/8 to-transparent">
+   374→   374→                      <div className="text-[10px] uppercase tracking-widest text-primary font-bold mb-3 flex items-center gap-2">
+   375→   375→                        <span className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_oklch(0.68_0.24_264/0.6)]" />
+   376→   376→                        <ShinyText shimmerDuration={3} className="text-[10px]">Now Playing</ShinyText>
+   377→   377→                      </div>
+   378→   378→                    <div className="flex items-center gap-4">
+   379→   379→                      {currentTrack.thumbnail ? (
+   380→   380→                        <div className="relative w-16 h-16 rounded-xl overflow-hidden shadow-lg ring-1 ring-white/10">
+   381→   381→                          <img
+   382→   382→                            src={currentTrack.thumbnail}
+   383→   383→                            alt=""
+   384→   384→                            className="w-full h-full object-cover"
+   385→   385→                          />
+   386→   386→                        </div>
+   387→   387→                      ) : (
+   388→   388→                        <div className="w-16 h-16 rounded-xl gradient-primary flex items-center justify-center shadow-lg">
+   389→   389→                          <Radio className="w-6 h-6 text-primary-foreground" />
+   390→   390→                        </div>
+   391→   391→                      )}
+   392→   392→                      <div className="flex-1 min-w-0">
+   393→   393→                        <div className="text-base font-semibold truncate text-foreground">
+   394→   394→                          {currentTrack.title}
+   395→   395→                        </div>
+   396→   396→                        <div className="text-sm text-muted-foreground truncate">
+   397→   397→                          {currentTrack.artist}
+   398→   398→                        </div>
+   399→   399→                      </div>
+   400→   400→                      <div className="flex items-center gap-1.5">
+   401→   401→                        <button
+   402→   402→                          onClick={() => setShuffle(!shuffle)}
+   403→   403→                          className={cn(
+   404→   404→                            'p-2.5 rounded-xl transition-all',
+   405→   405→                            shuffle
+   406→   406→                              ? 'text-primary bg-primary/10 shadow-glow'
+   407→   407→                              : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+   408→   408→                          )}
+   409→   409→                          aria-label="Toggle shuffle"
+   410→   410→                        >
+   411→   411→                          <Shuffle className="w-4 h-4" />
+   412→   412→                        </button>
+   413→   413→                        <button
+   414→   414→                          onClick={() => setRepeat(!repeat)}
+   415→   415→                          className={cn(
+   416→   416→                            'p-2.5 rounded-xl transition-all',
+   417→   417→                            repeat
+   418→   418→                              ? 'text-primary bg-primary/10 shadow-glow'
+   419→   419→                              : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+   420→   420→                          )}
+   421→   421→                          aria-label="Toggle repeat"
+   422→   422→                        >
+   423→   423→                          <Repeat className="w-4 h-4" />
+   424→   424→                        </button>
+   425→   425→                        <button
+   426→   426→                          onClick={() => setAutoplay(!autoplay)}
+   427→   427→                          className={cn(
+   428→   428→                            'p-2.5 rounded-xl transition-all',
+   429→   429→                            autoplay
+   430→   430→                              ? 'text-primary bg-primary/10 shadow-glow'
+   431→   431→                              : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+   432→   432→                          )}
+   433→   433→                          title="Autoplay recommendations"
+   434→   434→                          aria-label="Toggle autoplay"
+   435→   435→                        >
+   436→   436→                          <Radio className="w-4 h-4" />
+   437→   437→                        </button>
+   438→   438→                      </div>
+   439→   439→                    </div>
+   440→   440→                    </SpotlightCard>
+   441→   441→                  </StarBorder>
+   442→   442→                )}
+   443→   443→
+   444→   444→                {/* Queue list */}
+   445→   445→                {queue.length === 0 ? (
+   446→   446→                  <Card className="p-8 text-center border-dashed">
+   447→   447→                    <ListMusic
+   448→   448→                      className="w-10 h-10 mx-auto text-muted-foreground mb-2"
+   449→   449→                      strokeWidth={1.5}
+   450→   450→                    />
+   451→   451→                    <p className="text-sm text-muted-foreground">
+   452→   452→                      Queue is empty. Add songs from Browse or search.
+   453→   453→                    </p>
+   454→   454→                  </Card>
+   455→   455→                ) : (
+   456→   456→                    <div className="space-y-1.5">
+   457→   457→                      {queue.map((track, i) => (
+   458→   458→                        <div
+   459→   459→                          key={`${track.videoId}-${i}`}
+   460→   460→                          className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/[0.06] transition-all group border border-transparent hover:border-white/5">
+   461→   461→                          <span className="text-xs text-muted-foreground w-6 text-center font-medium">
+   462→   462→                            {i + 1}
+   463→   463→                          </span>
+   464→   464→                        {track.thumbnail ? (
+   465→   465→                          <img
+   466→   466→                            src={track.thumbnail}
+   467→   467→                            alt=""
+   468→   468→                            className="w-10 h-10 rounded object-cover"
+   469→   469→                          />
+   470→   470→                        ) : (
+   471→   471→                          <div className="w-10 h-10 rounded bg-muted flex items-center justify-center">
+   472→   472→                            <ListMusic className="w-4 h-4 text-muted-foreground" />
+   473→   473→                          </div>
+   474→   474→                        )}
+   475→   475→                        <div className="flex-1 min-w-0">
+   476→   476→                          <div className="text-sm font-medium truncate">
+   477→   477→                            {track.title}
+   478→   478→                          </div>
+   479→   479→                          <div className="text-xs text-muted-foreground truncate">
+   480→   480→                            {track.artist}
+   481→   481→                          </div>
+   482→   482→                        </div>
+   483→   483→                        <button
+   484→   484→                          onClick={() => playTrack(track)}
+   485→   485→                          className="p-1.5 rounded-lg text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-primary transition-opacity"
+   486→   486→                          title="Play this track now"
+   487→   487→                          aria-label="Play this track now"
+   488→   488→                        >
+   489→   489→                          <Play className="w-3.5 h-3.5" />
+   490→   490→                        </button>
+   491→   491→                          <button
+   492→   492→                            onClick={() => removeFromQueue(i)}
+   493→   493→                            className="p-1.5 rounded-lg text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+   494→   494→                            title="Remove from queue"
+   495→   495→                            aria-label="Remove from queue"
+   496→   496→                          >
+   497→   497→                            <X className="w-3.5 h-3.5" />
+   498→   498→                          </button>
+   499→   499→                        </div>
+   500→   500→                      ))}
+   501→   501→                    </div>
+   502→   502→                )}
+   503→   503→
+   504→   504→                {/* Quick action: skip to next */}
+   505→   505→                {currentTrack && (
+   506→   506→                  <Button
+   507→   507→                    variant="outline"
+   508→   508→                    size="sm"
+   509→   509→                    onClick={() => playNext()}
+   510→   510→                    className="w-full"
+   511→   511→                  >
+   512→   512→                    <SkipForward className="w-4 h-4 mr-2" />
+   513→   513→                    Skip to next
+   514→   514→                  </Button>
+   515→   515→                )}
+   516→   516→              </motion.div>
+   517→   517→            )}
+   518→   518→          </AnimatePresence>
+   519→   519→        </div>
+   520→   520→      </div>
+   521→   521→    </div>
+   522→   522→  )
+   523→   523→}
+   524→   524→
+   525→   525→// ─── Track Row (list view) ─────────────────────────────────────────────────
+   526→   526→function TrackRow({
+   527→   527→  track,
+   528→   528→  onPlay,
+   529→   529→  onAddToQueue,
+   530→   530→  isCurrent,
+   531→   531→  isPlaying,
+   532→   532→}: {
+   533→   533→  track: Track
+   534→   534→  onPlay: () => void
+   535→   535→  onAddToQueue: () => void
+   536→   536→  isCurrent: boolean
+   537→   537→  isPlaying: boolean
+   538→   538→}) {
+   539→   539→  return (
+   540→   540→    <div
+   541→   541→      className={cn(
+   542→   542→        'flex items-center gap-4 p-3 rounded-2xl transition-all group hover:bg-white/[0.04]',
+   543→   543→        isCurrent && 'bg-primary/5 hover:bg-primary/10',
+   544→   544→      )}
+   545→   545→    >
+   546→   546→      <button
+   547→   547→        onClick={onPlay}
+   548→   548→        className="flex items-center gap-4 flex-1 min-w-0 text-left"
+   549→   549→      >
+   550→   550→        {track.thumbnail ? (
+   551→   551→          <div className="relative w-14 h-14 rounded-xl overflow-hidden shrink-0 shadow-sm ring-1 ring-white/5">
+   552→   552→            <img
+   553→   553→              src={track.thumbnail}
+   554→   554→              alt=""
+   555→   555→              className="w-full h-full object-cover"
+   556→   556→            />
+   557→   557→            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-[2px]">
+   558→   558→              {isCurrent && isPlaying ? (
+   559→   559→                <Pause className="w-5 h-5 text-white drop-shadow-md" />
+   560→   560→              ) : (
+   561→   561→                <Play className="w-5 h-5 text-white ml-1 drop-shadow-md" />
+   562→   562→              )}
+   563→   563→            </div>
+   564→   564→          </div>
+   565→   565→        ) : (
+   566→   566→          <div className="w-14 h-14 rounded-xl bg-muted flex items-center justify-center shrink-0">
+   567→   567→            <ListMusic className="w-6 h-6 text-muted-foreground" />
+   568→   568→          </div>
+   569→   569→        )}
+   570→   570→        <div className="flex-1 min-w-0">
+   571→   571→          <div
+   572→   572→            className={cn(
+   573→   573→              'text-[15px] font-semibold truncate transition-colors',
+   574→   574→              isCurrent ? 'text-primary' : 'text-foreground',
+   575→   575→            )}
+   576→   576→          >
+   577→   577→            {track.title}
+   578→   578→          </div>
+   579→   579→          <div className="text-sm text-muted-foreground truncate">
+   580→   580→            {track.artist}
+   581→   581→          </div>
+   582→   582→        </div>
+   583→   583→      </button>
+   584→   584→      <button
+   585→   585→        onClick={onAddToQueue}
+   586→   586→        className="p-2.5 rounded-full text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-primary hover:bg-primary/10 transition-all shrink-0"
+   587→   587→        title="Add to queue"
+   588→   588→        aria-label="Add to queue"
+   589→   589→      >
+   590→   590→        <Plus className="w-5 h-5" />
+   591→   591→      </button>
+   592→   592→    </div>
+   593→   593→  )
+   594→   594→}
+   595→   595→
+   596→   596→// ─── Track Card (grid view) ────────────────────────────────────────────────
+   597→   597→function TrackCard({
+   598→   598→  track,
+   599→   599→  onPlay,
+   600→   600→  onAddToQueue,
+   601→   601→  isCurrent,
+   602→   602→  isPlaying,
+   603→   603→}: {
+   604→   604→  track: Track
+   605→   605→  onPlay: () => void
+   606→   606→  onAddToQueue: () => void
+   607→   607→  isCurrent: boolean
+   608→   608→  isPlaying: boolean
+   609→   609→}) {
+   610→   610→  return (
+   611→   611→    <SpotlightCard
+   612→   612→      className={cn(
+   613→   613→        'group transition-all rounded-2xl overflow-hidden',
+   614→   614→        isCurrent ? 'ring-2 ring-primary shadow-glow' : 'hover:scale-[1.02] border border-white/5',
+   615→   615→      )}
+   616→   616→    >
+   617→   617→      <button onClick={onPlay} className="w-full">
+   618→   618→        {track.thumbnail ? (
+   619→   619→          <div className="aspect-square relative">
+   620→   620→            <img
+   621→   621→              src={track.thumbnail}
+   622→   622→              alt=""
+   623→   623→              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+   624→   624→            />
+   625→   625→            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-60 group-hover:opacity-80 transition-opacity" />
+   626→   626→            <div className="absolute inset-0 flex items-center justify-center">
+   627→   627→              <div className="w-14 h-14 rounded-full gradient-primary flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all scale-75 group-hover:scale-100 shadow-glow">
+   628→   628→                {isCurrent && isPlaying ? (
+   629→   629→                  <Pause className="w-6 h-6 text-primary-foreground" />
+   630→   630→                ) : (
+   631→   631→                  <Play className="w-6 h-6 text-primary-foreground ml-1" />
+   632→   632→                )}
+   633→   633→              </div>
+   634→   634→            </div>
+   635→   635→          </div>
+   636→   636→        ) : (
+   637→   637→          <div className="aspect-square bg-muted flex items-center justify-center">
+   638→   638→            <ListMusic className="w-10 h-10 text-muted-foreground" />
+   639→   639→          </div>
+   640→   640→        )}
+   641→   641→      </button>
+   642→   642→      <div className="p-3 flex items-start gap-2 bg-card/50 backdrop-blur-md absolute bottom-0 inset-x-0">
+   643→   643→        <div className="flex-1 min-w-0">
+   644→   644→          <div
+   645→   645→            className={cn(
+   646→   646→              'text-[13px] font-semibold truncate',
+   647→   647→              isCurrent ? 'text-primary' : 'text-foreground',
+   648→   648→            )}
+   649→   649→          >
+   650→   650→            {track.title}
+   651→   651→          </div>
+   652→   652→          <div className="text-[11px] text-muted-foreground truncate">
+   653→   653→            {track.artist}
+   654→   654→          </div>
+   655→   655→        </div>
+   656→   656→        <button
+   657→   657→          onClick={onAddToQueue}
+   658→   658→          className="p-1.5 rounded-full bg-white/10 text-white opacity-0 group-hover:opacity-100 hover:bg-primary hover:text-primary-foreground transition-all shrink-0"
+   659→   659→          title="Add to queue"
+   660→   660→          aria-label="Add to queue"
+   661→   661→        >
+   662→   662→          <Plus className="w-3.5 h-3.5" />
+   663→   663→        </button>
+   664→   664→      </div>
+   665→   665→    </SpotlightCard>
+   666→   666→  )
+   667→   667→}
+   668→   668→
+   669→   669→// ─── Room Card ─────────────────────────────────────────────────────────────
+   670→   670→// Note: we no longer show the raw member count — it includes stale members
+   671→   671→// who joined and left (we don't track leftAt for music rooms). Instead we
+   672→   672→// show a "Listening" indicator that's only lit when the host is actively
+   673→   673→// playing, which is a more accurate signal of "is anything happening here
+   674→   674→// right now".
+   675→   675→function RoomCard({
+   676→   676→  room,
+   677→   677→  isActive,
+   678→   678→  onJoin,
+   679→   679→  onDelete,
+   680→   680→}: {
+   681→   681→  room: Room
+   682→   682→  isActive: boolean
+   683→   683→  onJoin: () => void
+   684→   684→  onDelete?: () => void
+   685→   685→}) {
+   686→   686→  const isPlaying = room.currentState === 'playing'
+   687→   687→  return (
+   688→   688→    <div className="relative group">
+   689→   689→      {isActive && (
+   690→   690→        <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-primary/50 to-purple-500/50 opacity-50 blur-md transition-opacity group-hover:opacity-75" />
+   691→   691→      )}
+   692→   692→      <GlassSurface
+   693→   693→        blur={12}
+   694→   694→        opacity={isActive ? 0.08 : 0.02}
+   695→   695→        className={cn(
+   696→   696→          'w-full flex items-center gap-4 p-4 transition-all',
+   697→   697→          isActive
+   698→   698→            ? 'border-primary/50'
+   699→   699→            : 'border-white/5 hover:bg-white/[0.03]',
+   700→   700→        )}
+   701→   701→      >
+   702→   702→        <button
+   703→   703→          onClick={onJoin}
+   704→   704→          className="flex items-center gap-4 flex-1 min-w-0 text-left"
+   705→   705→        >
+   706→   706→          <div
+   707→   707→            className={cn(
+   708→   708→              'w-14 h-14 rounded-xl flex items-center justify-center shrink-0 transition-all shadow-sm',
+   709→   709→              isPlaying
+   710→   710→                ? 'bg-primary/20 text-primary pulse-glow ring-1 ring-primary/30'
+   711→   711→                : 'bg-black/30 text-muted-foreground ring-1 ring-white/10',
+   712→   712→            )}
+   713→   713→          >
+   714→   714→            <Radio className={cn('w-6 h-6', isPlaying && 'animate-pulse')} />
+   715→   715→          </div>
+   716→   716→          <div className="flex-1 min-w-0">
+   717→   717→            <div className="font-semibold text-base truncate text-foreground">{room.name}</div>
+   718→   718→            <div className="text-sm text-muted-foreground flex items-center gap-2 mt-0.5">
+   719→   719→              <span>Hosted by {room.host?.displayName || 'Unknown'}</span>
+   720→   720→              {isPlaying ? (
+   721→   721→                <>
+   722→   722→                  <span className="text-white/30">•</span>
+   723→   723→                  <span className="text-status-online flex items-center gap-1.5 font-medium">
+   724→   724→                    <span className="w-2 h-2 rounded-full bg-status-online shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse" />
+   725→   725→                    Listening now
+   726→   726→                  </span>
+   727→   727→                </>
+   728→   728→              ) : (
+   729→   729→                <>
+   730→   730→                  <span className="text-white/30">•</span>
+   731→   731→                  <span className="text-muted-foreground">Idle</span>
+   732→   732→                </>
+   733→   733→              )}
+   734→   734→            </div>
+   735→   735→          </div>
+   736→   736→          <div className={cn(
+   737→   737→            "shrink-0 text-sm font-semibold px-4 py-2 rounded-xl transition-all shadow-sm",
+   738→   738→            isActive ? "bg-primary text-primary-foreground shadow-glow" : "bg-white/5 text-foreground hover:bg-white/10 border border-white/10"
+   739→   739→          )}>
+   740→   740→            {isActive ? 'In Room' : 'Join'}
+   741→   741→          </div>
+   742→   742→        </button>
+   743→   743→        {onDelete && (
+   744→   744→          <button
+   745→   745→            onClick={(e) => {
+   746→   746→              e.stopPropagation()
+   747→   747→              if (confirm(`Delete room "${room.name}"?`)) onDelete()
+   748→   748→            }}
+   749→   749→            className="shrink-0 p-2.5 rounded-full text-red-400 opacity-0 group-hover:opacity-100 hover:bg-red-500/10 hover:text-red-300 transition-all"
+   750→   750→            title="Delete room"
+   751→   751→            aria-label="Delete room"
+   752→   752→          >
+   753→   753→            <Trash2 className="w-5 h-5" />
+   754→   754→          </button>
+   755→   755→        )}
+   756→   756→      </GlassSurface>
+   757→   757→    </div>
+   758→   758→  )
+   759→   759→}
+   760→   760→

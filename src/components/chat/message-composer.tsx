@@ -34,7 +34,7 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
 
   const recorder = useVoiceRecorder({
     onSend: async (url, mediaType) => {
-      await send({ body: '🎙️ Voice message', mediaUrl: url, mediaType })
+      await send({ body: 'Voice message', mediaUrl: url, mediaType })
     },
   })
 
@@ -92,7 +92,7 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
       }
       const data = await res.json()
       await send({
-        body: data.type.startsWith('image') ? '📷' : '📎',
+        body: data.type.startsWith('image') ? 'Photo' : 'File',
         mediaUrl: data.url,
         mediaType: data.type,
       })
@@ -195,7 +195,7 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
               value={text}
               onChange={handleChange}
               onKeyDown={handleKeyDown}
-              placeholder="iMessage..."
+              placeholder="Type a message..."
               className="flex-1 resize-none min-h-[24px] max-h-[160px] bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 p-0 text-[16px] leading-relaxed shadow-none placeholder:text-muted-foreground/60"
               disabled={sending || uploading}
               rows={1}
@@ -220,7 +220,7 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
         onOpenChange={setTtsOpen}
         onSend={async (url) => {
           await send({
-            body: '🎙️ AI voice message',
+            body: 'Voice message',
             mediaUrl: url,
             mediaType: 'audio',
           })
@@ -405,7 +405,7 @@ function TtsDialog({
   const [selectedCustomVoiceId, setSelectedCustomVoiceId] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [sendUrl, setSendUrl] = useState<string | null>(null)
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null)
   const [sending, setSending] = useState(false)
   const qc = useQueryClient()
 
@@ -438,7 +438,7 @@ function TtsDialog({
     if (!text.trim() || generating) return
     setGenerating(true)
     setPreviewUrl(null)
-    setSendUrl(null)
+    setPreviewBlob(null)
     try {
       const body: any = { text }
       if (selectedCustomVoiceId) {
@@ -452,19 +452,18 @@ function TtsDialog({
         body: JSON.stringify(body),
       })
       if (!res.ok) {
-        // Error responses are JSON, streaming success responses are audio
+        // Error responses are JSON, success responses are streamed audio
         const err = await res.json().catch(() => ({ error: 'Generation failed' }))
         throw new Error(err.error || 'Generation failed')
       }
-      // The route streams the WAV audio back to us and puts the saved-file
-      // URL in the X-Tts-Url header (the file is written to disk in the
-      // background while we receive the stream). We use the streamed bytes
-      // for an instant preview and the header URL when sending the message.
-      const serverUrl = res.headers.get('X-Tts-Url')
+      // The route streams the WAV audio back to us — get the blob and create
+      // an object URL for an instant local preview. We do NOT persist the
+      // audio on the server here; when the user clicks Send, we upload the
+      // blob to /api/upload and send the resulting URL as the message.
       const blob = await res.blob()
       const blobUrl = URL.createObjectURL(blob)
+      setPreviewBlob(blob)
       setPreviewUrl(blobUrl)
-      setSendUrl(serverUrl)
       toast.success('Voice generated — preview and send')
     } catch (e: any) {
       toast.error(e.message || 'Failed to generate voice')
@@ -474,14 +473,23 @@ function TtsDialog({
   }
 
   const handleSend = async () => {
-    if (!previewUrl || !sendUrl || sending) return
+    if (!previewBlob || !previewUrl || sending) return
     setSending(true)
     try {
-      await onSend(sendUrl)
+      // Upload the preview blob to /api/upload, then send the resulting
+      // hosted URL as the voice message.
+      const fd = new FormData()
+      fd.append('file', previewBlob, 'tts.wav')
+      const upRes = await fetch('/api/upload', { method: 'POST', body: fd })
+      if (!upRes.ok) {
+        throw new Error('Failed to upload audio')
+      }
+      const { url } = await upRes.json()
+      await onSend(url)
       setText('')
       if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
       setPreviewUrl(null)
-      setSendUrl(null)
+      setPreviewBlob(null)
     } catch {
       toast.error('Failed to send voice message')
     } finally {
@@ -494,7 +502,7 @@ function TtsDialog({
       setText('')
       if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
       setPreviewUrl(null)
-      setSendUrl(null)
+      setPreviewBlob(null)
       setSelectedCustomVoiceId(null)
     }
     onOpenChange(o)
@@ -679,7 +687,7 @@ function TtsDialog({
                 <Button variant="outline" onClick={() => {
                   if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
                   setPreviewUrl(null)
-                  setSendUrl(null)
+                  setPreviewBlob(null)
                 }} disabled={sending}>
                   Regenerate
                 </Button>

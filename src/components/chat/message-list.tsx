@@ -365,8 +365,9 @@ function MessageItem(props: MessageItemProps) {
   if (isDeleted) {
     return (
       <div className={cn('flex', isMine ? 'justify-end' : 'justify-start')}>
-        <span className="text-xs text-muted-foreground italic px-3 py-1.5 rounded-2xl bg-muted/50">
-          🚫 message deleted
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground italic px-3 py-1.5 rounded-2xl bg-muted/50">
+          <Trash2 className="w-3 h-3" />
+          Message deleted
         </span>
       </div>
     )

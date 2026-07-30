@@ -1,0 +1,943 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import { useState, useRef, useEffect, useCallback } from 'react'
+     4→     4→import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+     5→     5→import { useChannel } from '@/hooks/useChannel'
+     6→     6→import { Button } from '@/components/ui/button'
+     7→     7→import { Textarea } from '@/components/ui/textarea'
+     8→     8→import {
+     9→     9→  Reply, X, Send, Image as ImageIcon, Loader2, AudioLines, Sparkles,
+    10→    10→  Mic, Plus, Trash2, User,
+    11→    11→} from 'lucide-react'
+    12→    12→import { toast } from 'sonner'
+    13→    13→import {
+    14→    14→  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+    15→    15→} from '@/components/ui/dialog'
+    16→    16→import {
+    17→    17→  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+    18→    18→} from '@/components/ui/select'
+    19→    19→import { Label } from '@/components/ui/label'
+    20→    20→import { Input } from '@/components/ui/input'
+    21→    21→import { cn } from '@/lib/utils'
+    22→    22→
+    23→    23→interface MessageComposerProps {
+    24→    24→  channelId: string
+    25→    25→}
+    26→    26→
+    27→    27→export function MessageComposer({ channelId }: MessageComposerProps) {
+    28→    28→  const { send, sendTyping, replyTo, setReplyTo } = useChannel(channelId)
+    29→    29→  const [text, setText] = useState('')
+    30→    30→  const [sending, setSending] = useState(false)
+    31→    31→  const [uploading, setUploading] = useState(false)
+    32→    32→  const [ttsOpen, setTtsOpen] = useState(false)
+    33→    33→  const textareaRef = useRef<HTMLTextAreaElement>(null)
+    34→    34→
+    35→    35→  const recorder = useVoiceRecorder({
+    36→    36→    onSend: async (url, mediaType) => {
+    37→    37→      await send({ body: '🎙️ Voice message', mediaUrl: url, mediaType })
+    38→    38→    },
+    39→    39→  })
+    40→    40→
+    41→    41→  useEffect(() => {
+    42→    42→    const el = textareaRef.current
+    43→    43→    if (!el) return
+    44→    44→    el.style.height = 'auto'
+    45→    45→    el.style.height = Math.min(el.scrollHeight, 160) + 'px'
+    46→    46→  }, [text])
+    47→    47→
+    48→    48→  useEffect(() => {
+    49→    49→    if (replyTo) textareaRef.current?.focus()
+    50→    50→  }, [replyTo])
+    51→    51→
+    52→    52→  const handleSend = async () => {
+    53→    53→    const trimmed = text.trim()
+    54→    54→    if (!trimmed || sending) return
+    55→    55→    setSending(true)
+    56→    56→    try {
+    57→    57→      await send({ body: trimmed, replyToId: replyTo?.id || null })
+    58→    58→      setText('')
+    59→    59→      setReplyTo(null)
+    60→    60→      sendTyping(false)
+    61→    61→    } catch {
+    62→    62→      toast.error('Failed to send message')
+    63→    63→    } finally {
+    64→    64→      setSending(false)
+    65→    65→    }
+    66→    66→  }
+    67→    67→
+    68→    68→  const handleKeyDown = (e: React.KeyboardEvent) => {
+    69→    69→    if (e.key === 'Enter' && !e.shiftKey) {
+    70→    70→      e.preventDefault()
+    71→    71→      handleSend()
+    72→    72→    }
+    73→    73→  }
+    74→    74→
+    75→    75→  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    76→    76→    setText(e.target.value)
+    77→    77→    if (e.target.value.length > 0) sendTyping(true)
+    78→    78→    else sendTyping(false)
+    79→    79→  }
+    80→    80→
+    81→    81→  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    82→    82→    const file = e.target.files?.[0]
+    83→    83→    if (!file) return
+    84→    84→    setUploading(true)
+    85→    85→    try {
+    86→    86→      const formData = new FormData()
+    87→    87→      formData.append('file', file)
+    88→    88→      const res = await fetch('/api/upload', { method: 'POST', body: formData })
+    89→    89→      if (!res.ok) {
+    90→    90→        const text = await res.text()
+    91→    91→        throw new Error(text.slice(0, 120) || 'Upload failed')
+    92→    92→      }
+    93→    93→      const data = await res.json()
+    94→    94→      await send({
+    95→    95→        body: data.type.startsWith('image') ? '📷' : '📎',
+    96→    96→        mediaUrl: data.url,
+    97→    97→        mediaType: data.type,
+    98→    98→      })
+    99→    99→    } catch (e: any) {
+   100→   100→      toast.error(e.message || 'Upload failed')
+   101→   101→    } finally {
+   102→   102→      setUploading(false)
+   103→   103→      e.target.value = ''
+   104→   104→    }
+   105→   105→  }
+   106→   106→
+   107→   107→  return (
+   108→   108→    <div className="border-t border-border/60 bg-muted/50 backdrop-blur-2xl px-3 md:px-6 pt-3 pb-3 pb-safe relative z-20 shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.25)]">
+   109→   109→      {/* Reply banner */}
+   110→   110→      {replyTo && (
+   111→   111→        <div className="flex items-center gap-3 text-xs bg-background/70 border border-border/60 backdrop-blur-md rounded-xl p-3 mb-2.5 shadow-sm">
+   112→   112→          <Reply className="w-4 h-4 shrink-0 text-primary" />
+   113→   113→          <div className="flex-1 min-w-0">
+   114→   114→            <div className="font-semibold text-primary">{replyTo.senderName}</div>
+   115→   115→            <div className="text-muted-foreground truncate mt-0.5">{replyTo.body}</div>
+   116→   116→          </div>
+   117→   117→          <button onClick={() => setReplyTo(null)} className="p-1.5 hover:bg-muted rounded-full transition-colors">
+   118→   118→            <X className="w-4 h-4" />
+   119→   119→          </button>
+   120→   120→        </div>
+   121→   121→      )}
+   122→   122→
+   123→   123→      {/* Recording bar replaces the composer pill while recording / uploading */}
+   124→   124→      {recorder.isUploading ? (
+   125→   125→        <div className="flex items-center justify-center gap-2 bg-background/60 backdrop-blur-xl rounded-[26px] p-3 border border-border/60 shadow-lg text-sm text-muted-foreground">
+   126→   126→          <Loader2 className="w-4 h-4 animate-spin" />
+   127→   127→          Sending voice message...
+   128→   128→        </div>
+   129→   129→      ) : recorder.isRecording ? (
+   130→   130→        <div className="flex items-center gap-2 bg-background/60 backdrop-blur-xl rounded-[26px] p-1.5 pl-3 border border-red-500/40 shadow-lg ring-1 ring-red-500/10">
+   131→   131→          {/* Pulsing red dot */}
+   132→   132→          <span className="relative flex h-3 w-3 shrink-0">
+   133→   133→            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75" />
+   134→   134→            <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500" />
+   135→   135→          </span>
+   136→   136→          {/* Timer */}
+   137→   137→          <span className="text-sm font-mono tabular-nums text-foreground shrink-0 min-w-[3rem]">
+   138→   138→            {Math.floor(recorder.seconds / 60)}:{String(recorder.seconds % 60).padStart(2, '0')}
+   139→   139→          </span>
+   140→   140→          <span className="text-xs text-muted-foreground truncate flex-1">Recording…</span>
+   141→   141→          {/* Cancel */}
+   142→   142→          <button
+   143→   143→            onClick={recorder.cancel}
+   144→   144→            className="h-10 px-3 flex items-center gap-1.5 rounded-full text-sm font-medium text-red-400 hover:bg-red-500/10 transition-colors shrink-0"
+   145→   145→            title="Cancel recording"
+   146→   146→          >
+   147→   147→            <Trash2 className="w-4 h-4" />
+   148→   148→            <span className="hidden sm:inline">Cancel</span>
+   149→   149→          </button>
+   150→   150→          {/* Stop + send */}
+   151→   151→          <button
+   152→   152→            onClick={recorder.stopAndSend}
+   153→   153→            className="h-11 w-11 flex items-center justify-center rounded-full gradient-primary shadow-glow border border-primary/30 transition-transform hover:scale-105 active:scale-95 shrink-0"
+   154→   154→            title="Stop and send"
+   155→   155→          >
+   156→   156→            <Send className="w-5 h-5 text-primary-foreground" />
+   157→   157→          </button>
+   158→   158→        </div>
+   159→   159→      ) : (
+   160→   160→        /* Cohesive glassmorphic composer bar — wraps the action buttons + input
+   161→   161→           in a single translucent pill so they read as one unified control. */
+   162→   162→        <div className="flex items-end gap-1.5 bg-background/60 backdrop-blur-xl rounded-[26px] p-1.5 pl-2 border border-border/60 shadow-lg ring-1 ring-black/5 transition-shadow focus-within:shadow-xl">
+   163→   163→          {/* Upload button */}
+   164→   164→          <label
+   165→   165→            className="cursor-pointer w-10 h-10 flex items-center justify-center rounded-full transition-all shrink-0 text-muted-foreground hover:bg-primary/10 hover:text-primary active:scale-90"
+   166→   166→            title="Upload image, video, or audio"
+   167→   167→          >
+   168→   168→            <ImageIcon className="w-[22px] h-[22px] transition-colors" />
+   169→   169→            <input type="file" className="hidden" accept="image/*,video/*,audio/*" onChange={handleUpload} disabled={uploading} />
+   170→   170→          </label>
+   171→   171→
+   172→   172→          {/* TTS voice message button */}
+   173→   173→          <button
+   174→   174→            onClick={() => setTtsOpen(true)}
+   175→   175→            className="w-10 h-10 flex items-center justify-center rounded-full transition-all shrink-0 text-muted-foreground hover:bg-primary/10 hover:text-primary active:scale-90"
+   176→   176→            title="Send AI voice message"
+   177→   177→          >
+   178→   178→            <AudioLines className="w-[22px] h-[22px] transition-colors" />
+   179→   179→          </button>
+   180→   180→
+   181→   181→          {/* Microphone — record a voice message (sits next to the TTS button) */}
+   182→   182→          <button
+   183→   183→            onClick={recorder.start}
+   184→   184→            className="w-10 h-10 flex items-center justify-center rounded-full transition-all shrink-0 text-muted-foreground hover:bg-primary/10 hover:text-primary active:scale-90"
+   185→   185→            title="Record a voice message"
+   186→   186→            aria-label="Record a voice message"
+   187→   187→          >
+   188→   188→            <Mic className="w-[22px] h-[22px] transition-colors" />
+   189→   189→          </button>
+   190→   190→
+   191→   191→          {/* Text input — grows up to ~4 lines */}
+   192→   192→          <div className="flex-1 min-w-0 bg-transparent rounded-2xl px-3 py-2 flex items-end focus-within:bg-white/5 transition-colors">
+   193→   193→            <Textarea
+   194→   194→              ref={textareaRef}
+   195→   195→              value={text}
+   196→   196→              onChange={handleChange}
+   197→   197→              onKeyDown={handleKeyDown}
+   198→   198→              placeholder="iMessage..."
+   199→   199→              className="flex-1 resize-none min-h-[24px] max-h-[160px] bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 p-0 text-[16px] leading-relaxed shadow-none placeholder:text-muted-foreground/60"
+   200→   200→              disabled={sending || uploading}
+   201→   201→              rows={1}
+   202→   202→            />
+   203→   203→          </div>
+   204→   204→
+   205→   205→          {/* Send button */}
+   206→   206→          <Button
+   207→   207→            onClick={handleSend}
+   208→   208→            disabled={!text.trim() || sending}
+   209→   209→            size="icon"
+   210→   210→            className="rounded-full h-11 w-11 shrink-0 transition-transform hover:scale-105 active:scale-95 gradient-primary shadow-glow border border-primary/30 disabled:opacity-40 disabled:shadow-none disabled:scale-100"
+   211→   211→          >
+   212→   212→            {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+   213→   213→          </Button>
+   214→   214→        </div>
+   215→   215→      )}
+   216→   216→
+   217→   217→      {/* TTS Voice Message Dialog */}
+   218→   218→      <TtsDialog
+   219→   219→        open={ttsOpen}
+   220→   220→        onOpenChange={setTtsOpen}
+   221→   221→        onSend={async (url) => {
+   222→   222→          await send({
+   223→   223→            body: '🎙️ AI voice message',
+   224→   224→            mediaUrl: url,
+   225→   225→            mediaType: 'audio',
+   226→   226→          })
+   227→   227→          setTtsOpen(false)
+   228→   228→          toast.success('Voice message sent')
+   229→   229→        }}
+   230→   230→      />
+   231→   231→    </div>
+   232→   232→  )
+   233→   233→}
+   234→   234→
+   235→   235→/**
+   236→   236→ * useVoiceRecorder — hook that manages MediaRecorder state for recording voice
+   237→   237→ * messages. Tap the mic to start, tap stop to upload + send, or cancel to
+   238→   238→ * discard. The recording is uploaded via /api/upload and sent as a message
+   239→   239→ * with mediaType 'audio/webm' (or the browser's best supported format).
+   240→   240→ */
+   241→   241→function useVoiceRecorder({
+   242→   242→  onSend,
+   243→   243→}: {
+   244→   244→  onSend: (url: string, mediaType: string) => Promise<void>
+   245→   245→}) {
+   246→   246→  const [isRecording, setIsRecording] = useState(false)
+   247→   247→  const [isUploading, setIsUploading] = useState(false)
+   248→   248→  const [seconds, setSeconds] = useState(0)
+   249→   249→  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+   250→   250→  const chunksRef = useRef<Blob[]>([])
+   251→   251→  const streamRef = useRef<MediaStream | null>(null)
+   252→   252→  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+   253→   253→  const mimeTypeRef = useRef<string>('audio/webm')
+   254→   254→
+   255→   255→  // Stop the timer + release the mic on unmount
+   256→   256→  useEffect(() => {
+   257→   257→    return () => {
+   258→   258→      if (timerRef.current) clearInterval(timerRef.current)
+   259→   259→      if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop())
+   260→   260→    }
+   261→   261→  }, [])
+   262→   262→
+   263→   263→  const pickMimeType = useCallback(() => {
+   264→   264→    const candidates = [
+   265→   265→      'audio/webm;codecs=opus',
+   266→   266→      'audio/webm',
+   267→   267→      'audio/ogg;codecs=opus',
+   268→   268→      'audio/mp4',
+   269→   269→    ]
+   270→   270→    for (const t of candidates) {
+   271→   271→      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) {
+   272→   272→        return t
+   273→   273→      }
+   274→   274→    }
+   275→   275→    return ''
+   276→   276→  }, [])
+   277→   277→
+   278→   278→  const stopTracks = useCallback(() => {
+   279→   279→    if (timerRef.current) {
+   280→   280→      clearInterval(timerRef.current)
+   281→   281→      timerRef.current = null
+   282→   282→    }
+   283→   283→    if (streamRef.current) {
+   284→   284→      streamRef.current.getTracks().forEach((t) => t.stop())
+   285→   285→      streamRef.current = null
+   286→   286→    }
+   287→   287→  }, [])
+   288→   288→
+   289→   289→  const start = useCallback(async () => {
+   290→   290→    try {
+   291→   291→      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+   292→   292→      streamRef.current = stream
+   293→   293→      const mimeType = pickMimeType()
+   294→   294→      mimeTypeRef.current = mimeType || 'audio/webm'
+   295→   295→      const recorder = mimeType
+   296→   296→        ? new MediaRecorder(stream, { mimeType })
+   297→   297→        : new MediaRecorder(stream)
+   298→   298→      chunksRef.current = []
+   299→   299→      recorder.ondataavailable = (e) => {
+   300→   300→        if (e.data && e.data.size > 0) chunksRef.current.push(e.data)
+   301→   301→      }
+   302→   302→      recorder.start()
+   303→   303→      mediaRecorderRef.current = recorder
+   304→   304→      setIsRecording(true)
+   305→   305→      setSeconds(0)
+   306→   306→      timerRef.current = setInterval(() => {
+   307→   307→        setSeconds((s) => s + 1)
+   308→   308→      }, 1000)
+   309→   309→    } catch {
+   310→   310→      toast.error('Microphone access denied')
+   311→   311→      if (streamRef.current) {
+   312→   312→        streamRef.current.getTracks().forEach((t) => t.stop())
+   313→   313→        streamRef.current = null
+   314→   314→      }
+   315→   315→    }
+   316→   316→  }, [pickMimeType])
+   317→   317→
+   318→   318→  const cancel = useCallback(() => {
+   319→   319→    const recorder = mediaRecorderRef.current
+   320→   320→    if (recorder && recorder.state !== 'inactive') {
+   321→   321→      // Detach onstop so the pending send is discarded
+   322→   322→      recorder.onstop = null
+   323→   323→      try {
+   324→   324→        recorder.stop()
+   325→   325→      } catch {
+   326→   326→        // ignore
+   327→   327→      }
+   328→   328→    }
+   329→   329→    mediaRecorderRef.current = null
+   330→   330→    chunksRef.current = []
+   331→   331→    setIsRecording(false)
+   332→   332→    setSeconds(0)
+   333→   333→    stopTracks()
+   334→   334→  }, [stopTracks])
+   335→   335→
+   336→   336→  const stopAndSend = useCallback(async () => {
+   337→   337→    const recorder = mediaRecorderRef.current
+   338→   338→    if (!recorder || recorder.state === 'inactive') {
+   339→   339→      cancel()
+   340→   340→      return
+   341→   341→    }
+   342→   342→    const mime = mimeTypeRef.current
+   343→   343→    const blobPromise = new Promise<Blob>((resolve) => {
+   344→   344→      recorder.onstop = () => {
+   345→   345→        const blob = new Blob(chunksRef.current, { type: mime || 'audio/webm' })
+   346→   346→        resolve(blob)
+   347→   347→      }
+   348→   348→    })
+   349→   349→    try {
+   350→   350→      recorder.stop()
+   351→   351→    } catch {
+   352→   352→      cancel()
+   353→   353→      return
+   354→   354→    }
+   355→   355→    setIsRecording(false)
+   356→   356→    stopTracks()
+   357→   357→    setIsUploading(true)
+   358→   358→    try {
+   359→   359→      const blob = await blobPromise
+   360→   360→      if (blob.size === 0) {
+   361→   361→        toast.error('Recording was empty')
+   362→   362→        return
+   363→   363→      }
+   364→   364→      const ext = mime.includes('mp4') ? 'm4a' : mime.includes('ogg') ? 'ogg' : 'webm'
+   365→   365→      const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type || mime })
+   366→   366→      const formData = new FormData()
+   367→   367→      formData.append('file', file)
+   368→   368→      const res = await fetch('/api/upload', { method: 'POST', body: formData })
+   369→   369→      if (!res.ok) {
+   370→   370→        const t = await res.text().catch(() => 'Upload failed')
+   371→   371→        throw new Error(t.slice(0, 120) || 'Upload failed')
+   372→   372→      }
+   373→   373→      const data = await res.json()
+   374→   374→      await onSend(data.url, data.type || mime || 'audio/webm')
+   375→   375→      toast.success('Voice message sent')
+   376→   376→    } catch (e: any) {
+   377→   377→      toast.error(e?.message || 'Failed to send voice message')
+   378→   378→    } finally {
+   379→   379→      setIsUploading(false)
+   380→   380→      setSeconds(0)
+   381→   381→      chunksRef.current = []
+   382→   382→      mediaRecorderRef.current = null
+   383→   383→    }
+   384→   384→  }, [cancel, onSend, stopTracks])
+   385→   385→
+   386→   386→  return { isRecording, isUploading, seconds, start, cancel, stopAndSend }
+   387→   387→}
+   388→   388→
+   389→   389→/**
+   390→   390→ * TTS Dialog — lets the user type text, pick a voice (built-in or custom),
+   391→   391→ * preview, and send. Also supports creating custom voices from audio clips.
+   392→   392→ */
+   393→   393→function TtsDialog({
+   394→   394→  open,
+   395→   395→  onOpenChange,
+   396→   396→  onSend,
+   397→   397→}: {
+   398→   398→  open: boolean
+   399→   399→  onOpenChange: (o: boolean) => void
+   400→   400→  onSend: (url: string) => Promise<void>
+   401→   401→}) {
+   402→   402→  const [tab, setTab] = useState<'generate' | 'voices'>('generate')
+   403→   403→  const [text, setText] = useState('')
+   404→   404→  const [voice, setVoice] = useState('alba')
+   405→   405→  const [selectedCustomVoiceId, setSelectedCustomVoiceId] = useState<string | null>(null)
+   406→   406→  const [generating, setGenerating] = useState(false)
+   407→   407→  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+   408→   408→  const [sendUrl, setSendUrl] = useState<string | null>(null)
+   409→   409→  const [sending, setSending] = useState(false)
+   410→   410→  const qc = useQueryClient()
+   411→   411→
+   412→   412→  // Fetch built-in voices from the API (single source of truth for labels)
+   413→   413→  const { data: builtinVoicesData } = useQuery({
+   414→   414→    queryKey: ['tts-builtin-voices'],
+   415→   415→    queryFn: async () => {
+   416→   416→      const res = await fetch('/api/tts')
+   417→   417→      if (!res.ok) throw new Error('failed')
+   418→   418→      return res.json()
+   419→   419→    },
+   420→   420→    enabled: open,
+   421→   421→  })
+   422→   422→  const builtinVoices: { id: string; name: string; language: string; gender: string }[] =
+   423→   423→    builtinVoicesData?.voices || []
+   424→   424→
+   425→   425→  // Fetch custom voices
+   426→   426→  const { data: customVoicesData } = useQuery({
+   427→   427→    queryKey: ['tts-voices'],
+   428→   428→    queryFn: async () => {
+   429→   429→      const res = await fetch('/api/tts/voices')
+   430→   430→      if (!res.ok) throw new Error('failed')
+   431→   431→      return res.json()
+   432→   432→    },
+   433→   433→    enabled: open,
+   434→   434→  })
+   435→   435→  const customVoices = customVoicesData?.voices || []
+   436→   436→
+   437→   437→  const handleGenerate = async () => {
+   438→   438→    if (!text.trim() || generating) return
+   439→   439→    setGenerating(true)
+   440→   440→    setPreviewUrl(null)
+   441→   441→    setSendUrl(null)
+   442→   442→    try {
+   443→   443→      const body: any = { text }
+   444→   444→      if (selectedCustomVoiceId) {
+   445→   445→        body.customVoiceId = selectedCustomVoiceId
+   446→   446→      } else {
+   447→   447→        body.voice = voice
+   448→   448→      }
+   449→   449→      const res = await fetch('/api/tts', {
+   450→   450→        method: 'POST',
+   451→   451→        headers: { 'Content-Type': 'application/json' },
+   452→   452→        body: JSON.stringify(body),
+   453→   453→      })
+   454→   454→      if (!res.ok) {
+   455→   455→        // Error responses are JSON, streaming success responses are audio
+   456→   456→        const err = await res.json().catch(() => ({ error: 'Generation failed' }))
+   457→   457→        throw new Error(err.error || 'Generation failed')
+   458→   458→      }
+   459→   459→      // The route streams the WAV audio back to us and puts the saved-file
+   460→   460→      // URL in the X-Tts-Url header (the file is written to disk in the
+   461→   461→      // background while we receive the stream). We use the streamed bytes
+   462→   462→      // for an instant preview and the header URL when sending the message.
+   463→   463→      const serverUrl = res.headers.get('X-Tts-Url')
+   464→   464→      const blob = await res.blob()
+   465→   465→      const blobUrl = URL.createObjectURL(blob)
+   466→   466→      setPreviewUrl(blobUrl)
+   467→   467→      setSendUrl(serverUrl)
+   468→   468→      toast.success('Voice generated — preview and send')
+   469→   469→    } catch (e: any) {
+   470→   470→      toast.error(e.message || 'Failed to generate voice')
+   471→   471→    } finally {
+   472→   472→      setGenerating(false)
+   473→   473→    }
+   474→   474→  }
+   475→   475→
+   476→   476→  const handleSend = async () => {
+   477→   477→    if (!previewUrl || !sendUrl || sending) return
+   478→   478→    setSending(true)
+   479→   479→    try {
+   480→   480→      await onSend(sendUrl)
+   481→   481→      setText('')
+   482→   482→      if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
+   483→   483→      setPreviewUrl(null)
+   484→   484→      setSendUrl(null)
+   485→   485→    } catch {
+   486→   486→      toast.error('Failed to send voice message')
+   487→   487→    } finally {
+   488→   488→      setSending(false)
+   489→   489→    }
+   490→   490→  }
+   491→   491→
+   492→   492→  const handleClose = (o: boolean) => {
+   493→   493→    if (!o) {
+   494→   494→      setText('')
+   495→   495→      if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
+   496→   496→      setPreviewUrl(null)
+   497→   497→      setSendUrl(null)
+   498→   498→      setSelectedCustomVoiceId(null)
+   499→   499→    }
+   500→   500→    onOpenChange(o)
+   501→   501→  }
+   502→   502→
+   503→   503→  // Format a built-in voice as "Name (Language, Gender)" for the dropdown
+   504→   504→  const formatVoice = (v: { name: string; language: string; gender: string }) => {
+   505→   505→    const gender = v.gender.charAt(0).toUpperCase() + v.gender.slice(1)
+   506→   506→    return `${v.name} (${v.language}, ${gender})`
+   507→   507→  }
+   508→   508→
+   509→   509→  const builtinSelect = (
+   510→   510→    <Select value={voice} onValueChange={setVoice}>
+   511→   511→      <SelectTrigger>
+   512→   512→        <SelectValue />
+   513→   513→      </SelectTrigger>
+   514→   514→      <SelectContent>
+   515→   515→        {builtinVoices.length === 0 ? (
+   516→   516→          <SelectItem value={voice} disabled>
+   517→   517→            Loading voices…
+   518→   518→          </SelectItem>
+   519→   519→        ) : (
+   520→   520→          builtinVoices.map((v) => (
+   521→   521→            <SelectItem key={v.id} value={v.id}>
+   522→   522→              {formatVoice(v)}
+   523→   523→            </SelectItem>
+   524→   524→          ))
+   525→   525→        )}
+   526→   526→      </SelectContent>
+   527→   527→    </Select>
+   528→   528→  )
+   529→   529→
+   530→   530→  return (
+   531→   531→    <Dialog open={open} onOpenChange={handleClose}>
+   532→   532→      <DialogContent className="sm:max-w-md">
+   533→   533→        <DialogHeader>
+   534→   534→          <DialogTitle className="flex items-center gap-2">
+   535→   535→            <Sparkles className="w-4 h-4 text-primary" />
+   536→   536→            AI Voice Message
+   537→   537→          </DialogTitle>
+   538→   538→          <DialogDescription>
+   539→   539→            Type a message and send it as an AI-generated voice note. Create custom voices from audio clips.
+   540→   540→          </DialogDescription>
+   541→   541→        </DialogHeader>
+   542→   542→
+   543→   543→        {/* Tabs */}
+   544→   544→        <div className="flex gap-1 p-1 bg-muted rounded-lg">
+   545→   545→          <button
+   546→   546→            onClick={() => setTab('generate')}
+   547→   547→            className={cn(
+   548→   548→              'flex-1 py-1.5 text-sm font-medium rounded-md transition-colors',
+   549→   549→              tab === 'generate' ? 'bg-background text-foreground' : 'text-muted-foreground'
+   550→   550→            )}
+   551→   551→          >
+   552→   552→            Generate
+   553→   553→          </button>
+   554→   554→          <button
+   555→   555→            onClick={() => setTab('voices')}
+   556→   556→            className={cn(
+   557→   557→              'flex-1 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center justify-center gap-1.5',
+   558→   558→              tab === 'voices' ? 'bg-background text-foreground' : 'text-muted-foreground'
+   559→   559→            )}
+   560→   560→          >
+   561→   561→            My Voices
+   562→   562→            {customVoices.length > 0 && (
+   563→   563→              <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded-full">
+   564→   564→                {customVoices.length}
+   565→   565→              </span>
+   566→   566→            )}
+   567→   567→          </button>
+   568→   568→        </div>
+   569→   569→
+   570→   570→        {tab === 'generate' ? (
+   571→   571→          <div className="space-y-4">
+   572→   572→            <div className="space-y-2">
+   573→   573→              <Label>Message</Label>
+   574→   574→              <Textarea
+   575→   575→                value={text}
+   576→   576→                onChange={(e) => setText(e.target.value)}
+   577→   577→                placeholder="Type what the voice should say..."
+   578→   578→                rows={3}
+   579→   579→                maxLength={500}
+   580→   580→                className="resize-none"
+   581→   581→              />
+   582→   582→              <div className="text-xs text-muted-foreground text-right">
+   583→   583→                {text.length}/500
+   584→   584→              </div>
+   585→   585→            </div>
+   586→   586→
+   587→   587→            <div className="space-y-2">
+   588→   588→              <Label>Voice</Label>
+   589→   589→              {customVoices.length > 0 && (
+   590→   590→                <div className="space-y-2">
+   591→   591→                  <div className="flex gap-2">
+   592→   592→                    <button
+   593→   593→                      onClick={() => setSelectedCustomVoiceId(null)}
+   594→   594→                      className={cn(
+   595→   595→                        'flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors border',
+   596→   596→                        !selectedCustomVoiceId
+   597→   597→                          ? 'bg-primary/15 text-primary border-primary/30'
+   598→   598→                          : 'bg-muted/50 text-muted-foreground border-transparent hover:bg-muted'
+   599→   599→                      )}
+   600→   600→                    >
+   601→   601→                      Built-in
+   602→   602→                    </button>
+   603→   603→                    <button
+   604→   604→                      onClick={() => setSelectedCustomVoiceId(customVoices[0]?.id || null)}
+   605→   605→                      className={cn(
+   606→   606→                        'flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors border',
+   607→   607→                        selectedCustomVoiceId
+   608→   608→                          ? 'bg-primary/15 text-primary border-primary/30'
+   609→   609→                          : 'bg-muted/50 text-muted-foreground border-transparent hover:bg-muted'
+   610→   610→                      )}
+   611→   611→                    >
+   612→   612→                      Custom
+   613→   613→                    </button>
+   614→   614→                  </div>
+   615→   615→
+   616→   616→                  {selectedCustomVoiceId ? (
+   617→   617→                    <Select value={selectedCustomVoiceId} onValueChange={setSelectedCustomVoiceId}>
+   618→   618→                      <SelectTrigger>
+   619→   619→                        <SelectValue />
+   620→   620→                      </SelectTrigger>
+   621→   621→                      <SelectContent>
+   622→   622→                        {customVoices.map((v: any) => (
+   623→   623→                          <SelectItem key={v.id} value={v.id}>
+   624→   624→                            {v.name}
+   625→   625→                          </SelectItem>
+   626→   626→                        ))}
+   627→   627→                      </SelectContent>
+   628→   628→                    </Select>
+   629→   629→                  ) : (
+   630→   630→                    builtinSelect
+   631→   631→                  )}
+   632→   632→                </div>
+   633→   633→              )}
+   634→   634→
+   635→   635→              {!selectedCustomVoiceId && customVoices.length === 0 && builtinSelect}
+   636→   636→
+   637→   637→              {customVoices.length === 0 && (
+   638→   638→                <button
+   639→   639→                  onClick={() => setTab('voices')}
+   640→   640→                  className="text-xs text-primary hover:underline flex items-center gap-1"
+   641→   641→                >
+   642→   642→                  <Plus className="w-3 h-3" />
+   643→   643→                  Create a custom voice from your voice clip
+   644→   644→                </button>
+   645→   645→              )}
+   646→   646→            </div>
+   647→   647→
+   648→   648→            {/* Preview player */}
+   649→   649→            {previewUrl && (
+   650→   650→              <div className="space-y-2">
+   651→   651→                <Label>Preview</Label>
+   652→   652→                <audio controls src={previewUrl} className="w-full" />
+   653→   653→              </div>
+   654→   654→            )}
+   655→   655→          </div>
+   656→   656→        ) : (
+   657→   657→          <CustomVoicesTab onUseVoice={(id) => { setSelectedCustomVoiceId(id); setTab('generate') }} />
+   658→   658→        )}
+   659→   659→
+   660→   660→        <DialogFooter>
+   661→   661→          <Button variant="outline" onClick={() => handleClose(false)}>Cancel</Button>
+   662→   662→          {tab === 'generate' && (
+   663→   663→            !previewUrl ? (
+   664→   664→              <Button onClick={handleGenerate} disabled={!text.trim() || generating}>
+   665→   665→                {generating ? (
+   666→   666→                  <>
+   667→   667→                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+   668→   668→                    Generating...
+   669→   669→                  </>
+   670→   670→                ) : (
+   671→   671→                  <>
+   672→   672→                    <Sparkles className="w-4 h-4 mr-1.5" />
+   673→   673→                    Generate voice
+   674→   674→                  </>
+   675→   675→                )}
+   676→   676→              </Button>
+   677→   677→            ) : (
+   678→   678→              <>
+   679→   679→                <Button variant="outline" onClick={() => {
+   680→   680→                  if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
+   681→   681→                  setPreviewUrl(null)
+   682→   682→                  setSendUrl(null)
+   683→   683→                }} disabled={sending}>
+   684→   684→                  Regenerate
+   685→   685→                </Button>
+   686→   686→                <Button onClick={handleSend} disabled={sending}>
+   687→   687→                  {sending ? (
+   688→   688→                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+   689→   689→                  ) : (
+   690→   690→                    <Send className="w-4 h-4 mr-1.5" />
+   691→   691→                  )}
+   692→   692→                  Send
+   693→   693→                </Button>
+   694→   694→              </>
+   695→   695→            )
+   696→   696→          )}
+   697→   697→        </DialogFooter>
+   698→   698→      </DialogContent>
+   699→   699→    </Dialog>
+   700→   700→  )
+   701→   701→}
+   702→   702→
+   703→   703→/**
+   704→   704→ * Custom Voices tab — lets the user record/upload a voice clip and save it
+   705→   705→ * as a custom voice model for one-shot voice cloning.
+   706→   706→ */
+   707→   707→function CustomVoicesTab({ onUseVoice }: { onUseVoice: (id: string) => void }) {
+   708→   708→  const qc = useQueryClient()
+   709→   709→  const [name, setName] = useState('')
+   710→   710→  const [audioUrl, setAudioUrl] = useState<string | null>(null)
+   711→   711→  const [uploading, setUploading] = useState(false)
+   712→   712→  const [recording, setRecording] = useState(false)
+   713→   713→  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null)
+   714→   714→  const [audioChunks, setAudioChunks] = useState<Blob[]>([])
+   715→   715→
+   716→   716→  const { data: customVoicesData } = useQuery({
+   717→   717→    queryKey: ['tts-voices'],
+   718→   718→    queryFn: async () => {
+   719→   719→      const res = await fetch('/api/tts/voices')
+   720→   720→      if (!res.ok) throw new Error('failed')
+   721→   721→      return res.json()
+   722→   722→    },
+   723→   723→  })
+   724→   724→  const customVoices = customVoicesData?.voices || []
+   725→   725→
+   726→   726→  const deleteVoice = useMutation({
+   727→   727→    mutationFn: async (id: string) => {
+   728→   728→      await fetch(`/api/tts/voices/${id}`, { method: 'DELETE' })
+   729→   729→    },
+   730→   730→    onSuccess: () => {
+   731→   731→      qc.invalidateQueries({ queryKey: ['tts-voices'] })
+   732→   732→      toast.success('Voice deleted')
+   733→   733→    },
+   734→   734→  })
+   735→   735→
+   736→   736→  const saveVoice = useMutation({
+   737→   737→    mutationFn: async () => {
+   738→   738→      const res = await fetch('/api/tts/voices', {
+   739→   739→        method: 'POST',
+   740→   740→        headers: { 'Content-Type': 'application/json' },
+   741→   741→        body: JSON.stringify({ name, audioUrl }),
+   742→   742→      })
+   743→   743→      if (!res.ok) throw new Error('failed')
+   744→   744→      return res.json()
+   745→   745→    },
+   746→   746→    onSuccess: () => {
+   747→   747→      qc.invalidateQueries({ queryKey: ['tts-voices'] })
+   748→   748→      toast.success('Custom voice created')
+   749→   749→      setName('')
+   750→   750→      setAudioUrl(null)
+   751→   751→    },
+   752→   752→  })
+   753→   753→
+   754→   754→  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+   755→   755→    const file = e.target.files?.[0]
+   756→   756→    if (!file) return
+   757→   757→    setUploading(true)
+   758→   758→    try {
+   759→   759→      const formData = new FormData()
+   760→   760→      formData.append('file', file)
+   761→   761→      const res = await fetch('/api/upload', { method: 'POST', body: formData })
+   762→   762→      if (!res.ok) throw new Error('Upload failed')
+   763→   763→      const data = await res.json()
+   764→   764→      setAudioUrl(data.url)
+   765→   765→    } catch (e: any) {
+   766→   766→      toast.error(e.message || 'Upload failed')
+   767→   767→    } finally {
+   768→   768→      setUploading(false)
+   769→   769→      e.target.value = ''
+   770→   770→    }
+   771→   771→  }
+   772→   772→
+   773→   773→  const startRecording = async () => {
+   774→   774→    try {
+   775→   775→      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+   776→   776→      const recorder = new MediaRecorder(stream)
+   777→   777→      const chunks: Blob[] = []
+   778→   778→      recorder.ondataavailable = (e) => chunks.push(e.data)
+   779→   779→      recorder.onstop = async () => {
+   780→   780→        const blob = new Blob(chunks, { type: 'audio/webm' })
+   781→   781→        // Upload the recording
+   782→   782→        setUploading(true)
+   783→   783→        try {
+   784→   784→          const formData = new FormData()
+   785→   785→          formData.append('file', new File([blob], 'voice.webm', { type: 'audio/webm' }))
+   786→   786→          const res = await fetch('/api/upload', { method: 'POST', body: formData })
+   787→   787→          if (!res.ok) throw new Error('Upload failed')
+   788→   788→          const data = await res.json()
+   789→   789→          setAudioUrl(data.url)
+   790→   790→        } catch (e: any) {
+   791→   791→          toast.error(e.message || 'Upload failed')
+   792→   792→        } finally {
+   793→   793→          setUploading(false)
+   794→   794→        }
+   795→   795→        stream.getTracks().forEach((t) => t.stop())
+   796→   796→      }
+   797→   797→      recorder.start()
+   798→   798→      setMediaRecorder(recorder)
+   799→   799→      setRecording(true)
+   800→   800→      setAudioChunks(chunks)
+   801→   801→    } catch {
+   802→   802→      toast.error('Microphone access denied')
+   803→   803→    }
+   804→   804→  }
+   805→   805→
+   806→   806→  const stopRecording = () => {
+   807→   807→    if (mediaRecorder && mediaRecorder.state === 'recording') {
+   808→   808→      mediaRecorder.stop()
+   809→   809→      setRecording(false)
+   810→   810→    }
+   811→   811→  }
+   812→   812→
+   813→   813→  return (
+   814→   814→    <div className="space-y-4">
+   815→   815→      {/* Create new voice */}
+   816→   816→      <div className="space-y-3 p-3 rounded-xl bg-muted/50 border border-border/30">
+   817→   817→        <div className="flex items-center gap-2 text-sm font-medium">
+   818→   818→          <Mic className="w-4 h-4 text-primary" />
+   819→   819→          Create a Custom Voice
+   820→   820→        </div>
+   821→   821→        <p className="text-xs text-muted-foreground">
+   822→   822→          Upload or record a 10-30 second voice clip. We'll clone the voice so you can generate speech in it.
+   823→   823→        </p>
+   824→   824→        <div className="space-y-2">
+   825→   825→          <Input
+   826→   826→            value={name}
+   827→   827→            onChange={(e) => setName(e.target.value)}
+   828→   828→            placeholder="Voice name (e.g. My Voice)"
+   829→   829→          />
+   830→   830→        </div>
+   831→   831→        <div className="flex gap-2">
+   832→   832→          {!audioUrl ? (
+   833→   833→            <>
+   834→   834→              {!recording ? (
+   835→   835→                <Button onClick={startRecording} variant="outline" size="sm" className="flex-1">
+   836→   836→                  <Mic className="w-4 h-4 mr-1.5" />
+   837→   837→                  Record
+   838→   838→                </Button>
+   839→   839→              ) : (
+   840→   840→                <Button onClick={stopRecording} variant="destructive" size="sm" className="flex-1">
+   841→   841→                  <span className="w-2 h-2 rounded-full bg-white animate-pulse mr-1.5" />
+   842→   842→                  Stop
+   843→   843→                </Button>
+   844→   844→              )}
+   845→   845→              <label className="cursor-pointer flex-1">
+   846→   846→                <Button asChild variant="outline" size="sm" className="w-full">
+   847→   847→                  <span>
+   848→   848→                    <Plus className="w-4 h-4 mr-1.5" />
+   849→   849→                    Upload
+   850→   850→                  </span>
+   851→   851→                </Button>
+   852→   852→                <input type="file" className="hidden" accept="audio/*" onChange={handleUpload} disabled={uploading || recording} />
+   853→   853→              </label>
+   854→   854→            </>
+   855→   855→          ) : (
+   856→   856→            <div className="flex-1 space-y-2">
+   857→   857→              <audio controls src={audioUrl} className="w-full h-8" />
+   858→   858→              <div className="flex gap-2">
+   859→   859→                <Button
+   860→   860→                  onClick={() => saveVoice.mutate()}
+   861→   861→                  disabled={!name.trim() || saveVoice.isPending}
+   862→   862→                  size="sm"
+   863→   863→                  className="flex-1 gradient-primary"
+   864→   864→                >
+   865→   865→                  {saveVoice.isPending ? (
+   866→   866→                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+   867→   867→                  ) : (
+   868→   868→                    <Sparkles className="w-4 h-4 mr-1.5" />
+   869→   869→                  )}
+   870→   870→                  Save voice
+   871→   871→                </Button>
+   872→   872→                <Button
+   873→   873→                  onClick={() => setAudioUrl(null)}
+   874→   874→                  variant="outline"
+   875→   875→                  size="sm"
+   876→   876→                >
+   877→   877→                  Discard
+   878→   878→                </Button>
+   879→   879→              </div>
+   880→   880→            </div>
+   881→   881→          )}
+   882→   882→        </div>
+   883→   883→        {uploading && (
+   884→   884→          <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+   885→   885→            <Loader2 className="w-3 h-3 animate-spin" />
+   886→   886→            Uploading...
+   887→   887→          </div>
+   888→   888→        )}
+   889→   889→      </div>
+   890→   890→
+   891→   891→      {/* Existing custom voices */}
+   892→   892→      {customVoices.length > 0 && (
+   893→   893→        <div className="space-y-2">
+   894→   894→          <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+   895→   895→            Saved Voices
+   896→   896→          </Label>
+   897→   897→          <div className="space-y-1.5 max-h-48 overflow-y-auto">
+   898→   898→            {customVoices.map((v: any) => (
+   899→   899→              <div
+   900→   900→                key={v.id}
+   901→   901→                className="flex items-center gap-3 p-2.5 rounded-xl bg-card border border-border/30 hover:border-primary/30 transition-colors group"
+   902→   902→              >
+   903→   903→                <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
+   904→   904→                  <User className="w-4 h-4 text-primary" />
+   905→   905→                </div>
+   906→   906→                <div className="flex-1 min-w-0">
+   907→   907→                  <div className="text-sm font-medium truncate">{v.name}</div>
+   908→   908→                  <div className="text-xs text-muted-foreground">
+   909→   909→                    Created {new Date(v.createdAt).toLocaleDateString()}
+   910→   910→                  </div>
+   911→   911→                </div>
+   912→   912→                <button
+   913→   913→                  onClick={() => onUseVoice(v.id)}
+   914→   914→                  className="text-xs px-2.5 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
+   915→   915→                >
+   916→   916→                  Use
+   917→   917→                </button>
+   918→   918→                <button
+   919→   919→                  onClick={() => {
+   920→   920→                    if (confirm(`Delete "${v.name}"?`)) deleteVoice.mutate(v.id)
+   921→   921→                  }}
+   922→   922→                  className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/10 transition-colors"
+   923→   923→                >
+   924→   924→                  <Trash2 className="w-3.5 h-3.5" />
+   925→   925→                </button>
+   926→   926→              </div>
+   927→   927→            ))}
+   928→   928→          </div>
+   929→   929→        </div>
+   930→   930→      )}
+   931→   931→
+   932→   932→      {customVoices.length === 0 && !audioUrl && (
+   933→   933→        <div className="text-center py-6">
+   934→   934→          <div className="w-12 h-12 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-2">
+   935→   935→            <Mic className="w-5 h-5 text-primary" />
+   936→   936→          </div>
+   937→   937→          <p className="text-sm text-muted-foreground">No custom voices yet</p>
+   938→   938→        </div>
+   939→   939→      )}
+   940→   940→    </div>
+   941→   941→  )
+   942→   942→}
+   943→   943→

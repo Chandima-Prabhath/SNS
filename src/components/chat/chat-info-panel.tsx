@@ -4,9 +4,10 @@ import { useQuery } from '@tanstack/react-query'
 import { useAppStore } from '@/stores/useAppStore'
 import { usePresence } from '@/hooks/usePresence'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
-import { Hash, Copy, Check } from 'lucide-react'
+import { Hash, Copy, Check, X } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -47,6 +48,23 @@ export function ChatInfoPanel({ channel }: ChatInfoPanelProps) {
 
   const content = (
     <div className="flex flex-col h-full">
+      {/* Header bar with close button (desktop only — the mobile Sheet has
+          its own built-in close button via SheetContent). */}
+      <div className="lg:flex hidden items-center justify-between px-4 py-3 border-b">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          Info
+        </h2>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 rounded-lg hover:bg-accent"
+          onClick={() => setChatInfoOpen(false)}
+          aria-label="Close info panel"
+        >
+          <X className="w-4 h-4" />
+        </Button>
+      </div>
+
       {/* Hero */}
       <div className="p-6 flex flex-col items-center text-center border-b">
         {isGroup ? (

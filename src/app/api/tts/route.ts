@@ -2,17 +2,13 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { mkdir, readFile } from 'fs/promises'
+import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import path from 'path'
-import crypto from 'crypto'
 
 const execFileAsync = promisify(execFile)
-
-// Cache the upload-dir-exists check so we don't stat() on every request.
-let uploadDirEnsured = false
 
 /**
  * POST /api/tts — Generate a voice message using PocketBase TTS (Kyutai pocket-tts).
@@ -21,29 +17,22 @@ let uploadDirEnsured = false
  *   - voice: a built-in voice name (alba, charles, etc.) — passed as voice_url
  *   - customVoiceId: ID of a user-created CustomVoice — passed as voice_wav
  *
- * Returns: a STREAMED audio/wav response body (so the client can start
- * playback immediately) plus an `X-Tts-Url` response header pointing at the
- * saved file in /uploads/ (which is written to disk in the background while
- * the client receives the stream).
+ * Returns: a STREAMED audio/wav response body. The TTS server's response is
+ * piped straight back to the client without buffering — the browser can start
+ * playback as soon as the first bytes arrive (this is what the official
+ * Pocket TTS web UI does to feel "instantaneous").
+ *
+ * We intentionally do NOT save the audio to disk in this route. The client
+ * receives the WAV blob, creates an object URL for an instant preview, and
+ * uploads the blob to /api/upload only when the user actually sends the
+ * message. This keeps the route as fast as possible and avoids writing
+ * throwaway files to disk when the user cancels.
  *
  * The TTS service is expected to be running on the VM at the URL specified
  * by the TTS_URL environment variable (default: http://localhost:8000).
  * We proxy through this route to:
  *   - Keep the VM URL private (not exposed to the client)
  *   - Avoid CORS issues
- *   - Save the audio file to public/uploads/ so it can be served statically
- *
- * Performance notes:
- *   - For built-in voices we only append `text` + `voice_url` to the form —
- *     no file reads, no ffmpeg, no extra work before calling the TTS server.
- *     `voice_url` uses the server's pre-built voices (fast). We NEVER pass
- *     `voice_wav` for built-in voices (that would trigger voice cloning).
- *   - We stream the TTS response straight through to the client instead of
- *     buffering it with `arrayBuffer()` first. The stream is teed: one branch
- *     goes to the client (low TTFB, playback can start immediately), the other
- *     is piped to a file write stream in the background. The client receives
- *     the final URL in the `X-Tts-Url` header so it can send the message
- *     without waiting for the disk write to finish.
  */
 export async function POST(req: Request) {
   try {
@@ -69,11 +58,8 @@ export async function POST(req: Request) {
     const formData = new FormData()
     formData.append('text', truncatedText)
 
-    // If a custom voice ID is provided, check for a safetensors model first
-    // (fast path — just loads tensors, no PyTorch compute). Fall back to the
-    // raw audio clip (slow path — runs the Mimi encoder) if no safetensors
-    // model has been exported yet.
     if (customVoiceId) {
+      // Custom voice — load the user's voice model / clip from the DB.
       const customVoice = await db.customVoice.findUnique({
         where: { id: customVoiceId },
       })
@@ -83,17 +69,14 @@ export async function POST(req: Request) {
 
       if (customVoice.safetensorsUrl) {
         // Fast path: pass the safetensors URL as voice_url. The Pocket TTS
-        // server detects the .safetensors extension and loads tensors directly
-        // instead of running the audio through the Mimi encoder.
-        // We need to pass an absolute URL since the TTS server needs to
-        // download it. Use the app's public URL or localhost.
+        // server detects the .safetensors extension and loads tensors
+        // directly instead of running the audio through the Mimi encoder.
         const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3090'
         formData.append('voice_url', `${baseUrl}${customVoice.safetensorsUrl}`)
       } else {
         // Slow path: pass the raw audio file as voice_wav.
         // IMPORTANT: Pocket TTS expects a valid WAV file (RIFF header).
-        // If the uploaded file is webm/mp3/m4a, we must convert it to WAV
-        // using ffmpeg first.
+        // If the uploaded file is webm/mp3/m4a, convert it to WAV with ffmpeg.
         const audioPath = path.join(process.cwd(), 'public', customVoice.audioUrl)
         if (!existsSync(audioPath)) {
           return NextResponse.json({ error: 'voice clip file not found' }, { status: 404 })
@@ -132,36 +115,13 @@ export async function POST(req: Request) {
       )
     }
 
-    // Decide the final URL + on-disk path up front so we can return the URL
-    // in a header and start writing the file while the client streams audio.
-    const uploadDir = path.join(process.cwd(), 'public', 'uploads')
-    if (!uploadDirEnsured && !existsSync(uploadDir)) {
-      await mkdir(uploadDir, { recursive: true })
-    }
-    uploadDirEnsured = true
-
-    const filename = `tts-${crypto.randomUUID()}.wav`
-    const filePath = path.join(uploadDir, filename)
-    const fileUrl = `/uploads/${filename}`
-
-    // Tee the TTS response: one branch streams to the client (immediate
-    // playback), the other is piped to a file write stream in the background
-    // (so the file is ready by the time the user clicks "send").
-    const [clientStream, diskStream] = ttsRes.body.tee()
-
-    streamToFile(diskStream, filePath).catch((e) => {
-      console.error('[tts] background save failed:', e)
-    })
-
-    // Stream the WAV straight back to the client. The URL of the saved file
-    // is sent in the `X-Tts-Url` header so the client can send the message
-    // with that URL (the file is written in the background while the client
-    // receives + previews the audio).
-    return new Response(clientStream, {
+    // Stream the TTS server's response straight back to the client. No
+    // buffering, no disk write — the browser receives the audio chunks as
+    // they are generated and can begin playback immediately.
+    return new Response(ttsRes.body, {
       status: 200,
       headers: {
         'Content-Type': 'audio/wav',
-        'X-Tts-Url': fileUrl,
         'X-Tts-Text': encodeURIComponent(truncatedText),
         'X-Tts-Voice': customVoiceId ? 'custom' : voice,
         'Cache-Control': 'no-store',
@@ -173,33 +133,6 @@ export async function POST(req: Request) {
       { error: e?.message || 'TTS generation failed' },
       { status: 500 }
     )
-  }
-}
-
-/**
- * Pipe a ReadableStream of bytes to a file on disk (streaming write — chunks
- * are flushed as they arrive so the file is ready almost as soon as the last
- * byte is received). Used to save the TTS audio in the background.
- */
-async function streamToFile(stream: ReadableStream<Uint8Array>, filePath: string) {
-  const { createWriteStream } = await import('fs')
-  const writeStream = createWriteStream(filePath)
-  const reader = stream.getReader()
-  let total = 0
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (value) {
-        total += value.byteLength
-        writeStream.write(value)
-      }
-    }
-    await new Promise<void>((resolve, reject) => {
-      writeStream.end((err?: Error | null) => (err ? reject(err) : resolve()))
-    })
-  } finally {
-    writeStream.destroy()
   }
 }
 

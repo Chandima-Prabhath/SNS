@@ -627,6 +627,13 @@ function PlayerBar({
     onTogglePlay()
   }, [onTogglePlay])
 
+  // Expand only when the FAB wasn't being dragged — dragging the FAB should
+  // never trigger an expand (a stray click fires after drag-end otherwise).
+  const handleExpandClick = useCallback(() => {
+    if (isDraggingRef.current) return
+    setExpanded(true)
+  }, [])
+
   return (
     <>
       {/* ─── Collapsed: Draggable Floating Mini-Player (FAB) ─── */}
@@ -673,7 +680,7 @@ function PlayerBar({
 
               {/* Track title — visible on desktop, tap target for expand on mobile */}
               <button
-                onClick={() => setExpanded(true)}
+                onClick={handleExpandClick}
                 onPointerDown={(e) => e.stopPropagation()}
                 className="hidden sm:block min-w-0 max-w-[140px] text-left"
               >
@@ -683,7 +690,7 @@ function PlayerBar({
 
               {/* Expand button */}
               <button
-                onClick={() => setExpanded(true)}
+                onClick={handleExpandClick}
                 onPointerDown={(e) => e.stopPropagation()}
                 className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-foreground hover:bg-white/20 hover:scale-105 active:scale-95 transition-all shrink-0"
                 aria-label="Expand player"
@@ -747,7 +754,7 @@ function PlayerBar({
             </div>
 
             {/* Desktop layout */}
-            <div className="hidden lg:flex px-5 py-4 items-center gap-5">
+            <div className="hidden lg:flex px-5 py-4 pr-7 items-center gap-5">
               {/* Track info */}
               <div className="flex items-center gap-3 min-w-0 w-52 shrink-0">
                 {currentTrack.thumbnail ? (
