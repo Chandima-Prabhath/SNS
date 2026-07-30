@@ -444,6 +444,7 @@ function TtsDialog({
   const [generating, setGenerating] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null)
+  const [isStreaming, setIsStreaming] = useState(false)
   const [sending, setSending] = useState(false)
   const qc = useQueryClient()
 
@@ -477,6 +478,7 @@ function TtsDialog({
     setGenerating(true)
     setPreviewUrl(null)
     setPreviewBlob(null)
+    setIsStreaming(false)
     try {
       const body: any = { text }
       if (selectedCustomVoiceId) {
@@ -495,8 +497,7 @@ function TtsDialog({
       }
 
       // Stream the response — read chunks as they arrive, play immediately
-      // via Web Audio API (like the Pocket TTS built-in web UI), and
-      // collect the full blob for sending as a message.
+      // via Web Audio API, and collect the full blob for the preview player.
       const reader = res.body!.getReader()
       const chunks: Uint8Array[] = []
       let audioCtx: AudioContext | null = null
@@ -525,12 +526,14 @@ function TtsDialog({
         nextStartTime = startTime + audioBuffer.duration
       }
 
+      // Mark streaming started (shows "Playing..." indicator)
+      setIsStreaming(true)
+
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         if (value) {
           chunks.push(value)
-          // Parse WAV header (first 44 bytes)
           if (!headerParsed) {
             const needed = 44 - headerBytes
             const copy = Math.min(needed, value.length)
@@ -540,7 +543,6 @@ function TtsDialog({
               const view = new DataView(headerBuf.buffer)
               sampleRate = view.getUint32(24, true)
               headerParsed = true
-              // Initialize audio context on first chunk (user gesture)
               if (!audioCtx) {
                 audioCtx = new AudioContext({ latencyHint: 'playback' })
               }
@@ -561,16 +563,18 @@ function TtsDialog({
           }
         }
       }
-      // Play any remaining PCM
       if (pcmBuffer.length > 0) playChunk(pcmBuffer)
 
-      // Create blob URL for the preview audio element
+      // Streaming complete — create the blob URL for the preview audio element
+      // The <audio> element will show progress bar and play state
       const blob = new Blob(chunks, { type: 'audio/wav' })
       const blobUrl = URL.createObjectURL(blob)
       setPreviewBlob(blob)
       setPreviewUrl(blobUrl)
+      setIsStreaming(false)
       toast.success('Voice generated — preview and send')
     } catch (e: any) {
+      setIsStreaming(false)
       toast.error(e.message || 'Failed to generate voice')
     } finally {
       setGenerating(false)
@@ -755,8 +759,25 @@ function TtsDialog({
               )}
             </div>
 
-            {/* Preview player */}
-            {previewUrl && (
+            {/* Streaming indicator — shown while audio is being generated and played */}
+            {isStreaming && (
+              <div className="space-y-2">
+                <Label>Playing audio...</Label>
+                <div className="flex items-center gap-2 p-3 rounded-xl bg-primary/10 border border-primary/20">
+                  <div className="flex gap-1 items-center">
+                    <span className="w-1 h-4 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0ms' }} />
+                    <span className="w-1 h-6 bg-primary rounded-full animate-pulse" style={{ animationDelay: '100ms' }} />
+                    <span className="w-1 h-3 bg-primary rounded-full animate-pulse" style={{ animationDelay: '200ms' }} />
+                    <span className="w-1 h-5 bg-primary rounded-full animate-pulse" style={{ animationDelay: '300ms' }} />
+                    <span className="w-1 h-4 bg-primary rounded-full animate-pulse" style={{ animationDelay: '400ms' }} />
+                  </div>
+                  <span className="text-xs text-muted-foreground">Generating and playing...</span>
+                </div>
+              </div>
+            )}
+
+            {/* Preview player — shown after streaming completes */}
+            {previewUrl && !isStreaming && (
               <div className="space-y-2">
                 <Label>Preview</Label>
                 <audio controls src={previewUrl} className="w-full" />

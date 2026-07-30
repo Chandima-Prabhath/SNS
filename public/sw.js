@@ -14,8 +14,8 @@
  *   requests (sending messages, etc.) will fail gracefully.
  */
 
-const CACHE_NAME = 'adoo-v6'
-const API_CACHE = 'adoo-api-v6'
+const CACHE_NAME = 'adoo-v7'
+const API_CACHE = 'adoo-api-v7'
 const APP_SHELL = ['/', '/manifest.json', '/icon.svg']
 
 self.addEventListener('install', (event) => {
@@ -123,7 +123,7 @@ self.addEventListener('fetch', (event) => {
   // This enables offline reading: if the network is down, serve cached API
   // responses (messages, channels, users, etc.). When the network is up,
   // serve cached immediately AND fetch fresh data in the background.
-  if (url.pathname.startsWith('/api/') && !url.pathname.includes('/api/tts') && !url.pathname.includes('/api/music/stream') && !url.pathname.includes('/api/upload') && !url.pathname.includes('/api/music/debug')) {
+  if (url.pathname.startsWith('/api/') && !url.pathname.includes('/api/tts') && !url.pathname.includes('/api/music/stream') && !url.pathname.includes('/api/upload') && !url.pathname.includes('/api/music/debug') && !url.pathname.includes('/api/version')) {
     event.respondWith(
       caches.open(API_CACHE).then((cache) =>
         cache.match(req).then((cached) => {

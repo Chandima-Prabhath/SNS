@@ -205,8 +205,8 @@ export function MusicView() {
           </h1>
 
           {/* Tab navigation — glassmorphic pill bar */}
-          <GlassSurface className="max-w-xs" blur={12} opacity={0.05}>
-            <div className="flex gap-1 p-1">
+          <GlassSurface className="max-w-md" blur={12} opacity={0.05}>
+            <div className="flex gap-1 p-1 overflow-x-auto no-scrollbar">
               {([
                 ['browse', 'Browse', Compass],
                 ['rooms', 'Rooms', Radio],
@@ -217,13 +217,13 @@ export function MusicView() {
                   key={key}
                   onClick={() => setTab(key)}
                   className={cn(
-                    'flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-sm font-medium transition-all',
+                    'flex-1 min-w-fit flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl text-xs font-medium transition-all whitespace-nowrap',
                     tab === key
                       ? 'gradient-primary text-primary-foreground shadow-glow'
                       : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
                   )}
                 >
-                  <Icon className="w-4 h-4" />
+                  <Icon className="w-3.5 h-3.5" />
                   {label}
                   {key === 'queue' && queue.length > 0 && (
                     <span className="text-[10px] bg-primary-foreground/20 text-primary-foreground px-1.5 py-0.5 rounded-full">
