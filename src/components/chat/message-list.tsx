@@ -4,13 +4,17 @@ import { useEffect, useRef, useState, useMemo } from 'react'
 import { useChannel, type ChannelMessage, type KeyboardButton } from '@/hooks/useChannel'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot, UserX, Copy, Pin, AudioLines, ChevronDown } from 'lucide-react'
+import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot, UserX, Copy, Pin, AudioLines, ChevronDown, Phone, Video, Music as MusicIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { format, isToday, isYesterday } from 'date-fns'
 import { useAppStore } from '@/stores/useAppStore'
 import { useSession } from 'next-auth/react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useContextMenu } from '@/components/ui/context-menu-provider'
+import { useCall } from '@/hooks/useCall'
+import { useMusicStore } from '@/stores/useMusicStore'
+import { useSocket } from '@/hooks/useSocket'
+import { toast } from 'sonner'
 
 interface MessageListProps {
   channelId: string
@@ -421,6 +425,45 @@ function MessageItem(props: MessageItemProps) {
   const [editText, setEditText] = useState(m.body)
   const isDeleted = !!m.deletedAt
   const ctxMenu = useContextMenu()
+  const { startCall } = useCall()
+  const setActiveRoomId = useMusicStore((s) => s.setActiveRoomId)
+  const socket = useSocket()
+
+  // Handle invitation Join button — joins a call or music room
+  const handleInviteJoin = async (invite: any) => {
+    try {
+      if (invite.type === 'call') {
+        // Join the call via the API (idempotent — joins existing or creates)
+        const payload = invite.dmGroupId
+          ? { dmGroupId: invite.dmGroupId }
+          : { channelId: invite.channelId }
+        const res = await fetch('/api/calls', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) throw new Error('Failed to join call')
+        const data = await res.json()
+        // Start our side (mic + WebRTC)
+        await startCall({
+          callId: data.call.id,
+          channelId: invite.channelId,
+          dmGroupId: invite.dmGroupId,
+          enableVideo: invite.isVideo ?? false,
+        })
+        toast.success('Joined the call')
+      } else if (invite.type === 'music') {
+        // Join the music room — set active room + auto-join as member
+        setActiveRoomId(invite.targetId)
+        await fetch(`/api/music/rooms/${invite.targetId}`).catch(() => {})
+        toast.success(`Joined music room "${invite.roomName || 'Unnamed'}"`)
+        // Navigate to music view
+        window.location.hash = 'music'
+      }
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to join')
+    }
+  }
 
   const showMessageContextMenu = (e: React.MouseEvent | React.TouchEvent) => {
     let x: number, y: number
@@ -531,6 +574,63 @@ function MessageItem(props: MessageItemProps) {
             <div className="truncate opacity-70">{m.replyTo.body.slice(0, 80)}</div>
           </div>
         )}
+
+        {/* Invitation cards (call / music room invites) */}
+        {(m.mediaType === 'invite-call' || m.mediaType === 'invite-music') && (() => {
+          try {
+            const invite = JSON.parse(m.body)
+            const isCall = invite.type === 'call'
+            return (
+              <div className="mb-1.5 -mx-1">
+                <div className={cn(
+                  'rounded-xl border overflow-hidden',
+                  isCall ? 'bg-blue-500/10 border-blue-500/30' : 'bg-purple-500/10 border-purple-500/30'
+                )}>
+                  {/* Header */}
+                  <div className="flex items-center gap-2.5 p-3">
+                    <div className={cn(
+                      'w-10 h-10 rounded-full flex items-center justify-center shrink-0',
+                      isCall ? 'bg-blue-500/20' : 'bg-purple-500/20'
+                    )}>
+                      {isCall ? (
+                        invite.isVideo ? <Video className="w-5 h-5 text-blue-400" /> : <Phone className="w-5 h-5 text-blue-400" />
+                      ) : (
+                        <MusicIcon className="w-5 h-5 text-purple-400" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold">
+                        {isCall
+                          ? `${invite.fromName} invited you to a ${invite.isVideo ? 'video' : 'voice'} call`
+                          : `${invite.fromName} invited you to music room "${invite.roomName || 'Unnamed'}"`
+                        }
+                      </div>
+                      <div className="text-xs opacity-60">
+                        {isCall ? 'Tap Join to connect' : 'Tap Join to listen together'}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Action buttons */}
+                  <div className="flex gap-1.5 p-2 pt-0">
+                    <button
+                      onClick={() => handleInviteJoin(invite)}
+                      className={cn(
+                        'flex-1 py-2 rounded-lg text-xs font-semibold transition-all active:scale-95',
+                        isCall
+                          ? 'bg-blue-500/30 text-blue-300 hover:bg-blue-500/40'
+                          : 'bg-purple-500/30 text-purple-300 hover:bg-purple-500/40'
+                      )}
+                    >
+                      Join
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )
+          } catch {
+            return null
+          }
+        })()}
 
         {/* Media */}
         {m.mediaUrl && m.mediaType?.startsWith('image') && (

@@ -1,0 +1,859 @@
+     1→'use client'
+     2→
+     3→/**
+     4→ * Adoo Call Manager — Singleton
+     5→ *
+     6→ * This is a module-scoped singleton (NOT React state). One instance exists
+     7→ * for the entire app lifetime. This avoids the "multiple useVoiceCall instances"
+     8→ * bug where each component creates its own manager and they fight over control.
+     9→ *
+    10→ * Architecture:
+    11→ *   - CallManager class: owns the socket, RTCPeerConnections, local streams
+    12→ *   - callManager singleton: the one instance, created lazily
+    13→ *   - useCall hook: thin React wrapper that reads from the Zustand callStore
+    14→ *   - CallController: mounted once at app root, wires manager events to store
+    15→ *
+    16→ * Mute fix: we toggle sender.track.enabled on the SENDER track (the processed
+    17→ * one from AudioWorklet), not the source track. The source track stays enabled
+    18→ * so the worklet keeps running. We also gate the worklet output node directly.
+    19→ *
+    20→ * Call ending: full 6-step cleanup on both sides (stop tracks, close PCs,
+    21→ * remove listeners, notify server, detach media, reset state).
+    22→ */
+    23→
+    24→import type { Socket } from 'socket.io-client'
+    25→
+    26→export type CallStatus = 'idle' | 'ringing' | 'connecting' | 'connected' | 'reconnecting' | 'ended'
+    27→
+    28→export interface CallParticipant {
+    29→  peerId: string
+    30→  userId: string
+    31→  username: string
+    32→  stream?: MediaStream
+    33→  muted: boolean
+    34→  videoEnabled: boolean
+    35→}
+    36→
+    37→export interface CallManagerCallbacks {
+    38→  onStatusChange: (status: CallStatus) => void
+    39→  onLocalStream: (stream: MediaStream | null) => void
+    40→  onParticipantsChange: (participants: CallParticipant[]) => void
+    41→  onMuteChange: (muted: boolean) => void
+    42→  onVideoToggle: (enabled: boolean) => void
+    43→  onConnectionType: (peerId: string, type: 'p2p' | 'turn' | 'unknown') => void
+    44→  onAudioLevel: (peerId: string, level: number) => void
+    45→  onIncomingCall: (payload: IncomingCallPayload) => void
+    46→  onCallEnded: (reason: string) => void
+    47→}
+    48→
+    49→export interface IncomingCallPayload {
+    50→  callId: string
+    51→  from: { userId: string; username: string; displayName: string }
+    52→  channelId?: string
+    53→  dmGroupId?: string
+    54→  video?: boolean
+    55→}
+    56→
+    57→interface PeerEntry {
+    58→  pc: RTCPeerConnection
+    59→  userId: string
+    60→  username: string
+    61→  makingOffer: boolean
+    62→  ignoreOffer: boolean
+    63→  isInitiator: boolean
+    64→  isPolite: boolean
+    65→  audioSender?: RTCRtpSender
+    66→  videoSender?: RTCRtpSender
+    67→  remoteStream: MediaStream
+    68→  audioEl?: HTMLAudioElement
+    69→  audioLevelChecker?: number
+    70→  lastStatsType?: 'p2p' | 'turn' | 'unknown'
+    71→  failedTimer?: number
+    72→}
+    73→
+    74→// Audio unlock (autoplay policy)
+    75→let audioUnlocked = false
+    76→const pendingAudioElements: HTMLAudioElement[] = []
+    77→
+    78→export function unlockAudio() {
+    79→  if (audioUnlocked) return
+    80→  audioUnlocked = true
+    81→  for (const el of pendingAudioElements) {
+    82→    el.play().catch(() => {})
+    83→  }
+    84→  pendingAudioElements.length = 0
+    85→  try {
+    86→    const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext
+    87→    if (AudioContextClass) {
+    88→      const ctx = new AudioContextClass()
+    89→      if (ctx.state === 'suspended') ctx.resume()
+    90→      const buffer = ctx.createBuffer(1, 1, 22050)
+    91→      const source = ctx.createBufferSource()
+    92→      source.buffer = buffer
+    93→      source.connect(ctx.destination)
+    94→      source.start(0)
+    95→    }
+    96→  } catch {}
+    97→}
+    98→
+    99→export class CallManager {
+   100→  private socket: Socket | null = null
+   101→  private callId: string | null = null
+   102→  private callbacks: CallManagerCallbacks | null = null
+   103→
+   104→  // Local media
+   105→  private localStream: MediaStream | null = null
+   106→  private audioContext: AudioContext | null = null
+   107→  private rnnoiseNode: any = null
+   108→  private gainNode: any = null // for muting the worklet output
+   109→  private sourceAudioTrack: MediaStreamTrack | null = null // original mic track
+   110→  private processedAudioTrack: MediaStreamTrack | null = null // after RNNoise
+   111→
+   112→  // Peers
+   113→  private peers: Map<string, PeerEntry> = new Map()
+   114→  private iceServers: RTCIceServer[] = []
+   115→
+   116→  // State
+   117→  private userMuted = false
+   118→  private videoEnabled = true
+   119→  private isVideoCall = false
+   120→  private enableRnnoise = true
+   121→  private status: CallStatus = 'idle'
+   122→  private wakeLock: any = null
+   123→
+   124→  // Global listeners registered flag
+   125→  private globalListenersRegistered = false
+   126→
+   127→  setSocket(socket: Socket) {
+   128→    this.socket = socket
+   129→    this.registerGlobalListeners()
+   130→  }
+   131→
+   132→  setCallbacks(callbacks: CallManagerCallbacks) {
+   133→    this.callbacks = callbacks
+   134→  }
+   135→
+   136→  setIceServers(servers: RTCIceServer[]) {
+   137→    this.iceServers = servers
+   138→  }
+   139→
+   140→  private registerGlobalListeners() {
+   141→    if (!this.socket || this.globalListenersRegistered) return
+   142→    this.globalListenersRegistered = true
+   143→
+   144→    this.socket.on('call:incoming', (payload: any) => {
+   145→      console.log('[call] incoming call from', payload.from?.displayName)
+   146→      this.callbacks?.onIncomingCall(payload)
+   147→    })
+   148→
+   149→    this.socket.on('call:cancel', (payload: any) => {
+   150→      window.dispatchEvent(new CustomEvent('sns:call-cancelled', { detail: payload }))
+   151→    })
+   152→
+   153→    this.socket.on('call:reject', (payload: any) => {
+   154→      console.log('[call] call rejected by remote')
+   155→      // Stop ringback sound immediately
+   156→      import('./call-sounds').then(m => m.CallSounds.stop()).catch(() => {})
+   157→      // If we're the caller and the call was rejected, end our side
+   158→      if (this.callId && this.status !== 'idle') {
+   159→        this.endCallCleanup()
+   160→        this.callbacks?.onCallEnded('rejected')
+   161→      }
+   162→      window.dispatchEvent(new CustomEvent('sns:call-rejected', { detail: payload }))
+   163→    })
+   164→
+   165→    this.socket.on('call:accept', (payload: any) => {
+   166→      console.log('[call] call accepted by remote')
+   167→      // Stop ringback sound — the call is connecting now
+   168→      import('./call-sounds').then(m => m.CallSounds.stop()).catch(() => {})
+   169→      window.dispatchEvent(new CustomEvent('sns:call-accepted', { detail: payload }))
+   170→    })
+   171→
+   172→    this.socket.on('call:ended', (payload: { callId: string; reason: string }) => {
+   173→      console.log('[call] call ended by server:', payload.reason)
+   174→      this.endCallCleanup()
+   175→      // Play ended sound
+   176→      import('./call-sounds').then(m => m.CallSounds.playEnded()).catch(() => {})
+   177→      this.callbacks?.onCallEnded(payload.reason)
+   178→    })
+   179→  }
+   180→
+   181→  private setStatus(status: CallStatus) {
+   182→    this.status = status
+   183→    this.callbacks?.onStatusChange(status)
+   184→  }
+   185→
+   186→  getStatus() { return this.status }
+   187→  getCallId() { return this.callId }
+   188→  getLocalStream() { return this.localStream }
+   189→  isMuted() { return this.userMuted }
+   190→  isVideoEnabled() { return this.videoEnabled }
+   191→  isVideoCall() { return this.isVideoCall }
+   192→
+   193→  getParticipants(): CallParticipant[] {
+   194→    return Array.from(this.peers.entries()).map(([peerId, p]) => ({
+   195→      peerId,
+   196→      userId: p.userId,
+   197→      username: p.username,
+   198→      stream: p.remoteStream,
+   199→      muted: false,
+   200→      videoEnabled: true,
+   201→    }))
+   202→  }
+   203→
+   204→  /**
+   205→   * Start a call — gets mic (and optionally camera), sets up WebRTC.
+   206→   */
+   207→  async startCall(params: {
+   208→    callId: string
+   209→    channelId?: string | null
+   210→    dmGroupId?: string | null
+   211→    enableVideo?: boolean
+   212→  }): Promise<void> {
+   213→    if (!this.socket) throw new Error('Socket not connected')
+   214→    if (this.iceServers.length === 0) throw new Error('ICE servers not loaded')
+   215→
+   216→    this.callId = params.callId
+   217→    this.isVideoCall = params.enableVideo ?? false
+   218→    this.setStatus('connecting')
+   219→
+   220→    // Acquire wake lock to prevent screen sleep
+   221→    try {
+   222→      this.wakeLock = await (navigator as any).wakeLock?.request('screen')
+   223→    } catch {}
+   224→
+   225→    // Get audio + video in a SINGLE getUserMedia call
+   226→    // Use simple constraints for maximum cross-browser compatibility.
+   227→    // Firefox Android is picky about facingMode + resolution combinations.
+   228→    const constraints: MediaStreamConstraints = {
+   229→      audio: {
+   230→        echoCancellation: true,
+   231→        autoGainControl: true,
+   232→        channelCount: 1,
+   233→        noiseSuppression: !this.enableRnnoise,
+   234→      } as MediaTrackConstraints,
+   235→      video: this.isVideoCall
+   236→        ? { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 20 } }
+   237→        : false,
+   238→    }
+   239→
+   240→    this.localStream = await navigator.mediaDevices.getUserMedia(constraints)
+   241→
+   242→    // Store the source audio track (before RNNoise processing)
+   243→    this.sourceAudioTrack = this.localStream.getAudioTracks()[0]
+   244→
+   245→    // Apply RNNoise if enabled
+   246→    if (this.enableRnnoise) {
+   247→      await this.applyRnnoise()
+   248→    }
+   249→
+   250→    this.processedAudioTrack = this.localStream.getAudioTracks()[0]
+   251→
+   252→    console.log('[call] local stream ready, video:', this.isVideoCall, 'rnnoise:', !!this.rnnoiseNode)
+   253→    this.callbacks?.onLocalStream(this.localStream)
+   254→
+   255→    // CRITICAL: Register signaling listeners BEFORE joining the call room.
+   256→    // The server immediately sends 'call:peers' when we join, so we need
+   257→    // the listeners in place BEFORE the emit. Otherwise the event arrives
+   258→    // with no handler and the call never connects (stuck on 'connecting').
+   259→    this.setupCallSignaling()
+   260→
+   261→    // Join the call room
+   262→    this.socket.emit('call:join', this.callId)
+   263→    console.log('[call] joined call room', this.callId)
+   264→  }
+   265→
+   266→  /**
+   267→   * Apply RNNoise neural noise suppression.
+   268→   * Creates: source → rnnoise worklet → gainNode → destination
+   269→   * The gainNode lets us mute without affecting the worklet processing.
+   270→   */
+   271→  private async applyRnnoise() {
+   272→    try {
+   273→      const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext
+   274→      if (!AudioContextClass) return
+   275→
+   276→      this.audioContext = new AudioContextClass({ sampleRate: 48000 })
+   277→
+   278→      // Load WASM
+   279→      const wasmResponse = await fetch('/rnnoise.wasm')
+   280→      const wasmBuffer = await wasmResponse.arrayBuffer()
+   281→      const wasmModule = await WebAssembly.compile(wasmBuffer)
+   282→
+   283→      await this.audioContext.audioWorklet.addModule('/rnnoise.worklet.js')
+   284→      console.log('[call] RNNoise worklet loaded')
+   285→
+   286→      const source = this.audioContext.createMediaStreamSource(
+   287→        new MediaStream([this.sourceAudioTrack!])
+   288→      )
+   289→      this.rnnoiseNode = new (window as any).AudioWorkletNode(this.audioContext, 'rnnoise', {
+   290→        channelCountMode: 'explicit',
+   291→        channelCount: 1,
+   292→        channelInterpretation: 'speakers',
+   293→        numberOfInputs: 1,
+   294→        numberOfOutputs: 1,
+   295→        outputChannelCount: [1],
+   296→        processorOptions: { module: wasmModule },
+   297→      })
+   298→      // Gain node for muting — set to 0 to mute, 1 to unmute
+   299→      this.gainNode = this.audioContext.createGain()
+   300→      this.gainNode.gain.value = 1
+   301→
+   302→      const destination = this.audioContext.createMediaStreamDestination()
+   303→
+   304→      source.connect(this.rnnoiseNode)
+   305→      this.rnnoiseNode.connect(this.gainNode)
+   306→      this.gainNode.connect(destination)
+   307→
+   308→      // Replace the audio track with the processed one
+   309→      const processedTrack = destination.stream.getAudioTracks()[0]
+   310→      this.localStream!.removeTrack(this.sourceAudioTrack!)
+   311→      this.localStream!.addTrack(processedTrack)
+   312→
+   313→      console.log('[call] RNNoise applied successfully')
+   314→    } catch (e) {
+   315→      console.warn('[call] RNNoise failed, using browser noiseSuppression:', e)
+   316→    }
+   317→  }
+   318→
+   319→  /**
+   320→   * Toggle mute — works correctly even with AudioWorklet.
+   321→   * We toggle BOTH the sender track AND the gain node.
+   322→   */
+   323→  setMuted(muted: boolean) {
+   324→    this.userMuted = muted
+   325→
+   326→    // Toggle the processed track's enabled state (for the sender)
+   327→    if (this.processedAudioTrack) {
+   328→      this.processedAudioTrack.enabled = !muted
+   329→    }
+   330→
+   331→    // Also toggle the gain node (handles AudioWorklet interference)
+   332→    if (this.gainNode) {
+   333→      this.gainNode.gain.value = muted ? 0 : 1
+   334→    }
+   335→
+   336→    console.log('[call] mute set to', muted)
+   337→    this.callbacks?.onMuteChange(muted)
+   338→  }
+   339→
+   340→  toggleMute() {
+   341→    this.setMuted(!this.userMuted)
+   342→  }
+   343→
+   344→  /**
+   345→   * Toggle video on/off.
+   346→   */
+   347→  setVideoEnabled(enabled: boolean) {
+   348→    this.videoEnabled = enabled
+   349→    if (this.localStream) {
+   350→      this.localStream.getVideoTracks().forEach((t) => (t.enabled = enabled))
+   351→    }
+   352→    console.log('[call] video enabled:', enabled)
+   353→    this.callbacks?.onVideoToggle(enabled)
+   354→  }
+   355→
+   356→  toggleVideo() {
+   357→    this.setVideoEnabled(!this.videoEnabled)
+   358→  }
+   359→
+   360→  /**
+   361→   * Switch camera (front/back).
+   362→   */
+   363→  async switchCamera(): Promise<boolean> {
+   364→    try {
+   365→      const videoTrack = this.localStream?.getVideoTracks()[0]
+   366→      if (!videoTrack) return false
+   367→
+   368→      const settings = videoTrack.getSettings()
+   369→      const currentFacing = settings.facingMode || 'user'
+   370→      const newFacing = currentFacing === 'user' ? 'environment' : 'user'
+   371→
+   372→      // Use facingMode without 'exact' for better cross-browser support
+   373→      const newStream = await navigator.mediaDevices.getUserMedia({
+   374→        video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 20 }, facingMode: newFacing },
+   375→        audio: false,
+   376→      })
+   377→
+   378→      const newTrack = newStream.getVideoTracks()[0]
+   379→      for (const peer of this.peers.values()) {
+   380→        if (peer.videoSender) {
+   381→          await peer.videoSender.replaceTrack(newTrack)
+   382→        }
+   383→      }
+   384→
+   385→      this.localStream!.removeTrack(videoTrack)
+   386→      this.localStream!.addTrack(newTrack)
+   387→      videoTrack.stop()
+   388→
+   389→      console.log('[call] camera switched to', newFacing)
+   390→      return true
+   391→    } catch (e) {
+   392→      console.error('[call] camera switch failed:', e)
+   393→      return false
+   394→    }
+   395→  }
+   396→
+   397→  // Screen sharing state
+   398→  private screenStream: MediaStream | null = null
+   399→  private isSharingScreen = false
+   400→  private originalVideoTrack: MediaStreamTrack | null = null
+   401→
+   402→  /**
+   403→   * Start screen sharing — replaces the video track with the screen capture.
+   404→   */
+   405→  async startScreenShare(): Promise<boolean> {
+   406→    try {
+   407→      const videoTrack = this.localStream?.getVideoTracks()[0]
+   408→      if (!videoTrack) return false
+   409→
+   410→      this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+   411→        video: { frameRate: { ideal: 15, max: 30 } },
+   412→        audio: false,
+   413→      })
+   414→
+   415→      const screenTrack = this.screenStream.getVideoTracks()[0]
+   416→      this.originalVideoTrack = videoTrack
+   417→
+   418→      // Replace the track in all peer connections
+   419→      for (const peer of this.peers.values()) {
+   420→        if (peer.videoSender) {
+   421→          await peer.videoSender.replaceTrack(screenTrack)
+   422→        }
+   423→      }
+   424→
+   425→      // Update the local stream
+   426→      this.localStream!.removeTrack(videoTrack)
+   427→      this.localStream!.addTrack(screenTrack)
+   428→
+   429→      // Listen for the user stopping screen share via browser UI
+   430→      screenTrack.onended = () => {
+   431→        this.stopScreenShare()
+   432→      }
+   433→
+   434→      this.isSharingScreen = true
+   435→      this.callbacks?.onVideoToggle(true) // trigger UI update
+   436→      console.log('[call] screen share started')
+   437→      return true
+   438→    } catch (e) {
+   439→      console.error('[call] screen share failed:', e)
+   440→      return false
+   441→    }
+   442→  }
+   443→
+   444→  /**
+   445→   * Stop screen sharing — restores the original camera track.
+   446→   */
+   447→  async stopScreenShare(): Promise<void> {
+   448→    if (!this.isSharingScreen || !this.originalVideoTrack) return
+   449→
+   450→    const screenTrack = this.screenStream?.getVideoTracks()[0]
+   451→    if (screenTrack) {
+   452→      screenTrack.stop()
+   453→    }
+   454→
+   455→    // Restore the original camera track
+   456→    for (const peer of this.peers.values()) {
+   457→      if (peer.videoSender) {
+   458→        await peer.videoSender.replaceTrack(this.originalVideoTrack)
+   459→      }
+   460→    }
+   461→
+   462→    // Update the local stream
+   463→    const currentTrack = this.localStream?.getVideoTracks()[0]
+   464→    if (currentTrack) {
+   465→      this.localStream!.removeTrack(currentTrack)
+   466→    }
+   467→    this.localStream!.addTrack(this.originalVideoTrack)
+   468→
+   469→    this.screenStream = null
+   470→    this.isSharingScreen = false
+   471→    this.originalVideoTrack = null
+   472→    this.callbacks?.onVideoToggle(true) // trigger UI update
+   473→    console.log('[call] screen share stopped')
+   474→  }
+   475→
+   476→  isScreenSharing() { return this.isSharingScreen }
+   477→
+   478→  /**
+   479→   * End the call — full cleanup.
+   480→   * Called when the user clicks End OR when the server says the call ended.
+   481→   */
+   482→  async endCall(): Promise<void> {
+   483→    if (!this.callId) return
+   484→    console.log('[call] ending call', this.callId)
+   485→
+   486→    // Notify server
+   487→    if (this.socket) {
+   488→      this.socket.emit('call:leave', this.callId)
+   489→    }
+   490→
+   491→    // Server-side cleanup (mark call as ended)
+   492→    if (this.callId) {
+   493→      try {
+   494→        await fetch(`/api/calls/${this.callId}`, { method: 'DELETE' })
+   495→      } catch {}
+   496→    }
+   497→
+   498→    this.endCallCleanup()
+   499→    // Play ended sound
+   500→    import('./call-sounds').then(m => m.CallSounds.playEnded()).catch(() => {})
+   501→    this.callbacks?.onCallEnded('user_ended')
+   502→  }
+   503→
+   504→  /**
+   505→   * Full cleanup — stop tracks, close PCs, remove listeners, detach media.
+   506→   */
+   507→  private endCallCleanup() {
+   508→    console.log('[call] running cleanup')
+   509→
+   510→    // Stop any playing call sounds
+   511→    import('./call-sounds').then(m => m.CallSounds.stop()).catch(() => {})
+   512→
+   513→    // Stop screen share if active
+   514→    if (this.screenStream) {
+   515→      this.screenStream.getTracks().forEach((t) => t.stop())
+   516→      this.screenStream = null
+   517→      this.isSharingScreen = false
+   518→      this.originalVideoTrack = null
+   519→    }
+   520→
+   521→    // Close all peer connections
+   522→    for (const [peerId, peer] of this.peers) {
+   523→      try {
+   524→        peer.pc.close()
+   525→      } catch {}
+   526→      if (peer.audioLevelChecker) cancelAnimationFrame(peer.audioLevelChecker)
+   527→      if (peer.audioEl) {
+   528→        peer.audioEl.srcObject = null
+   529→        peer.audioEl.remove()
+   530→      }
+   531→      if (peer.failedTimer) clearTimeout(peer.failedTimer)
+   532→    }
+   533→    this.peers.clear()
+   534→
+   535→    // Stop local tracks
+   536→    if (this.localStream) {
+   537→      this.localStream.getTracks().forEach((t) => t.stop())
+   538→      this.localStream = null
+   539→    }
+   540→    if (this.sourceAudioTrack) {
+   541→      this.sourceAudioTrack.stop()
+   542→      this.sourceAudioTrack = null
+   543→    }
+   544→    this.processedAudioTrack = null
+   545→
+   546→    // Close audio context
+   547→    if (this.audioContext) {
+   548→      try { this.audioContext.close() } catch {}
+   549→      this.audioContext = null
+   550→      this.rnnoiseNode = null
+   551→      this.gainNode = null
+   552→    }
+   553→
+   554→    // Release wake lock
+   555→    if (this.wakeLock) {
+   556→      try { this.wakeLock.release() } catch {}
+   557→      this.wakeLock = null
+   558→    }
+   559→
+   560→    // Remove socket listeners for this call
+   561→    if (this.socket) {
+   562→      this.socket.removeAllListeners('call:peer-joined')
+   563→      this.socket.removeAllListeners('call:peers')
+   564→      this.socket.removeAllListeners('call:offer')
+   565→      this.socket.removeAllListeners('call:answer')
+   566→      this.socket.removeAllListeners('call:ice-candidate')
+   567→      this.socket.removeAllListeners('call:peer-left')
+   568→    }
+   569→    this.signalingSetup = false // allow setupCallSignaling() on next call
+   570→
+   571→    // Reset state
+   572→    this.callId = null
+   573→    this.userMuted = false
+   574→    this.videoEnabled = true
+   575→    this.isVideoCall = false
+   576→    this.setStatus('idle')
+   577→
+   578→    // Notify participants cleared
+   579→    this.callbacks?.onLocalStream(null)
+   580→    this.callbacks?.onParticipantsChange([])
+   581→  }
+   582→
+   583→  // ─── WebRTC signaling ──────────────────────────────────────────────────
+   584→
+   585→  private signalingSetup = false
+   586→
+   587→  private setupCallSignaling() {
+   588→    if (!this.socket || this.signalingSetup) return
+   589→    this.signalingSetup = true
+   590→    console.log('[call] setting up signaling listeners')
+   591→
+   592→    this.socket.on('call:peer-joined', async (payload: { peerId: string; userId: string; username: string }) => {
+   593→      await this.ensurePeer(payload.peerId, payload.userId, payload.username)
+   594→    })
+   595→
+   596→    this.socket.on('call:peers', async (payload: { peers: Array<{ peerId: string; userId: string; username: string }> }) => {
+   597→      for (const peer of payload.peers) {
+   598→        await this.ensurePeer(peer.peerId, peer.userId, peer.username)
+   599→      }
+   600→    })
+   601→
+   602→    this.socket.on('call:offer', async (payload: { from: string; sdp: any }) => {
+   603→      const peer = this.peers.get(payload.from)
+   604→      if (!peer) return
+   605→      const offerCollision = peer.makingOffer || peer.pc.signalingState !== 'stable'
+   606→      peer.ignoreOffer = !peer.isPolite && offerCollision
+   607→      if (peer.ignoreOffer) return
+   608→      try {
+   609→        await peer.pc.setRemoteDescription(new RTCSessionDescription(payload.sdp))
+   610→        await peer.pc.setLocalDescription()
+   611→        this.socket!.emit('call:answer', { to: payload.from, sdp: peer.pc.localDescription })
+   612→      } catch (e) {
+   613→        console.error('[call] error handling offer:', e)
+   614→      }
+   615→    })
+   616→
+   617→    this.socket.on('call:answer', async (payload: { from: string; sdp: any }) => {
+   618→      const peer = this.peers.get(payload.from)
+   619→      if (!peer) return
+   620→      try {
+   621→        await peer.pc.setRemoteDescription(new RTCSessionDescription(payload.sdp))
+   622→      } catch (e) {
+   623→        console.warn('[call] setRemoteDescription(answer) failed:', (e as Error).message)
+   624→      }
+   625→    })
+   626→
+   627→    this.socket.on('call:ice-candidate', async (payload: { from: string; candidate: any }) => {
+   628→      const peer = this.peers.get(payload.from)
+   629→      if (!peer) return
+   630→      try {
+   631→        await peer.pc.addIceCandidate(new RTCIceCandidate(payload.candidate))
+   632→      } catch (e: any) {
+   633→        if (!/ufrag/i.test(e.message)) {
+   634→          console.warn('[call] addIceCandidate error:', e.message)
+   635→        }
+   636→      }
+   637→    })
+   638→
+   639→    this.socket.on('call:peer-left', (payload: { peerId: string; userId: string }) => {
+   640→      const peer = this.peers.get(payload.peerId)
+   641→      if (peer) {
+   642→        peer.pc.close()
+   643→        if (peer.audioLevelChecker) cancelAnimationFrame(peer.audioLevelChecker)
+   644→        if (peer.audioEl) {
+   645→          peer.audioEl.srcObject = null
+   646→          peer.audioEl.remove()
+   647→        }
+   648→        this.peers.delete(payload.peerId)
+   649→        this.callbacks?.onParticipantsChange(this.getParticipants())
+   650→      }
+   651→    })
+   652→  }
+   653→
+   654→  private async ensurePeer(peerId: string, userId: string, username: string) {
+   655→    if (this.peers.has(peerId)) return
+   656→
+   657→    const myId = this.socket!.id || ''
+   658→    const isInitiator = myId < peerId
+   659→    const isPolite = myId > peerId
+   660→
+   661→    const pc = new RTCPeerConnection({
+   662→      iceServers: this.iceServers,
+   663→      iceTransportPolicy: 'all',
+   664→    })
+   665→
+   666→    const peer: PeerEntry = {
+   667→      pc,
+   668→      userId,
+   669→      username,
+   670→      makingOffer: false,
+   671→      ignoreOffer: false,
+   672→      isInitiator,
+   673→      isPolite,
+   674→      remoteStream: new MediaStream(),
+   675→    }
+   676→    this.peers.set(peerId, peer)
+   677→
+   678→    // Add local tracks
+   679→    if (this.localStream) {
+   680→      for (const track of this.localStream.getTracks()) {
+   681→        const sender = pc.addTrack(track, this.localStream)
+   682→        if (track.kind === 'audio') {
+   683→          peer.audioSender = sender
+   684→          this.capSenderBitrate(sender, 32_000)
+   685→        }
+   686→        if (track.kind === 'video') {
+   687→          peer.videoSender = sender
+   688→          this.capSenderBitrate(sender, 1_000_000)
+   689→        }
+   690→      }
+   691→      // Prefer VP8 video codec — Firefox Android doesn't support H.264 reliably.
+   692→      // Must be called AFTER tracks are added (transceivers are created by addTrack).
+   693→      this.preferVp8(pc)
+   694→    }
+   695→
+   696→    pc.ontrack = (event) => {
+   697→      console.log('[call] ontrack, kind:', event.track.kind)
+   698→      peer.remoteStream.addTrack(event.track)
+   699→
+   700→      if (event.track.kind === 'audio') {
+   701→        if (!peer.audioEl) {
+   702→          const el = document.createElement('audio')
+   703→          el.autoplay = true
+   704→          el.setAttribute('playsinline', '')
+   705→          el.style.display = 'none'
+   706→          document.body.appendChild(el)
+   707→          peer.audioEl = el
+   708→        }
+   709→        peer.audioEl.srcObject = peer.remoteStream
+   710→        peer.audioEl.play().catch((e) => {
+   711→          if (!pendingAudioElements.includes(peer.audioEl!)) {
+   712→            pendingAudioElements.push(peer.audioEl!)
+   713→          }
+   714→        })
+   715→        this.startRemoteAudioMonitoring(peerId, peer.remoteStream)
+   716→      }
+   717→
+   718→      this.callbacks?.onParticipantsChange(this.getParticipants())
+   719→    }
+   720→
+   721→    pc.onnegotiationneeded = async () => {
+   722→      if (!peer.isInitiator) return
+   723→      try {
+   724→        peer.makingOffer = true
+   725→        await pc.setLocalDescription()
+   726→        this.socket!.emit('call:offer', { to: peerId, sdp: pc.localDescription })
+   727→      } catch (e) {
+   728→        console.error('[call] negotiationneeded error:', e)
+   729→      } finally {
+   730→        peer.makingOffer = false
+   731→      }
+   732→    }
+   733→
+   734→    pc.onicecandidate = (event) => {
+   735→      if (event.candidate) {
+   736→        this.socket!.emit('call:ice-candidate', { to: peerId, candidate: event.candidate })
+   737→      }
+   738→    }
+   739→
+   740→    pc.oniceconnectionstatechange = () => {
+   741→      const state = pc.iceConnectionState
+   742→      console.log(`[call] ICE state (${username}): ${state}`)
+   743→      if (state === 'connected' || state === 'completed') {
+   744→        if (this.status !== 'connected') {
+   745→          this.setStatus('connected')
+   746→          // Play connected sound
+   747→          import('./call-sounds').then(m => { m.CallSounds.stop(); m.CallSounds.playConnected() }).catch(() => {})
+   748→        }
+   749→        if (peer.failedTimer) { clearTimeout(peer.failedTimer); peer.failedTimer = undefined }
+   750→        setTimeout(() => this.checkConnectionType(peerId), 2000)
+   751→      } else if (state === 'failed') {
+   752→        if (!peer.failedTimer) {
+   753→          peer.failedTimer = window.setTimeout(() => {
+   754→            pc.restartIce()
+   755→            peer.failedTimer = undefined
+   756→          }, 2000)
+   757→        }
+   758→      }
+   759→    }
+   760→  }
+   761→
+   762→  /**
+   763→   * Prefer VP8 video codec for cross-browser compatibility.
+   764→   * Firefox Android doesn't support H.264 reliably — VP8 is the only
+   765→   * universally supported WebRTC video codec (RFC 7742).
+   766→   *
+   767→   * IMPORTANT: We must keep RTX, RED, and ULPFEC in the preference list.
+   768→   * Stripping them out causes "Failed to parse codecs correctly" errors
+   769→   * when setRemoteDescription receives the answer — the SDP parser rejects
+   770→   * an offer/answer that references codecs not in the local preference list.
+   771→   */
+   772→  private preferVp8(pc: RTCPeerConnection) {
+   773→    try {
+   774→      const transceivers = pc.getTransceivers()
+   775→      for (const t of transceivers) {
+   776→        if (t.receiver && 'track' in t.receiver && t.receiver.track?.kind === 'video') {
+   777→          const codecs = RTCRtpReceiver.getCapabilities('video')?.codecs || []
+   778→          if (codecs.length === 0) continue
+   779→          const vp8 = codecs.filter((c) => c.mimeType === 'video/VP8')
+   780→          if (vp8.length === 0) continue
+   781→          // Keep everything else (including RTX, RED, ULPFEC) — just put VP8 first.
+   782→          const rest = codecs.filter((c) => c.mimeType !== 'video/VP8')
+   783→          t.setCodecPreferences([...vp8, ...rest])
+   784→        }
+   785→      }
+   786→    } catch {
+   787→      // setCodecPreferences not supported on older browsers — ignore
+   788→    }
+   789→  }
+   790→
+   791→  private async capSenderBitrate(sender: RTCRtpSender, maxBitrate: number) {
+   792→    try {
+   793→      const params = sender.getParameters()
+   794→      if (!params.encodings || params.encodings.length === 0) {
+   795→        params.encodings = [{}]
+   796→      }
+   797→      params.encodings[0].maxBitrate = maxBitrate
+   798→      await sender.setParameters(params)
+   799→    } catch {}
+   800→  }
+   801→
+   802→  private async checkConnectionType(peerId: string) {
+   803→    const peer = this.peers.get(peerId)
+   804→    if (!peer) return
+   805→    try {
+   806→      const stats = await peer.pc.getStats()
+   807→      let foundType: 'p2p' | 'turn' | 'unknown' = 'unknown'
+   808→      stats.forEach((report) => {
+   809→        if (report.type === 'candidate-pair') {
+   810→          const cp = report as any
+   811→          if (cp.nominated || cp.state === 'succeeded') {
+   812→            const local = stats.get(cp.localCandidateId) as any
+   813→            if (local) {
+   814→              foundType = local.candidateType === 'relay' ? 'turn' : 'p2p'
+   815→            }
+   816→          }
+   817→        }
+   818→      })
+   819→      if (foundType !== peer.lastStatsType) {
+   820→        peer.lastStatsType = foundType
+   821→        this.callbacks?.onConnectionType(peerId, foundType)
+   822→      }
+   823→    } catch {}
+   824→  }
+   825→
+   826→  private startRemoteAudioMonitoring(peerId: string, stream: MediaStream) {
+   827→    try {
+   828→      const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext
+   829→      if (!AudioContextClass) return
+   830→      const peer = this.peers.get(peerId)
+   831→      if (!peer) return
+   832→      const ctx = new AudioContextClass()
+   833→      const source = ctx.createMediaStreamSource(stream)
+   834→      const analyser = ctx.createAnalyser()
+   835→      analyser.fftSize = 256
+   836→      source.connect(analyser)
+   837→      const data = new Uint8Array(analyser.frequencyBinCount)
+   838→      const check = () => {
+   839→        if (!this.peers.has(peerId)) { ctx.close(); return }
+   840→        analyser.getByteFrequencyData(data)
+   841→        const avg = data.reduce((s, v) => s + v, 0) / data.length / 255
+   842→        this.callbacks?.onAudioLevel(peerId, avg)
+   843→        peer.audioLevelChecker = requestAnimationFrame(check) as unknown as number
+   844→      }
+   845→      check()
+   846→    } catch {}
+   847→  }
+   848→}
+   849→
+   850→// The singleton instance
+   851→let callManagerInstance: CallManager | null = null
+   852→
+   853→export function getCallManager(): CallManager {
+   854→  if (!callManagerInstance) {
+   855→    callManagerInstance = new CallManager()
+   856→  }
+   857→  return callManagerInstance
+   858→}
+   859→

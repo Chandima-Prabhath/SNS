@@ -105,6 +105,8 @@ export function VoiceView() {
         callAvatarUrl={callAvatarUrl}
         isGroup={isGroup}
         isVideoCall={isVideoCall}
+        callId={callId}
+        channelId={activeCall?.channelId}
         onLeave={() => setView('chats')}
       />
     )

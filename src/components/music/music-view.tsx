@@ -634,6 +634,34 @@ export function MusicView() {
                           // Also call the API to auto-join as a member
                           fetch(`/api/music/rooms/${room.id}`).catch(() => {})
                         }}
+                        onInvite={async () => {
+                          const username = prompt('Enter the username of the person to invite:')
+                          if (!username?.trim()) return
+                          try {
+                            const searchRes = await fetch(`/api/users?search=${encodeURIComponent(username.trim())}`)
+                            if (!searchRes.ok) throw new Error('Failed to search users')
+                            const searchData = await searchRes.json()
+                            const targetUser = searchData.users?.find((u: any) => u.username === username.trim())
+                            if (!targetUser) {
+                              toast.error(`User "${username}" not found`)
+                              return
+                            }
+                            const res = await fetch('/api/invites', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                targetUserId: targetUser.id,
+                                type: 'music',
+                                targetId: room.id,
+                                roomName: room.name,
+                              }),
+                            })
+                            if (!res.ok) throw new Error('Failed to send invite')
+                            toast.success(`Invitation sent to ${targetUser.displayName}`)
+                          } catch (e: any) {
+                            toast.error(e.message || 'Failed to send invite')
+                          }
+                        }}
                         onDelete={() => deleteRoom.mutate(room.id)}
                       />
                     ))}
@@ -1416,11 +1444,13 @@ function RoomCard({
   isActive,
   onJoin,
   onDelete,
+  onInvite,
 }: {
   room: Room
   isActive: boolean
   onJoin: () => void
   onDelete?: () => void
+  onInvite?: () => void
 }) {
   const isPlaying = room.currentState === 'playing'
   return (
@@ -1479,6 +1509,20 @@ function RoomCard({
             {isActive ? 'In Room' : 'Join'}
           </div>
         </button>
+        {/* Invite button — sends a music room invitation to a user's DM */}
+        {onInvite && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onInvite()
+            }}
+            className="shrink-0 p-2.5 rounded-full text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-primary hover:bg-primary/10 transition-all"
+            title="Invite to room"
+            aria-label="Invite to room"
+          >
+            <ListPlus className="w-5 h-5" />
+          </button>
+        )}
         {onDelete && (
           <button
             onClick={(e) => {

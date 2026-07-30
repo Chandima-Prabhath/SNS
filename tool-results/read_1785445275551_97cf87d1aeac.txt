@@ -1,0 +1,1499 @@
+     1→'use client'
+     2→
+     3→import { useState, useRef, useEffect } from 'react'
+     4→import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+     5→import { motion, AnimatePresence } from 'framer-motion'
+     6→import { Button } from '@/components/ui/button'
+     7→import { Input } from '@/components/ui/input'
+     8→import { Card } from '@/components/ui/card'
+     9→import {
+    10→  Search, Play, Pause, SkipForward, Plus,
+    11→  Loader2, Radio, Headphones, X, ListMusic, Compass,
+    12→  Trash2, Repeat, Shuffle, Music as MusicIcon, Users,
+    13→  Flame, Sparkles, History, Library, Clock, Heart, ListPlus,
+    14→} from 'lucide-react'
+    15→import { toast } from 'sonner'
+    16→import { cn } from '@/lib/utils'
+    17→import { useMusicStore, type Track } from '@/stores/useMusicStore'
+    18→import { useMusicPlayer } from '@/components/music/global-music-player'
+    19→import { SpotlightCard, GlassSurface, GradientText, BorderGlow, ShinyText, StarBorder } from '@/components/reactbits'
+    20→
+    21→interface Room {
+    22→  id: string
+    23→  name: string
+    24→  host: any
+    25→  currentVideoId: string | null
+    26→  currentState: string
+    27→  currentPosition: number
+    28→  queue: string
+    29→  members: any[]
+    30→}
+    31→
+    32→type Tab = 'browse' | 'rooms' | 'queue' | 'library'
+    33→type LibraryTab = 'history' | 'liked' | 'playlists'
+    34→
+    35→const HISTORY_KEY = 'adoo-music-history'
+    36→const MAX_HISTORY = 50
+    37→
+    38→/** Track shape used by the UI. The DB stores the same fields (minus the
+    39→ *  `order` column on PlaylistSong which we don't expose in the UI). */
+    40→interface DbTrack extends Track {}
+    41→interface Playlist {
+    42→  id: string
+    43→  name: string
+    44→  songs: Track[]
+    45→  updatedAt?: string
+    46→}
+    47→
+    48→function loadHistory(): Track[] {
+    49→  try {
+    50→    const raw = localStorage.getItem(HISTORY_KEY)
+    51→    return raw ? JSON.parse(raw) : []
+    52→  } catch { return [] }
+    53→}
+    54→
+    55→function saveHistory(tracks: Track[]) {
+    56→  try {
+    57→    localStorage.setItem(HISTORY_KEY, JSON.stringify(tracks.slice(0, MAX_HISTORY)))
+    58→  } catch {}
+    59→}
+    60→
+    61→/**
+    62→ * MusicView — Browse / Rooms / Queue UI for the music feature.
+    63→ *
+    64→ * NOTE: This component does NOT own the audio element or the player bar.
+    65→ * Those live in <GlobalMusicPlayer /> (rendered at the app root) so that
+    66→ * playback persists across all tabs (Chats, Status, Calls, Settings, Music).
+    67→ *
+    68→ * This view reads playback state from `useMusicStore` and triggers actions
+    69→ * via `useMusicPlayer()`.
+    70→ */
+    71→export function MusicView() {
+    72→  const [tab, setTab] = useState<Tab>('browse')
+    73→  const [searchQuery, setSearchQuery] = useState('')
+    74→  const [searchResults, setSearchResults] = useState<Track[]>([])
+    75→  const [searching, setSearching] = useState(false)
+    76→  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    77→  const searchAbortRef = useRef<AbortController | null>(null)
+    78→  const qc = useQueryClient()
+    79→  const [history, setHistory] = useState<Track[]>([])
+    80→  const [libraryTab, setLibraryTab] = useState<LibraryTab>('history')
+    81→  const [newPlaylistName, setNewPlaylistName] = useState('')
+    82→  const [showNewPlaylistInput, setShowNewPlaylistInput] = useState(false)
+    83→  const [addToPlaylistTrack, setAddToPlaylistTrack] = useState<Track | null>(null)
+    84→
+    85→  // ── DB-backed liked songs (react-query) ──────────────────────────────
+    86→  const { data: likedData } = useQuery({
+    87→    queryKey: ['music-liked'],
+    88→    queryFn: async () => {
+    89→      const res = await fetch('/api/music/liked')
+    90→      if (!res.ok) throw new Error('failed')
+    91→      return res.json()
+    92→    },
+    93→  })
+    94→  const liked: Track[] = likedData?.songs || []
+    95→
+    96→  // ── DB-backed playlists (react-query) ────────────────────────────────
+    97→  const { data: playlistsData } = useQuery({
+    98→    queryKey: ['music-playlists'],
+    99→    queryFn: async () => {
+   100→      const res = await fetch('/api/music/playlists')
+   101→      if (!res.ok) throw new Error('failed')
+   102→      return res.json()
+   103→    },
+   104→  })
+   105→  const playlists: Playlist[] = (playlistsData?.playlists || []).map((p: any) => ({
+   106→    id: p.id,
+   107→    name: p.name,
+   108→    songs: (p.songs || []).map((s: any) => ({
+   109→      videoId: s.videoId,
+   110→      title: s.title,
+   111→      artist: s.artist,
+   112→      thumbnail: s.thumbnail,
+   113→      durationSeconds: s.durationSeconds,
+   114→    })),
+   115→    updatedAt: p.updatedAt,
+   116→  }))
+   117→
+   118→  // ─── Playback state from the global store ─────────────────────────────
+   119→  const currentTrack = useMusicStore((s) => s.currentTrack)
+   120→  const isPlaying = useMusicStore((s) => s.isPlaying)
+   121→  const queue = useMusicStore((s) => s.queue)
+   122→  const autoplay = useMusicStore((s) => s.autoplay)
+   123→  const shuffle = useMusicStore((s) => s.shuffle)
+   124→  const repeat = useMusicStore((s) => s.repeat)
+   125→
+   126→  // ── Up Next: fetch related/autoplay tracks when queue is empty ──────
+   127→  // Shows what will play next via autoplay (fetched ahead of time so the
+   128→  // user can see what's coming).
+   129→  const { data: upNextData } = useQuery({
+   130→    queryKey: ['music-up-next', currentTrack?.videoId],
+   131→    queryFn: async () => {
+   132→      if (!currentTrack?.videoId) return { tracks: [] }
+   133→      const res = await fetch(`/api/music/related/${currentTrack.videoId}`)
+   134→      if (!res.ok) return { tracks: [] }
+   135→      return res.json()
+   136→    },
+   137→    enabled: !!currentTrack?.videoId && queue.length === 0 && autoplay,
+   138→    staleTime: 30_000, // don't refetch too often
+   139→  })
+   140→  const upNextTracks: Track[] = (upNextData?.tracks || []).slice(0, 5)
+   141→  const activeRoomId = useMusicStore((s) => s.activeRoomId)
+   142→  const setActiveRoomId = useMusicStore((s) => s.setActiveRoomId)
+   143→  const setShuffle = useMusicStore((s) => s.setShuffle)
+   144→  const setRepeat = useMusicStore((s) => s.setRepeat)
+   145→  const setAutoplay = useMusicStore((s) => s.setAutoplay)
+   146→
+   147→  // ─── Player actions (broadcast + audio handled by global player) ──────
+   148→  const { playTrack, playNext, removeFromQueue, clearQueue } = useMusicPlayer()
+   149→
+   150→  // Load history on mount (history stays in localStorage — it's per-device)
+   151→  useEffect(() => {
+   152→    setHistory(loadHistory())
+   153→  }, [])
+   154→
+   155→  // ── Liked songs helpers (DB-backed) ──────────────────────────────────
+   156→  const toggleLike = async (track: Track) => {
+   157→    const isLikedVal = liked.some((t) => t.videoId === track.videoId)
+   158→    // Optimistic update — update the cache immediately
+   159→    qc.setQueryData(['music-liked'], (old: any) => {
+   160→      if (!old) return { songs: [track] }
+   161→      const songs = isLikedVal
+   162→        ? old.songs.filter((t: Track) => t.videoId !== track.videoId)
+   163→        : [track, ...old.songs]
+   164→      return { ...old, songs }
+   165→    })
+   166→    try {
+   167→      if (isLikedVal) {
+   168→        await fetch(`/api/music/liked?videoId=${track.videoId}`, { method: 'DELETE' })
+   169→      } else {
+   170→        await fetch('/api/music/liked', {
+   171→          method: 'POST',
+   172→          headers: { 'Content-Type': 'application/json' },
+   173→          body: JSON.stringify(track),
+   174→        })
+   175→      }
+   176→    } catch {
+   177→      // Revert on error
+   178→      qc.invalidateQueries({ queryKey: ['music-liked'] })
+   179→      toast.error('Failed to update liked songs')
+   180→    }
+   181→  }
+   182→
+   183→  const isLiked = (videoId: string) => liked.some((t) => t.videoId === videoId)
+   184→
+   185→  // ── Playlist helpers (DB-backed, with optimistic updates) ────────────
+   186→  const createPlaylist = async (name: string) => {
+   187→    if (!name.trim()) return
+   188→    try {
+   189→      const res = await fetch('/api/music/playlists', {
+   190→        method: 'POST',
+   191→        headers: { 'Content-Type': 'application/json' },
+   192→        body: JSON.stringify({ name }),
+   193→      })
+   194→      if (!res.ok) throw new Error('failed')
+   195→      const data = await res.json()
+   196→      // Add the new playlist to the cache immediately (optimistic)
+   197→      qc.setQueryData(['music-playlists'], (old: any) => {
+   198→        const newPlaylist = { ...data.playlist, songs: [] }
+   199→        return { playlists: [newPlaylist, ...(old?.playlists || [])] }
+   200→      })
+   201→      toast.success(`Playlist "${name}" created`)
+   202→      setNewPlaylistName('')
+   203→      setShowNewPlaylistInput(false)
+   204→    } catch {
+   205→      toast.error('Failed to create playlist')
+   206→    }
+   207→  }
+   208→
+   209→  const addToPlaylist = async (playlistId: string, track: Track) => {
+   210→    // Optimistic update — add the song to the playlist in the cache
+   211→    qc.setQueryData(['music-playlists'], (old: any) => {
+   212→      if (!old) return old
+   213→      return {
+   214→        ...old,
+   215→        playlists: old.playlists.map((pl: any) =>
+   216→          pl.id === playlistId
+   217→            ? {
+   218→                ...pl,
+   219→                songs: pl.songs.some((s: Track) => s.videoId === track.videoId)
+   220→                  ? pl.songs // already in playlist — don't add duplicate
+   221→                  : [...pl.songs, track],
+   222→              }
+   223→            : pl
+   224→        ),
+   225→      }
+   226→    })
+   227→    try {
+   228→      const res = await fetch(`/api/music/playlists/${playlistId}/songs`, {
+   229→        method: 'POST',
+   230→        headers: { 'Content-Type': 'application/json' },
+   231→        body: JSON.stringify(track),
+   232→      })
+   233→      if (!res.ok) throw new Error('failed')
+   234→      const pl = playlists.find((p) => p.id === playlistId)
+   235→      toast.success(`Added to "${pl?.name}"`)
+   236→    } catch {
+   237→      // Revert on error
+   238→      qc.invalidateQueries({ queryKey: ['music-playlists'] })
+   239→      toast.error('Failed to add to playlist')
+   240→    }
+   241→  }
+   242→
+   243→  const deletePlaylist = async (playlistId: string) => {
+   244→    // Optimistic update — remove from cache immediately
+   245→    qc.setQueryData(['music-playlists'], (old: any) => {
+   246→      if (!old) return old
+   247→      return {
+   248→        ...old,
+   249→        playlists: old.playlists.filter((pl: any) => pl.id !== playlistId),
+   250→      }
+   251→    })
+   252→    try {
+   253→      const res = await fetch(`/api/music/playlists/${playlistId}`, { method: 'DELETE' })
+   254→      if (!res.ok) throw new Error('failed')
+   255→      toast.success('Playlist deleted')
+   256→    } catch {
+   257→      // Revert on error
+   258→      qc.invalidateQueries({ queryKey: ['music-playlists'] })
+   259→      toast.error('Failed to delete playlist')
+   260→    }
+   261→  }
+   262→
+   263→  // Track when the current track changes — add to history
+   264→  useEffect(() => {
+   265→    if (currentTrack) {
+   266→      setHistory((prev) => {
+   267→        const filtered = prev.filter((t) => t.videoId !== currentTrack.videoId)
+   268→        const updated = [currentTrack, ...filtered].slice(0, MAX_HISTORY)
+   269→        saveHistory(updated)
+   270→        return updated
+   271→      })
+   272→    }
+   273→  }, [currentTrack])
+   274→
+   275→  // Fetch trending
+   276→  const { data: trendingData, isLoading: trendingLoading } = useQuery({
+   277→    queryKey: ['music-trending'],
+   278→    queryFn: async () => {
+   279→      const res = await fetch('/api/music/trending')
+   280→      if (!res.ok) throw new Error('failed')
+   281→      return res.json()
+   282→    },
+   283→  })
+   284→
+   285→  // Fetch personalized home feed ("For You" recommendations).
+   286→  // The endpoint returns { sections: [{ title, tracks }] } — empty array on
+   287→  // failure (e.g. no YouTube cookies), so we can silently hide the area.
+   288→  const { data: homeData, isLoading: homeLoading } = useQuery({
+   289→    queryKey: ['music-home'],
+   290→    queryFn: async () => {
+   291→      const res = await fetch('/api/music/home')
+   292→      if (!res.ok) throw new Error('failed')
+   293→      return res.json()
+   294→    },
+   295→  })
+   296→
+   297→  // Fetch rooms
+   298→  const { data: roomsData } = useQuery({
+   299→    queryKey: ['music-rooms'],
+   300→    queryFn: async () => {
+   301→      const res = await fetch('/api/music/rooms')
+   302→      if (!res.ok) throw new Error('failed')
+   303→      return res.json()
+   304→    },
+   305→    refetchInterval: 10000,
+   306→  })
+   307→
+   308→  // Create room
+   309→  const createRoom = useMutation({
+   310→    mutationFn: async (name: string) => {
+   311→      const res = await fetch('/api/music/rooms', {
+   312→        method: 'POST',
+   313→        headers: { 'Content-Type': 'application/json' },
+   314→        body: JSON.stringify({ name }),
+   315→      })
+   316→      if (!res.ok) throw new Error('failed')
+   317→      return res.json()
+   318→    },
+   319→    onSuccess: (data) => {
+   320→      qc.invalidateQueries({ queryKey: ['music-rooms'] })
+   321→      setActiveRoomId(data.room.id)
+   322→      setTab('rooms')
+   323→      toast.success('Room created')
+   324→    },
+   325→  })
+   326→
+   327→  // Delete room
+   328→  const deleteRoom = useMutation({
+   329→    mutationFn: async (roomId: string) => {
+   330→      const res = await fetch(`/api/music/rooms/${roomId}`, {
+   331→        method: 'DELETE',
+   332→      })
+   333→      if (!res.ok) throw new Error('failed')
+   334→    },
+   335→    onSuccess: () => {
+   336→      qc.invalidateQueries({ queryKey: ['music-rooms'] })
+   337→      if (activeRoomId) setActiveRoomId(null)
+   338→      toast.success('Room deleted')
+   339→    },
+   340→    onError: () => toast.error('Failed to delete room'),
+   341→  })
+   342→
+   343→  // Debounced search with AbortController to cancel stale requests
+   344→  const handleSearchChange = (value: string) => {
+   345→    setSearchQuery(value)
+   346→    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
+   347→    // Abort any in-flight search request
+   348→    if (searchAbortRef.current) {
+   349→      searchAbortRef.current.abort()
+   350→      searchAbortRef.current = null
+   351→    }
+   352→    if (!value.trim()) {
+   353→      setSearchResults([])
+   354→      setSearching(false)
+   355→      return
+   356→    }
+   357→    searchTimeoutRef.current = setTimeout(async () => {
+   358→      setSearching(true)
+   359→      const controller = new AbortController()
+   360→      searchAbortRef.current = controller
+   361→      try {
+   362→        const res = await fetch(`/api/music/search?q=${encodeURIComponent(value)}`, {
+   363→          signal: controller.signal,
+   364→        })
+   365→        if (!res.ok) throw new Error('Search failed')
+   366→        const data = await res.json()
+   367→        // Only update if this request wasn't superseded
+   368→        if (searchAbortRef.current === controller) {
+   369→          setSearchResults(data.tracks || [])
+   370→        }
+   371→      } catch (e: any) {
+   372→        if (e.name === 'AbortError') return // expected — superseded by newer search
+   373→        toast.error(e.message || 'Search failed')
+   374→      } finally {
+   375→        if (searchAbortRef.current === controller) {
+   376→          setSearching(false)
+   377→          searchAbortRef.current = null
+   378→        }
+   379→      }
+   380→    }, 500)
+   381→  }
+   382→
+   383→  const trendingTracks = trendingData?.tracks || []
+   384→  const homeSections: { title: string; tracks: Track[] }[] = homeData?.sections || []
+   385→  const rooms = roomsData?.rooms || []
+   386→
+   387→  return (
+   388→    <div className="h-full flex flex-col mesh-gradient overflow-hidden">
+   389→      {/* Header with gradient title and glassmorphic tabs */}
+   390→      <div className="shrink-0 px-4 pt-4 pb-2 border-b border-border/30">
+   391→        <div className="max-w-5xl mx-auto">
+   392→          <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-2 mb-3">
+   393→            <MusicIcon className="w-7 h-7 text-primary" />
+   394→            <GradientText>Musical</GradientText>
+   395→          </h1>
+   396→
+   397→          {/* Tab navigation — glassmorphic pill bar */}
+   398→          <GlassSurface className="max-w-md" blur={12} opacity={0.05}>
+   399→            <div className="flex gap-1 p-1 overflow-x-auto no-scrollbar">
+   400→              {([
+   401→                ['browse', 'Browse', Compass],
+   402→                ['rooms', 'Rooms', Radio],
+   403→                ['queue', 'Queue', ListMusic],
+   404→                ['library', 'Library', Library],
+   405→              ] as const).map(([key, label, Icon]) => (
+   406→                <button
+   407→                  key={key}
+   408→                  onClick={() => setTab(key)}
+   409→                  className={cn(
+   410→                    'flex-1 min-w-fit flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl text-xs font-medium transition-all whitespace-nowrap',
+   411→                    tab === key
+   412→                      ? 'gradient-primary text-primary-foreground shadow-glow'
+   413→                      : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+   414→                  )}
+   415→                >
+   416→                  <Icon className="w-3.5 h-3.5" />
+   417→                  {label}
+   418→                  {key === 'queue' && queue.length > 0 && (
+   419→                    <span className="text-[10px] bg-primary-foreground/20 text-primary-foreground px-1.5 py-0.5 rounded-full">
+   420→                      {queue.length}
+   421→                    </span>
+   422→                  )}
+   423→                </button>
+   424→              ))}
+   425→            </div>
+   426→          </GlassSurface>
+   427→        </div>
+   428→      </div>
+   429→
+   430→      {/* Main content area — extra bottom padding so content isn't hidden
+   431→          behind the persistent global player bar. */}
+   432→      <div className="flex-1 overflow-y-auto pb-40 lg:pb-28">
+   433→        <div className="max-w-5xl mx-auto p-4 md:p-6">
+   434→          <AnimatePresence mode="wait">
+   435→            {tab === 'browse' && (
+   436→              <motion.div
+   437→                key="browse"
+   438→                initial={{ opacity: 0, y: 10 }}
+   439→                animate={{ opacity: 1, y: 0 }}
+   440→                exit={{ opacity: 0, y: -10 }}
+   441→                transition={{ duration: 0.2 }}
+   442→                className="space-y-6"
+   443→              >
+   444→                {/* Search */}
+   445→                <div className="relative group">
+   446→                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
+   447→                  <Input
+   448→                    value={searchQuery}
+   449→                    onChange={(e) => handleSearchChange(e.target.value)}
+   450→                    placeholder="Search songs, artists..."
+   451→                    className="pl-12 h-14 bg-black/20 backdrop-blur-xl border-white/10 rounded-2xl text-lg focus-visible:ring-primary/50 focus-visible:border-primary/50 transition-all shadow-inner"
+   452→                  />
+   453→                  {searching && (
+   454→                    <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 animate-spin text-muted-foreground" />
+   455→                  )}
+   456→                </div>
+   457→
+   458→                {/* Search results */}
+   459→                {searchResults.length > 0 ? (
+   460→                  <div className="space-y-1.5">
+   461→                    <h2 className="text-sm font-bold uppercase tracking-wider mb-3">
+   462→                      <ShinyText shimmerDuration={4} className="text-sm">
+   463→                        Results
+   464→                      </ShinyText>
+   465→                    </h2>
+   466→                    {searchResults.map((track) => (
+   467→                      <TrackRow
+   468→                        key={track.videoId}
+   469→                        track={track}
+   470→                        onPlay={() => playTrack(track)}
+   471→                        onAddToQueue={() => playTrack(track, true)}
+   472→                        isCurrent={currentTrack?.videoId === track.videoId}
+   473→                        isPlaying={
+   474→                          isPlaying && currentTrack?.videoId === track.videoId
+   475→                        }
+   476→                        isLiked={isLiked(track.videoId)}
+   477→                        onToggleLike={() => toggleLike(track)}
+   478→                        onAddToPlaylist={() => setAddToPlaylistTrack(track)}
+   479→                      />
+   480→                    ))}
+   481→                  </div>
+   482→                ) : (
+   483→                  <>
+   484→                    {/* For You — personalized recommendation sections.
+   485→                        Each section is rendered as a horizontal scrolling row
+   486→                        so the user can swipe through tracks without leaving
+   487→                        the browse tab. Hidden entirely when the home feed is
+   488→                        unavailable (empty sections array). */}
+   489→                    {homeLoading && (
+   490→                      <div className="space-y-3">
+   491→                        <div className="h-4 w-40 bg-muted rounded animate-pulse" />
+   492→                        <div className="flex gap-3 overflow-hidden">
+   493→                          {[1, 2, 3, 4].map((i) => (
+   494→                            <div
+   495→                              key={i}
+   496→                              className="shrink-0 w-40 md:w-44 space-y-2 animate-pulse"
+   497→                            >
+   498→                              <div className="aspect-square rounded-xl bg-muted" />
+   499→                              <div className="h-3 bg-muted rounded w-3/4" />
+   500→                              <div className="h-2 bg-muted rounded w-1/2" />
+   501→                            </div>
+   502→                          ))}
+   503→                        </div>
+   504→                      </div>
+   505→                    )}
+   506→
+   507→                    {!homeLoading &&
+   508→                      homeSections.map((section) => (
+   509→                        <div key={section.title} className="space-y-3">
+   510→                          <div className="flex items-center gap-2">
+   511→                            <Sparkles className="w-4 h-4 text-primary" />
+   512→                            <h2 className="text-sm font-bold uppercase tracking-wider">
+   513→                              <ShinyText shimmerDuration={5} className="text-sm">
+   514→                                {section.title}
+   515→                              </ShinyText>
+   516→                            </h2>
+   517→                          </div>
+   518→                          <div className="flex gap-3 overflow-x-auto pb-3 -mx-1 px-1 snap-x no-scrollbar">
+   519→                            {section.tracks.map((track: Track) => (
+   520→                              <div
+   521→                                key={track.videoId}
+   522→                                className="snap-start shrink-0 w-40 md:w-44"
+   523→                              >
+   524→                                <TrackCard
+   525→                                  track={track}
+   526→                                  onPlay={() => playTrack(track)}
+   527→                                  onAddToQueue={() => playTrack(track, true)}
+   528→                                  isCurrent={
+   529→                                    currentTrack?.videoId === track.videoId
+   530→                                  }
+   531→                                  isPlaying={
+   532→                                    isPlaying &&
+   533→                                    currentTrack?.videoId === track.videoId
+   534→                                  }
+   535→                                />
+   536→                              </div>
+   537→                            ))}
+   538→                          </div>
+   539→                        </div>
+   540→                      ))}
+   541→
+   542→                    {/* Trending */}
+   543→                    <div className="pt-2">
+   544→                      <div className="flex items-center gap-2 mb-4">
+   545→                        <Flame className="w-4 h-4 text-primary" />
+   546→                        <h2 className="text-sm font-bold uppercase tracking-wider">
+   547→                          <ShinyText shimmerDuration={5} className="text-sm">
+   548→                            Trending Now
+   549→                          </ShinyText>
+   550→                        </h2>
+   551→                      </div>
+   552→                      {trendingLoading ? (
+   553→                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+   554→                          {[1, 2, 3, 4, 5, 6].map((i) => (
+   555→                            <div key={i} className="space-y-2 animate-pulse">
+   556→                              <div className="aspect-square rounded-xl bg-muted" />
+   557→                              <div className="h-3 bg-muted rounded w-3/4" />
+   558→                              <div className="h-2 bg-muted rounded w-1/2" />
+   559→                            </div>
+   560→                          ))}
+   561→                        </div>
+   562→                      ) : (
+   563→                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+   564→                          {trendingTracks.map((track: Track) => (
+   565→                            <TrackCard
+   566→                              key={track.videoId}
+   567→                              track={track}
+   568→                              onPlay={() => playTrack(track)}
+   569→                              onAddToQueue={() => playTrack(track, true)}
+   570→                              isCurrent={currentTrack?.videoId === track.videoId}
+   571→                              isPlaying={
+   572→                                isPlaying &&
+   573→                                currentTrack?.videoId === track.videoId
+   574→                              }
+   575→                            />
+   576→                          ))}
+   577→                        </div>
+   578→                      )}
+   579→                    </div>
+   580→                  </>
+   581→                )}
+   582→              </motion.div>
+   583→            )}
+   584→
+   585→            {tab === 'rooms' && (
+   586→              <motion.div
+   587→                key="rooms"
+   588→                initial={{ opacity: 0, y: 10 }}
+   589→                animate={{ opacity: 1, y: 0 }}
+   590→                exit={{ opacity: 0, y: -10 }}
+   591→                transition={{ duration: 0.2 }}
+   592→                className="space-y-4"
+   593→              >
+   594→                <div className="flex items-center justify-between">
+   595→                  <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+   596→                    Listening Rooms
+   597→                  </h2>
+   598→                  <Button
+   599→                    variant="outline"
+   600→                    size="sm"
+   601→                    onClick={() => {
+   602→                      const name = prompt('Room name?')
+   603→                      if (name?.trim()) createRoom.mutate(name)
+   604→                    }}
+   605→                  >
+   606→                    <Plus className="w-4 h-4 mr-1" />
+   607→                    Create Room
+   608→                  </Button>
+   609→                </div>
+   610→
+   611→                {rooms.length === 0 ? (
+   612→                  <Card className="p-12 text-center border-dashed">
+   613→                    <Headphones
+   614→                      className="w-12 h-12 mx-auto text-muted-foreground mb-3"
+   615→                      strokeWidth={1.5}
+   616→                    />
+   617→                    <p className="font-medium">No rooms yet</p>
+   618→                    <p className="text-sm text-muted-foreground mt-1">
+   619→                      Create a room to listen together with friends.
+   620→                    </p>
+   621→                  </Card>
+   622→                ) : (
+   623→                  <div className="grid gap-2">
+   624→                    {rooms.map((room: Room) => (
+   625→                      <RoomCard
+   626→                        key={room.id}
+   627→                        room={room}
+   628→                        isActive={activeRoomId === room.id}
+   629→                        onJoin={() => {
+   630→                          // Just set the active room — the global player's
+   631→                          // socket effect joins the channel and requests
+   632→                          // the host's current state automatically.
+   633→                          setActiveRoomId(room.id)
+   634→                          // Also call the API to auto-join as a member
+   635→                          fetch(`/api/music/rooms/${room.id}`).catch(() => {})
+   636→                        }}
+   637→                        onDelete={() => deleteRoom.mutate(room.id)}
+   638→                      />
+   639→                    ))}
+   640→                  </div>
+   641→                )}
+   642→              </motion.div>
+   643→            )}
+   644→
+   645→            {tab === 'queue' && (
+   646→              <motion.div
+   647→                key="queue"
+   648→                initial={{ opacity: 0, y: 10 }}
+   649→                animate={{ opacity: 1, y: 0 }}
+   650→                exit={{ opacity: 0, y: -10 }}
+   651→                transition={{ duration: 0.2 }}
+   652→                className="space-y-4"
+   653→              >
+   654→                <div className="flex items-center justify-between">
+   655→                  <div className="flex items-center gap-2">
+   656→                    <Headphones className="w-4 h-4 text-primary" />
+   657→                    <h2 className="text-sm font-bold uppercase tracking-wider">
+   658→                      <ShinyText shimmerDuration={4} className="text-sm">
+   659→                        Play Queue
+   660→                      </ShinyText>
+   661→                    </h2>
+   662→                  </div>
+   663→                  {queue.length > 0 && (
+   664→                    <Button
+   665→                      variant="ghost"
+   666→                      size="sm"
+   667→                      onClick={clearQueue}
+   668→                      className="text-red-400 hover:text-red-300"
+   669→                    >
+   670→                      <Trash2 className="w-4 h-4 mr-1" />
+   671→                      Clear
+   672→                    </Button>
+   673→                  )}
+   674→                </div>
+   675→
+   676→                {/* Currently playing */}
+   677→                {currentTrack && (
+   678→                  <SpotlightCard spotlightColor="rgba(var(--primary), 0.15)" className="p-4 rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/8 to-transparent">
+   679→                    <div className="text-[10px] uppercase tracking-widest text-primary font-bold mb-3 flex items-center gap-2">
+   680→                      <span className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_oklch(0.68_0.24_264/0.6)]" />
+   681→                      <ShinyText shimmerDuration={3} className="text-[10px]">Now Playing</ShinyText>
+   682→                    </div>
+   683→                    <div className="flex items-center gap-3">
+   684→                      {currentTrack.thumbnail ? (
+   685→                        <div className="relative w-12 h-12 md:w-16 md:h-16 rounded-xl overflow-hidden shadow-lg ring-1 ring-white/10 shrink-0">
+   686→                          <img
+   687→                            src={currentTrack.thumbnail}
+   688→                            alt=""
+   689→                            className="w-full h-full object-cover"
+   690→                          />
+   691→                        </div>
+   692→                      ) : (
+   693→                        <div className="w-12 h-12 md:w-16 md:h-16 rounded-xl gradient-primary flex items-center justify-center shadow-lg shrink-0">
+   694→                          <Radio className="w-5 h-5 md:w-6 md:h-6 text-primary-foreground" />
+   695→                        </div>
+   696→                      )}
+   697→                      <div className="flex-1 min-w-0">
+   698→                        <div className="text-sm md:text-base font-semibold truncate text-foreground">
+   699→                          {currentTrack.title}
+   700→                        </div>
+   701→                        <div className="text-xs md:text-sm text-muted-foreground truncate">
+   702→                          {currentTrack.artist}
+   703→                        </div>
+   704→                      </div>
+   705→                    </div>
+   706→                    <div className="flex items-center gap-1.5 mt-3 justify-center">
+   707→                      <button
+   708→                        onClick={() => setShuffle(!shuffle)}
+   709→                        className={cn(
+   710→                          'p-2 rounded-lg transition-all',
+   711→                          shuffle
+   712→                            ? 'text-primary bg-primary/10 shadow-glow'
+   713→                            : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+   714→                        )}
+   715→                        aria-label="Toggle shuffle"
+   716→                      >
+   717→                        <Shuffle className="w-4 h-4" />
+   718→                      </button>
+   719→                      <button
+   720→                        onClick={() => setRepeat(!repeat)}
+   721→                        className={cn(
+   722→                          'p-2 rounded-lg transition-all',
+   723→                          repeat
+   724→                            ? 'text-primary bg-primary/10 shadow-glow'
+   725→                            : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+   726→                        )}
+   727→                        aria-label="Toggle repeat"
+   728→                      >
+   729→                        <Repeat className="w-4 h-4" />
+   730→                      </button>
+   731→                      <button
+   732→                        onClick={() => setAutoplay(!autoplay)}
+   733→                        className={cn(
+   734→                          'p-2 rounded-lg transition-all',
+   735→                          autoplay
+   736→                            ? 'text-primary bg-primary/10 shadow-glow'
+   737→                            : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+   738→                        )}
+   739→                        title="Autoplay recommendations"
+   740→                        aria-label="Toggle autoplay"
+   741→                      >
+   742→                        <Radio className="w-4 h-4" />
+   743→                      </button>
+   744→                    </div>
+   745→                  </SpotlightCard>
+   746→                )}
+   747→
+   748→                {/* Queue list */}
+   749→                {queue.length === 0 ? (
+   750→                  <Card className="p-8 text-center border-dashed">
+   751→                    <ListMusic
+   752→                      className="w-10 h-10 mx-auto text-muted-foreground mb-2"
+   753→                      strokeWidth={1.5}
+   754→                    />
+   755→                    <p className="text-sm text-muted-foreground">
+   756→                      Queue is empty. Add songs from Browse or search.
+   757→                    </p>
+   758→                  </Card>
+   759→                ) : (
+   760→                    <div className="space-y-1.5">
+   761→                      {queue.map((track, i) => (
+   762→                        <div
+   763→                          key={`${track.videoId}-${i}`}
+   764→                          className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/[0.06] transition-all group border border-transparent hover:border-white/5">
+   765→                          <span className="text-xs text-muted-foreground w-6 text-center font-medium">
+   766→                            {i + 1}
+   767→                          </span>
+   768→                        {track.thumbnail ? (
+   769→                          <img
+   770→                            src={track.thumbnail}
+   771→                            alt=""
+   772→                            className="w-10 h-10 rounded object-cover"
+   773→                          />
+   774→                        ) : (
+   775→                          <div className="w-10 h-10 rounded bg-muted flex items-center justify-center">
+   776→                            <ListMusic className="w-4 h-4 text-muted-foreground" />
+   777→                          </div>
+   778→                        )}
+   779→                        <div className="flex-1 min-w-0">
+   780→                          <div className="text-sm font-medium truncate">
+   781→                            {track.title}
+   782→                          </div>
+   783→                          <div className="text-xs text-muted-foreground truncate">
+   784→                            {track.artist}
+   785→                          </div>
+   786→                        </div>
+   787→                        <button
+   788→                          onClick={() => playTrack(track)}
+   789→                          className="p-1.5 rounded-lg text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-primary transition-opacity"
+   790→                          title="Play this track now"
+   791→                          aria-label="Play this track now"
+   792→                        >
+   793→                          <Play className="w-3.5 h-3.5" />
+   794→                        </button>
+   795→                          <button
+   796→                            onClick={() => removeFromQueue(i)}
+   797→                            className="p-1.5 rounded-lg text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+   798→                            title="Remove from queue"
+   799→                            aria-label="Remove from queue"
+   800→                          >
+   801→                            <X className="w-3.5 h-3.5" />
+   802→                          </button>
+   803→                        </div>
+   804→                      ))}
+   805→                    </div>
+   806→                )}
+   807→
+   808→                {/* Up Next (Autoplay) — shows what will play when the queue is empty */}
+   809→                {queue.length === 0 && currentTrack && autoplay && upNextTracks.length > 0 && (
+   810→                  <div className="mt-4">
+   811→                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
+   812→                      <Sparkles className="w-3.5 h-3.5" />
+   813→                      Up Next (Autoplay)
+   814→                    </h3>
+   815→                    <div className="space-y-1 opacity-70">
+   816→                      {upNextTracks.map((track, i) => (
+   817→                        <div
+   818→                          key={`${track.videoId}-${i}`}
+   819→                          className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/[0.04] transition-all group"
+   820→                        >
+   821→                          <span className="text-xs text-muted-foreground w-6 text-center font-medium">
+   822→                            {i + 1}
+   823→                          </span>
+   824→                          {track.thumbnail ? (
+   825→                            <img
+   826→                              src={track.thumbnail}
+   827→                              alt=""
+   828→                              className="w-9 h-9 rounded object-cover"
+   829→                            />
+   830→                          ) : (
+   831→                            <div className="w-9 h-9 rounded bg-muted flex items-center justify-center">
+   832→                              <ListMusic className="w-3.5 h-3.5 text-muted-foreground" />
+   833→                            </div>
+   834→                          )}
+   835→                          <div className="flex-1 min-w-0">
+   836→                            <div className="text-xs font-medium truncate">{track.title}</div>
+   837→                            <div className="text-[11px] text-muted-foreground truncate">{track.artist}</div>
+   838→                          </div>
+   839→                          <button
+   840→                            onClick={() => playTrack(track, true)}
+   841→                            className="p-1.5 rounded-lg text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-primary transition-opacity"
+   842→                            title="Add to queue"
+   843→                          >
+   844→                            <Plus className="w-3.5 h-3.5" />
+   845→                          </button>
+   846→                        </div>
+   847→                      ))}
+   848→                    </div>
+   849→                  </div>
+   850→                )}
+   851→
+   852→                {/* Quick action: skip to next */}
+   853→                {currentTrack && (
+   854→                  <Button
+   855→                    variant="outline"
+   856→                    size="sm"
+   857→                    onClick={() => playNext()}
+   858→                    className="w-full"
+   859→                  >
+   860→                    <SkipForward className="w-4 h-4 mr-2" />
+   861→                    Skip to next
+   862→                  </Button>
+   863→                )}
+   864→              </motion.div>
+   865→            )}
+   866→
+   867→            {tab === 'library' && (
+   868→              <motion.div
+   869→                key="library"
+   870→                initial={{ opacity: 0, y: 10 }}
+   871→                animate={{ opacity: 1, y: 0 }}
+   872→                exit={{ opacity: 0, y: -10 }}
+   873→                transition={{ duration: 0.2 }}
+   874→                className="space-y-6"
+   875→              >
+   876→                {/* Library sub-tabs */}
+   877→                <div className="flex gap-1 p-1 bg-muted/50 rounded-lg w-fit">
+   878→                  <button
+   879→                    onClick={() => setLibraryTab('history')}
+   880→                    className={cn(
+   881→                      'flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors',
+   882→                      libraryTab === 'history' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+   883→                    )}
+   884→                  >
+   885→                    <History className="w-4 h-4" />
+   886→                    History
+   887→                  </button>
+   888→                  <button
+   889→                    onClick={() => setLibraryTab('liked')}
+   890→                    className={cn(
+   891→                      'flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors',
+   892→                      libraryTab === 'liked' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+   893→                    )}
+   894→                  >
+   895→                    <Heart className="w-4 h-4" />
+   896→                    Liked
+   897→                    {liked.length > 0 && (
+   898→                      <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 rounded-full">{liked.length}</span>
+   899→                    )}
+   900→                  </button>
+   901→                  <button
+   902→                    onClick={() => setLibraryTab('playlists')}
+   903→                    className={cn(
+   904→                      'flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors',
+   905→                      libraryTab === 'playlists' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+   906→                    )}
+   907→                  >
+   908→                    <ListMusic className="w-4 h-4" />
+   909→                    Playlists
+   910→                    {playlists.length > 0 && (
+   911→                      <span className="text-[10px] bg-primary/20 text-primary px-1.5 rounded-full">{playlists.length}</span>
+   912→                    )}
+   913→                  </button>
+   914→                </div>
+   915→
+   916→                {/* ── HISTORY TAB ────────────────────────────────────────── */}
+   917→                {libraryTab === 'history' && (
+   918→                  <div>
+   919→                    {history.length === 0 ? (
+   920→                      <Card className="p-8 text-center border-dashed">
+   921→                        <Clock className="w-10 h-10 mx-auto text-muted-foreground mb-2" strokeWidth={1.5} />
+   922→                        <p className="text-sm text-muted-foreground">No play history yet</p>
+   923→                        <p className="text-xs text-muted-foreground/60 mt-1">Songs you play will appear here</p>
+   924→                      </Card>
+   925→                    ) : (
+   926→                      <>
+   927→                        <div className="flex items-center justify-between mb-3">
+   928→                          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+   929→                            <History className="w-3.5 h-3.5" />
+   930→                            Recently Played · {history.length}
+   931→                          </h2>
+   932→                          <Button
+   933→                            variant="ghost"
+   934→                            size="sm"
+   935→                            onClick={() => {
+   936→                              setHistory([])
+   937→                              saveHistory([])
+   938→                              toast.success('History cleared')
+   939→                            }}
+   940→                            className="text-red-400 hover:text-red-300 h-7 text-xs"
+   941→                          >
+   942→                            <Trash2 className="w-3 h-3 mr-1" />
+   943→                            Clear
+   944→                          </Button>
+   945→                        </div>
+   946→                        <div className="space-y-1">
+   947→                          {history.map((track, i) => (
+   948→                            <TrackRow
+   949→                              key={`${track.videoId}-${i}`}
+   950→                              track={track}
+   951→                              onPlay={() => playTrack(track)}
+   952→                              onAddToQueue={() => playTrack(track, true)}
+   953→                              isCurrent={currentTrack?.videoId === track.videoId}
+   954→                              isPlaying={isPlaying && currentTrack?.videoId === track.videoId}
+   955→                              isLiked={isLiked(track.videoId)}
+   956→                              onToggleLike={() => toggleLike(track)}
+   957→                              onAddToPlaylist={() => setAddToPlaylistTrack(track)}
+   958→                            />
+   959→                          ))}
+   960→                        </div>
+   961→                      </>
+   962→                    )}
+   963→                  </div>
+   964→                )}
+   965→
+   966→                {/* ── LIKED TAB ─────────────────────────────────────────── */}
+   967→                {libraryTab === 'liked' && (
+   968→                  <div>
+   969→                    {liked.length === 0 ? (
+   970→                      <Card className="p-8 text-center border-dashed">
+   971→                        <Heart className="w-10 h-10 mx-auto text-muted-foreground mb-2" strokeWidth={1.5} />
+   972→                        <p className="text-sm text-muted-foreground">No liked songs yet</p>
+   973→                        <p className="text-xs text-muted-foreground/60 mt-1">Tap the heart on any song to save it here</p>
+   974→                      </Card>
+   975→                    ) : (
+   976→                      <>
+   977→                        <div className="flex items-center justify-between mb-3">
+   978→                          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+   979→                            <Heart className="w-3.5 h-3.5" />
+   980→                            Liked Songs · {liked.length}
+   981→                          </h2>
+   982→                          <Button
+   983→                            variant="ghost"
+   984→                            size="sm"
+   985→                            onClick={() => {
+   986→                              // Play all liked songs starting from the first
+   987→                              playTrack(liked[0])
+   988→                              for (let i = 1; i < liked.length; i++) {
+   989→                                playTrack(liked[i], true)
+   990→                              }
+   991→                            }}
+   992→                            className="h-7 text-xs"
+   993→                          >
+   994→                            <Play className="w-3 h-3 mr-1" />
+   995→                            Play All
+   996→                          </Button>
+   997→                        </div>
+   998→                        <div className="space-y-1">
+   999→                          {liked.map((track, i) => (
+  1000→                            <TrackRow
+  1001→                              key={`${track.videoId}-${i}`}
+  1002→                              track={track}
+  1003→                              onPlay={() => playTrack(track)}
+  1004→                              onAddToQueue={() => playTrack(track, true)}
+  1005→                              isCurrent={currentTrack?.videoId === track.videoId}
+  1006→                              isPlaying={isPlaying && currentTrack?.videoId === track.videoId}
+  1007→                              isLiked={true}
+  1008→                              onToggleLike={() => toggleLike(track)}
+  1009→                              onAddToPlaylist={() => setAddToPlaylistTrack(track)}
+  1010→                            />
+  1011→                          ))}
+  1012→                        </div>
+  1013→                      </>
+  1014→                    )}
+  1015→                  </div>
+  1016→                )}
+  1017→
+  1018→                {/* ── PLAYLISTS TAB ─────────────────────────────────────── */}
+  1019→                {libraryTab === 'playlists' && (
+  1020→                  <div>
+  1021→                    {/* Create new playlist */}
+  1022→                    <div className="mb-4">
+  1023→                      {showNewPlaylistInput ? (
+  1024→                        <div className="flex gap-2">
+  1025→                          <Input
+  1026→                            value={newPlaylistName}
+  1027→                            onChange={(e) => setNewPlaylistName(e.target.value)}
+  1028→                            placeholder="Playlist name..."
+  1029→                            className="flex-1"
+  1030→                            autoFocus
+  1031→                            onKeyDown={(e) => {
+  1032→                              if (e.key === 'Enter') createPlaylist(newPlaylistName)
+  1033→                              if (e.key === 'Escape') { setShowNewPlaylistInput(false); setNewPlaylistName('') }
+  1034→                            }}
+  1035→                          />
+  1036→                          <Button size="sm" onClick={() => createPlaylist(newPlaylistName)}>
+  1037→                            Create
+  1038→                          </Button>
+  1039→                          <Button size="sm" variant="ghost" onClick={() => { setShowNewPlaylistInput(false); setNewPlaylistName('') }}>
+  1040→                            <X className="w-4 h-4" />
+  1041→                          </Button>
+  1042→                        </div>
+  1043→                      ) : (
+  1044→                        <Button
+  1045→                          variant="outline"
+  1046→                          size="sm"
+  1047→                          onClick={() => setShowNewPlaylistInput(true)}
+  1048→                          className="w-full border-dashed"
+  1049→                        >
+  1050→                          <Plus className="w-4 h-4 mr-1.5" />
+  1051→                          New Playlist
+  1052→                        </Button>
+  1053→                      )}
+  1054→                    </div>
+  1055→
+  1056→                    {playlists.length === 0 ? (
+  1057→                      <Card className="p-8 text-center border-dashed">
+  1058→                        <ListMusic className="w-10 h-10 mx-auto text-muted-foreground mb-2" strokeWidth={1.5} />
+  1059→                        <p className="text-sm text-muted-foreground">No playlists yet</p>
+  1060→                        <p className="text-xs text-muted-foreground/60 mt-1">Create a playlist to organize your music</p>
+  1061→                      </Card>
+  1062→                    ) : (
+  1063→                      <div className="space-y-3">
+  1064→                        {playlists.map((pl) => (
+  1065→                          <PlaylistCard
+  1066→                            key={pl.id}
+  1067→                            playlist={pl}
+  1068→                            onPlay={() => {
+  1069→                              if (pl.songs.length > 0) {
+  1070→                                playTrack(pl.songs[0])
+  1071→                                for (let i = 1; i < pl.songs.length; i++) {
+  1072→                                  playTrack(pl.songs[i], true)
+  1073→                                }
+  1074→                              }
+  1075→                            }}
+  1076→                            onDelete={() => deletePlaylist(pl.id)}
+  1077→                            onPlayTrack={(track) => playTrack(track)}
+  1078→                            onAddToQueue={(track) => playTrack(track, true)}
+  1079→                            currentTrackId={currentTrack?.videoId}
+  1080→                            isPlaying={isPlaying}
+  1081→                          />
+  1082→                        ))}
+  1083→                      </div>
+  1084→                    )}
+  1085→                  </div>
+  1086→                )}
+  1087→              </motion.div>
+  1088→            )}
+  1089→          </AnimatePresence>
+  1090→        </div>
+  1091→
+  1092→        {/* ── Add to Playlist modal ──────────────────────────────────────── */}
+  1093→        {addToPlaylistTrack && (
+  1094→          <div
+  1095→            className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+  1096→            onClick={() => setAddToPlaylistTrack(null)}
+  1097→          >
+  1098→            <div
+  1099→              className="bg-card rounded-2xl border border-border/50 shadow-2xl max-w-sm w-full overflow-hidden"
+  1100→              onClick={(e) => e.stopPropagation()}
+  1101→            >
+  1102→              <div className="p-4 border-b border-border/30">
+  1103→                <h3 className="font-semibold text-sm">Add to playlist</h3>
+  1104→                <p className="text-xs text-muted-foreground truncate mt-0.5">{addToPlaylistTrack.title}</p>
+  1105→              </div>
+  1106→              <div className="max-h-64 overflow-y-auto p-2">
+  1107→                {playlists.length === 0 ? (
+  1108→                  <p className="text-sm text-muted-foreground text-center py-6 px-4">
+  1109→                    No playlists yet. Go to Library → Playlists to create one.
+  1110→                  </p>
+  1111→                ) : (
+  1112→                  playlists.map((pl) => (
+  1113→                    <button
+  1114→                      key={pl.id}
+  1115→                      onClick={() => {
+  1116→                        addToPlaylist(pl.id, addToPlaylistTrack)
+  1117→                        setAddToPlaylistTrack(null)
+  1118→                      }}
+  1119→                      className="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-accent/50 transition-colors text-left"
+  1120→                    >
+  1121→                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center shrink-0 ring-1 ring-primary/20">
+  1122→                        <ListMusic className="w-5 h-5 text-primary" />
+  1123→                      </div>
+  1124→                      <div className="flex-1 min-w-0">
+  1125→                        <div className="text-sm font-medium truncate">{pl.name}</div>
+  1126→                        <div className="text-xs text-muted-foreground">
+  1127→                          {pl.songs.length} song{pl.songs.length !== 1 ? 's' : ''}
+  1128→                        </div>
+  1129→                      </div>
+  1130→                    </button>
+  1131→                  ))
+  1132→                )}
+  1133→              </div>
+  1134→              <div className="p-2 border-t border-border/30">
+  1135→                <Button
+  1136→                  variant="ghost"
+  1137→                  size="sm"
+  1138→                  className="w-full"
+  1139→                  onClick={() => setAddToPlaylistTrack(null)}
+  1140→                >
+  1141→                  Cancel
+  1142→                </Button>
+  1143→              </div>
+  1144→            </div>
+  1145→          </div>
+  1146→        )}
+  1147→      </div>
+  1148→    </div>
+  1149→  )
+  1150→}
+  1151→
+  1152→// ─── Track Row (list view) ─────────────────────────────────────────────────
+  1153→function TrackRow({
+  1154→  track,
+  1155→  onPlay,
+  1156→  onAddToQueue,
+  1157→  isCurrent,
+  1158→  isPlaying,
+  1159→  isLiked,
+  1160→  onToggleLike,
+  1161→  onAddToPlaylist,
+  1162→}: {
+  1163→  track: Track
+  1164→  onPlay: () => void
+  1165→  onAddToQueue: () => void
+  1166→  isCurrent: boolean
+  1167→  isPlaying: boolean
+  1168→  isLiked?: boolean
+  1169→  onToggleLike?: () => void
+  1170→  onAddToPlaylist?: () => void
+  1171→}) {
+  1172→  return (
+  1173→    <div
+  1174→      className={cn(
+  1175→        'flex items-center gap-2 p-3 rounded-2xl transition-all group hover:bg-white/[0.04]',
+  1176→        isCurrent && 'bg-primary/5 hover:bg-primary/10',
+  1177→      )}
+  1178→    >
+  1179→      <button
+  1180→        onClick={onPlay}
+  1181→        className="flex items-center gap-4 flex-1 min-w-0 text-left"
+  1182→      >
+  1183→        {track.thumbnail ? (
+  1184→          <div className="relative w-14 h-14 rounded-xl overflow-hidden shrink-0 shadow-sm ring-1 ring-white/5">
+  1185→            <img
+  1186→              src={track.thumbnail}
+  1187→              alt=""
+  1188→              className="w-full h-full object-cover"
+  1189→            />
+  1190→            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-[2px]">
+  1191→              {isCurrent && isPlaying ? (
+  1192→                <Pause className="w-5 h-5 text-white drop-shadow-md" />
+  1193→              ) : (
+  1194→                <Play className="w-5 h-5 text-white ml-1 drop-shadow-md" />
+  1195→              )}
+  1196→            </div>
+  1197→          </div>
+  1198→        ) : (
+  1199→          <div className="w-14 h-14 rounded-xl bg-muted flex items-center justify-center shrink-0">
+  1200→            <ListMusic className="w-6 h-6 text-muted-foreground" />
+  1201→          </div>
+  1202→        )}
+  1203→        <div className="flex-1 min-w-0">
+  1204→          <div
+  1205→            className={cn(
+  1206→              'text-[15px] font-semibold truncate transition-colors',
+  1207→              isCurrent ? 'text-primary' : 'text-foreground',
+  1208→            )}
+  1209→          >
+  1210→            {track.title}
+  1211→          </div>
+  1212→          <div className="text-sm text-muted-foreground truncate">
+  1213→            {track.artist}
+  1214→          </div>
+  1215→        </div>
+  1216→      </button>
+  1217→
+  1218→      {/* Like button (heart) — always visible */}
+  1219→      {onToggleLike && (
+  1220→        <button
+  1221→          onClick={onToggleLike}
+  1222→          className={cn(
+  1223→            'p-2.5 rounded-full transition-all shrink-0',
+  1224→            isLiked
+  1225→              ? 'text-red-400 hover:text-red-300'
+  1226→              : 'text-muted-foreground hover:text-red-400 hover:bg-red-500/10'
+  1227→          )}
+  1228→          title={isLiked ? 'Remove from Liked' : 'Add to Liked'}
+  1229→          aria-label={isLiked ? 'Remove from Liked' : 'Add to Liked'}
+  1230→        >
+  1231→          <Heart className={cn('w-5 h-5', isLiked && 'fill-current')} />
+  1232→        </button>
+  1233→      )}
+  1234→
+  1235→      {/* Add to playlist button — always visible */}
+  1236→      {onAddToPlaylist && (
+  1237→        <button
+  1238→          onClick={onAddToPlaylist}
+  1239→          className="p-2.5 rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shrink-0"
+  1240→          title="Add to playlist"
+  1241→          aria-label="Add to playlist"
+  1242→        >
+  1243→          <ListPlus className="w-5 h-5" />
+  1244→        </button>
+  1245→      )}
+  1246→
+  1247→      {/* Add to queue button — always visible */}
+  1248→      <button
+  1249→        onClick={onAddToQueue}
+  1250→        className="p-2.5 rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shrink-0"
+  1251→        title="Add to queue"
+  1252→        aria-label="Add to queue"
+  1253→      >
+  1254→        <Plus className="w-5 h-5" />
+  1255→      </button>
+  1256→    </div>
+  1257→  )
+  1258→}
+  1259→
+  1260→// ─── Playlist Card (expandable) ────────────────────────────────────────────
+  1261→function PlaylistCard({
+  1262→  playlist,
+  1263→  onPlay,
+  1264→  onDelete,
+  1265→  onPlayTrack,
+  1266→  onAddToQueue,
+  1267→  currentTrackId,
+  1268→  isPlaying,
+  1269→}: {
+  1270→  playlist: Playlist
+  1271→  onPlay: () => void
+  1272→  onDelete: () => void
+  1273→  onPlayTrack: (track: Track) => void
+  1274→  onAddToQueue: (track: Track) => void
+  1275→  currentTrackId?: string
+  1276→  isPlaying: boolean
+  1277→}) {
+  1278→  const [expanded, setExpanded] = useState(false)
+  1279→
+  1280→  return (
+  1281→    <Card className="overflow-hidden">
+  1282→      {/* Header */}
+  1283→      <div className="flex items-center gap-3 p-3 hover:bg-white/[0.02] transition-colors">
+  1284→        <button
+  1285→          onClick={() => setExpanded(!expanded)}
+  1286→          className="flex items-center gap-3 flex-1 min-w-0 text-left"
+  1287→        >
+  1288→          <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center shrink-0 ring-1 ring-primary/20">
+  1289→            <ListMusic className="w-6 h-6 text-primary" />
+  1290→          </div>
+  1291→          <div className="flex-1 min-w-0">
+  1292→            <div className="text-[15px] font-semibold truncate">{playlist.name}</div>
+  1293→            <div className="text-sm text-muted-foreground">
+  1294→              {playlist.songs.length} song{playlist.songs.length !== 1 ? 's' : ''}
+  1295→            </div>
+  1296→          </div>
+  1297→        </button>
+  1298→        {playlist.songs.length > 0 && (
+  1299→          <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={onPlay} title="Play all">
+  1300→            <Play className="w-4 h-4" />
+  1301→          </Button>
+  1302→        )}
+  1303→        <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-red-400 hover:text-red-300" onClick={onDelete} title="Delete playlist">
+  1304→          <Trash2 className="w-4 h-4" />
+  1305→        </Button>
+  1306→      </div>
+  1307→
+  1308→      {/* Expanded track list */}
+  1309→      {expanded && (
+  1310→        <div className="px-2 pb-2 border-t border-border/30">
+  1311→          {playlist.songs.length === 0 ? (
+  1312→            <p className="text-sm text-muted-foreground text-center py-4">
+  1313→              Empty playlist — add songs from search or browse
+  1314→            </p>
+  1315→          ) : (
+  1316→            <div className="space-y-1 pt-2">
+  1317→              {playlist.songs.map((track, i) => (
+  1318→                <TrackRow
+  1319→                  key={`${track.videoId}-${i}`}
+  1320→                  track={track}
+  1321→                  onPlay={() => onPlayTrack(track)}
+  1322→                  onAddToQueue={() => onAddToQueue(track)}
+  1323→                  isCurrent={currentTrackId === track.videoId}
+  1324→                  isPlaying={isPlaying && currentTrackId === track.videoId}
+  1325→                />
+  1326→              ))}
+  1327→            </div>
+  1328→          )}
+  1329→        </div>
+  1330→      )}
+  1331→    </Card>
+  1332→  )
+  1333→}
+  1334→
+  1335→// ─── Track Card (grid view) ────────────────────────────────────────────────
+  1336→function TrackCard({
+  1337→  track,
+  1338→  onPlay,
+  1339→  onAddToQueue,
+  1340→  isCurrent,
+  1341→  isPlaying,
+  1342→}: {
+  1343→  track: Track
+  1344→  onPlay: () => void
+  1345→  onAddToQueue: () => void
+  1346→  isCurrent: boolean
+  1347→  isPlaying: boolean
+  1348→}) {
+  1349→  return (
+  1350→    <SpotlightCard
+  1351→      className={cn(
+  1352→        'group transition-all rounded-2xl overflow-hidden',
+  1353→        isCurrent ? 'ring-2 ring-primary shadow-glow' : 'hover:scale-[1.02] border border-white/5',
+  1354→      )}
+  1355→    >
+  1356→      <button onClick={onPlay} className="w-full">
+  1357→        {track.thumbnail ? (
+  1358→          <div className="aspect-square relative">
+  1359→            <img
+  1360→              src={track.thumbnail}
+  1361→              alt=""
+  1362→              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+  1363→            />
+  1364→            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-60 group-hover:opacity-80 transition-opacity" />
+  1365→            <div className="absolute inset-0 flex items-center justify-center">
+  1366→              <div className="w-14 h-14 rounded-full gradient-primary flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all scale-75 group-hover:scale-100 shadow-glow">
+  1367→                {isCurrent && isPlaying ? (
+  1368→                  <Pause className="w-6 h-6 text-primary-foreground" />
+  1369→                ) : (
+  1370→                  <Play className="w-6 h-6 text-primary-foreground ml-1" />
+  1371→                )}
+  1372→              </div>
+  1373→            </div>
+  1374→          </div>
+  1375→        ) : (
+  1376→          <div className="aspect-square bg-muted flex items-center justify-center">
+  1377→            <ListMusic className="w-10 h-10 text-muted-foreground" />
+  1378→          </div>
+  1379→        )}
+  1380→      </button>
+  1381→      <div className="p-3 flex items-start gap-2 bg-card/50 backdrop-blur-md absolute bottom-0 inset-x-0">
+  1382→        <div className="flex-1 min-w-0">
+  1383→          <div
+  1384→            className={cn(
+  1385→              'text-[13px] font-semibold truncate',
+  1386→              isCurrent ? 'text-primary' : 'text-foreground',
+  1387→            )}
+  1388→          >
+  1389→            {track.title}
+  1390→          </div>
+  1391→          <div className="text-[11px] text-muted-foreground truncate">
+  1392→            {track.artist}
+  1393→          </div>
+  1394→        </div>
+  1395→        <button
+  1396→          onClick={onAddToQueue}
+  1397→          className="p-1.5 rounded-full bg-white/10 text-white opacity-0 group-hover:opacity-100 hover:bg-primary hover:text-primary-foreground transition-all shrink-0"
+  1398→          title="Add to queue"
+  1399→          aria-label="Add to queue"
+  1400→        >
+  1401→          <Plus className="w-3.5 h-3.5" />
+  1402→        </button>
+  1403→      </div>
+  1404→    </SpotlightCard>
+  1405→  )
+  1406→}
+  1407→
+  1408→// ─── Room Card ─────────────────────────────────────────────────────────────
+  1409→// Note: we no longer show the raw member count — it includes stale members
+  1410→// who joined and left (we don't track leftAt for music rooms). Instead we
+  1411→// show a "Listening" indicator that's only lit when the host is actively
+  1412→// playing, which is a more accurate signal of "is anything happening here
+  1413→// right now".
+  1414→function RoomCard({
+  1415→  room,
+  1416→  isActive,
+  1417→  onJoin,
+  1418→  onDelete,
+  1419→}: {
+  1420→  room: Room
+  1421→  isActive: boolean
+  1422→  onJoin: () => void
+  1423→  onDelete?: () => void
+  1424→}) {
+  1425→  const isPlaying = room.currentState === 'playing'
+  1426→  return (
+  1427→    <div className="relative group">
+  1428→      {isActive && (
+  1429→        <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-primary/50 to-purple-500/50 opacity-50 blur-md transition-opacity group-hover:opacity-75" />
+  1430→      )}
+  1431→      <GlassSurface
+  1432→        blur={12}
+  1433→        opacity={isActive ? 0.08 : 0.02}
+  1434→        className={cn(
+  1435→          'w-full flex items-center gap-4 p-4 transition-all',
+  1436→          isActive
+  1437→            ? 'border-primary/50'
+  1438→            : 'border-white/5 hover:bg-white/[0.03]',
+  1439→        )}
+  1440→      >
+  1441→        <button
+  1442→          onClick={onJoin}
+  1443→          className="flex items-center gap-4 flex-1 min-w-0 text-left"
+  1444→        >
+  1445→          <div
+  1446→            className={cn(
+  1447→              'w-14 h-14 rounded-xl flex items-center justify-center shrink-0 transition-all shadow-sm',
+  1448→              isPlaying
+  1449→                ? 'bg-primary/20 text-primary pulse-glow ring-1 ring-primary/30'
+  1450→                : 'bg-black/30 text-muted-foreground ring-1 ring-white/10',
+  1451→            )}
+  1452→          >
+  1453→            <Radio className={cn('w-6 h-6', isPlaying && 'animate-pulse')} />
+  1454→          </div>
+  1455→          <div className="flex-1 min-w-0">
+  1456→            <div className="font-semibold text-base truncate text-foreground">{room.name}</div>
+  1457→            <div className="text-sm text-muted-foreground flex items-center gap-2 mt-0.5">
+  1458→              <span>Hosted by {room.host?.displayName || 'Unknown'}</span>
+  1459→              {isPlaying ? (
+  1460→                <>
+  1461→                  <span className="text-white/30">•</span>
+  1462→                  <span className="text-status-online flex items-center gap-1.5 font-medium">
+  1463→                    <span className="w-2 h-2 rounded-full bg-status-online shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse" />
+  1464→                    Listening now
+  1465→                  </span>
+  1466→                </>
+  1467→              ) : (
+  1468→                <>
+  1469→                  <span className="text-white/30">•</span>
+  1470→                  <span className="text-muted-foreground">Idle</span>
+  1471→                </>
+  1472→              )}
+  1473→            </div>
+  1474→          </div>
+  1475→          <div className={cn(
+  1476→            "shrink-0 text-sm font-semibold px-4 py-2 rounded-xl transition-all shadow-sm",
+  1477→            isActive ? "bg-primary text-primary-foreground shadow-glow" : "bg-white/5 text-foreground hover:bg-white/10 border border-white/10"
+  1478→          )}>
+  1479→            {isActive ? 'In Room' : 'Join'}
+  1480→          </div>
+  1481→        </button>
+  1482→        {onDelete && (
+  1483→          <button
+  1484→            onClick={(e) => {
+  1485→              e.stopPropagation()
+  1486→              if (confirm(`Delete room "${room.name}"?`)) onDelete()
+  1487→            }}
+  1488→            className="shrink-0 p-2.5 rounded-full text-red-400 opacity-0 group-hover:opacity-100 hover:bg-red-500/10 hover:text-red-300 transition-all"
+  1489→            title="Delete room"
+  1490→            aria-label="Delete room"
+  1491→          >
+  1492→            <Trash2 className="w-5 h-5" />
+  1493→          </button>
+  1494→        )}
+  1495→      </GlassSurface>
+  1496→    </div>
+  1497→  )
+  1498→}
+  1499→

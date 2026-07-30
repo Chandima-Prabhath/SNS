@@ -3,14 +3,26 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
 
-// List all users (for DM creation, mentions, etc.)
-export async function GET() {
+// List all users (for DM creation, mentions, invites, etc.)
+// Optional ?search=username filters by username/displayName
+export async function GET(req: Request) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const currentUserId = (session.user as any).id
 
+  const url = new URL(req.url)
+  const search = url.searchParams.get('search')?.trim()
+
   const users = await db.user.findMany({
-    where: { id: { not: currentUserId } },
+    where: {
+      id: { not: currentUserId },
+      ...(search ? {
+        OR: [
+          { username: { contains: search } },
+          { displayName: { contains: search } },
+        ],
+      } : {}),
+    },
     select: {
       id: true,
       username: true,

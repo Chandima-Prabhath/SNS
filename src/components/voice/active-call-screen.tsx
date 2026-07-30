@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useCall } from '@/hooks/useCall'
 import { useAppStore } from '@/stores/useAppStore'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Mic, MicOff, PhoneOff, Volume2, VolumeX, Users, Wifi, Cloud, Shield, Video, VideoOff, SwitchCamera, Monitor, MonitorOff } from 'lucide-react'
+import { Mic, MicOff, PhoneOff, Volume2, VolumeX, Users, Wifi, Cloud, Shield, Video, VideoOff, SwitchCamera, Monitor, MonitorOff, UserPlus } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -14,10 +14,12 @@ interface ActiveCallScreenProps {
   callAvatarUrl?: string
   isGroup: boolean
   isVideoCall: boolean
+  callId?: string
+  channelId?: string
   onLeave: () => void
 }
 
-export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall, onLeave }: ActiveCallScreenProps) {
+export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall, callId, channelId, onLeave }: ActiveCallScreenProps) {
   const { status, localMuted, videoEnabled, localStream, participants, toggleMute, toggleVideo, switchCamera, startScreenShare, stopScreenShare, isScreenSharing, endCall } = useCall()
   const [callDuration, setCallDuration] = useState(0)
   const [connectionTypes, setConnectionTypes] = useState<Record<string, 'p2p' | 'turn' | 'unknown'>>({})
@@ -67,6 +69,39 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
     setLeaving(true)
     try { await endCall() } catch (e) { console.error('[call] error leaving:', e) }
     finally { setLeaving(false); onLeave() }
+  }
+
+  // Invite a user to the current call — opens a prompt for their username
+  const handleInvite = async () => {
+    const username = prompt('Enter the username of the person to invite:')
+    if (!username?.trim()) return
+    try {
+      // Find the user by username
+      const searchRes = await fetch(`/api/users?search=${encodeURIComponent(username.trim())}`)
+      if (!searchRes.ok) throw new Error('Failed to search users')
+      const searchData = await searchRes.json()
+      const targetUser = searchData.users?.find((u: any) => u.username === username.trim())
+      if (!targetUser) {
+        toast.error(`User "${username}" not found`)
+        return
+      }
+      // Send the invite
+      const res = await fetch('/api/invites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetUserId: targetUser.id,
+          type: 'call',
+          targetId: callId,
+          channelId,
+          isVideo: isVideoCall,
+        }),
+      })
+      if (!res.ok) throw new Error('Failed to send invite')
+      toast.success(`Invitation sent to ${targetUser.displayName}`)
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to send invite')
+    }
   }
 
   const handleSpeaker = async () => {
@@ -150,6 +185,8 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
           <div className="flex items-center justify-center gap-3 max-w-md mx-auto bg-[#2b2d31]/80 backdrop-blur-xl rounded-2xl p-2.5">
             <VideoCallButton active={localMuted} onClick={toggleMute} icon={localMuted ? MicOff : Mic} label="Mute" variant={localMuted ? 'danger' : 'neutral'} />
             <VideoCallButton active={!videoEnabled} onClick={toggleVideo} icon={videoEnabled ? Video : VideoOff} label="Video" variant={!videoEnabled ? 'danger' : 'neutral'} />
+            {/* Invite button — sends a call invitation to a user's DM */}
+            <VideoCallButton onClick={handleInvite} icon={UserPlus} label="Invite" variant="neutral" />
             {/* Screen share — desktop only (getDisplayMedia not available on mobile) */}
             {typeof navigator !== 'undefined' && navigator.mediaDevices && 'getDisplayMedia' in navigator.mediaDevices && (
               <VideoCallButton active={isScreenSharing} onClick={handleScreenShare} icon={isScreenSharing ? MonitorOff : Monitor} label="Share" variant={isScreenSharing ? 'danger' : 'neutral'} />
@@ -318,6 +355,13 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
               icon={localMuted ? MicOff : Mic}
               label=""
               variant={localMuted ? 'danger' : 'neutral'}
+            />
+            {/* Invite button — sends a call invitation to a user's DM */}
+            <CallButton
+              onClick={handleInvite}
+              icon={UserPlus}
+              label=""
+              variant="neutral"
             />
             <CallButton
               onClick={handleLeave}
