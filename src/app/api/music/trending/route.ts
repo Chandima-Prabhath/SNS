@@ -61,9 +61,9 @@ export async function GET() {
     return NextResponse.json({ tracks: deduped.slice(0, 50) })
   } catch (e: any) {
     console.error('[music/trending] error:', e)
-    return NextResponse.json(
-      { error: e?.message || 'Failed to fetch trending' },
-      { status: 500 }
-    )
+    // Graceful failure — return empty tracks so the UI can fall back to
+    // home feed instead of showing an error. This matches the home route's
+    // pattern and prevents react-query from marking the query as broken.
+    return NextResponse.json({ tracks: [] })
   }
 }

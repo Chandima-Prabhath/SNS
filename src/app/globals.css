@@ -595,3 +595,63 @@
 .adoo-handle {
   transition: transform 0.15s ease, filter 0.15s ease;
 }
+
+/* ─── Music player: animated playing border (reactbits.dev inspired) ─────── */
+/* A rotating conic-gradient border that appears when audio is playing. */
+/* The .player-playing-border wrapper is added to the player FAB and bar */
+/* when isPlaying is true. It creates a glowing, rotating gradient ring. */
+@keyframes adoo-spin-border {
+  to { transform: rotate(360deg); }
+}
+.adoo-playing-border {
+  position: relative;
+}
+.adoo-playing-border::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0%,
+    #6366f1 15%,
+    #8b5cf6 30%,
+    #ec4899 45%,
+    transparent 60%
+  );
+  animation: adoo-spin-border 3s linear infinite;
+  z-index: -1;
+  opacity: 0.8;
+}
+.adoo-playing-border::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from 180deg,
+    transparent 0%,
+    #6366f1 15%,
+    #8b5cf6 30%,
+    #ec4899 45%,
+    transparent 60%
+  );
+  animation: adoo-spin-border 4s linear infinite reverse;
+  z-index: -2;
+  opacity: 0.4;
+  filter: blur(8px);
+}
+/* Equalizer bars indicator (shown on album art when playing) */
+@keyframes adoo-eq-bar {
+  0%, 100% { height: 4px; }
+  50% { height: 14px; }
+}
+.adoo-eq-bar {
+  width: 3px;
+  background: white;
+  border-radius: 2px;
+  animation: adoo-eq-bar 0.8s ease-in-out infinite;
+}
+.adoo-eq-bar:nth-child(2) { animation-delay: 0.15s; }
+.adoo-eq-bar:nth-child(3) { animation-delay: 0.3s; }
+.adoo-eq-bar:nth-child(4) { animation-delay: 0.45s; }

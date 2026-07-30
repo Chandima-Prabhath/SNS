@@ -691,7 +691,10 @@ function PlayerBar({
             onDragEnd={() => { setTimeout(() => { isDraggingRef.current = false }, 100) }}
             className="fixed bottom-20 lg:bottom-6 right-4 z-[60] cursor-grab touch-none"
           >
-            <div className="flex items-center gap-2.5 glass-dark rounded-full p-1.5 pr-3 shadow-xl pointer-events-auto">
+            <div className={cn(
+              "flex items-center gap-2.5 glass-dark rounded-full p-1.5 pr-3 shadow-xl pointer-events-auto",
+              isPlaying && "adoo-playing-border"
+            )}>
               {/* Album art / Play-pause */}
               <button
                 onClick={handlePlayPauseClick}
@@ -712,7 +715,12 @@ function PlayerBar({
                   {isLoading ? (
                     <Loader2 className="w-5 h-5 text-white animate-spin relative z-10" />
                   ) : isPlaying ? (
-                    <Pause className="w-5 h-5 text-white relative z-10" />
+                    <div className="flex items-end gap-0.5 h-4 relative z-10">
+                      <span className="adoo-eq-bar" style={{ height: 8 }} />
+                      <span className="adoo-eq-bar" style={{ height: 12 }} />
+                      <span className="adoo-eq-bar" style={{ height: 6 }} />
+                      <span className="adoo-eq-bar" style={{ height: 10 }} />
+                    </div>
                   ) : (
                     <Play className="w-5 h-5 text-white ml-0.5 relative z-10" />
                   )}
@@ -751,7 +759,10 @@ function PlayerBar({
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 120, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className="fixed bottom-16 lg:bottom-4 left-3 right-3 lg:left-1/2 lg:-translate-x-1/2 lg:right-auto lg:w-[660px] z-[60] glass-dark rounded-2xl shadow-2xl overflow-hidden"
+            className={cn(
+              "fixed bottom-16 lg:bottom-4 left-3 right-3 lg:left-1/2 lg:-translate-x-1/2 lg:right-auto lg:w-[660px] z-[60] glass-dark rounded-2xl shadow-2xl overflow-hidden",
+              isPlaying && "adoo-playing-border"
+            )}
           >
             {/* Mobile layout */}
             <div className="lg:hidden px-4 py-3 space-y-2.5">

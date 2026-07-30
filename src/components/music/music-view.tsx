@@ -10,7 +10,7 @@ import {
   Search, Play, Pause, SkipForward, Plus,
   Loader2, Radio, Headphones, X, ListMusic, Compass,
   Trash2, Repeat, Shuffle, Music as MusicIcon, Users,
-  Flame, Sparkles, History, Library, Clock,
+  Flame, Sparkles, History, Library, Clock, Heart,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -30,9 +30,19 @@ interface Room {
 }
 
 type Tab = 'browse' | 'rooms' | 'queue' | 'library'
+type LibraryTab = 'history' | 'liked' | 'playlists'
 
 const HISTORY_KEY = 'adoo-music-history'
+const LIKED_KEY = 'adoo-music-liked'
+const PLAYLISTS_KEY = 'adoo-music-playlists'
 const MAX_HISTORY = 50
+
+interface Playlist {
+  id: string
+  name: string
+  tracks: Track[]
+  createdAt: number
+}
 
 function loadHistory(): Track[] {
   try {
@@ -44,6 +54,32 @@ function loadHistory(): Track[] {
 function saveHistory(tracks: Track[]) {
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(tracks.slice(0, MAX_HISTORY)))
+  } catch {}
+}
+
+function loadLiked(): Track[] {
+  try {
+    const raw = localStorage.getItem(LIKED_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+function saveLiked(tracks: Track[]) {
+  try {
+    localStorage.setItem(LIKED_KEY, JSON.stringify(tracks))
+  } catch {}
+}
+
+function loadPlaylists(): Playlist[] {
+  try {
+    const raw = localStorage.getItem(PLAYLISTS_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+function savePlaylists(playlists: Playlist[]) {
+  try {
+    localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(playlists))
   } catch {}
 }
 
@@ -63,8 +99,14 @@ export function MusicView() {
   const [searchResults, setSearchResults] = useState<Track[]>([])
   const [searching, setSearching] = useState(false)
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const searchAbortRef = useRef<AbortController | null>(null)
   const qc = useQueryClient()
   const [history, setHistory] = useState<Track[]>([])
+  const [liked, setLiked] = useState<Track[]>([])
+  const [playlists, setPlaylists] = useState<Playlist[]>([])
+  const [libraryTab, setLibraryTab] = useState<LibraryTab>('history')
+  const [newPlaylistName, setNewPlaylistName] = useState('')
+  const [showNewPlaylistInput, setShowNewPlaylistInput] = useState(false)
 
   // ─── Playback state from the global store ─────────────────────────────
   const currentTrack = useMusicStore((s) => s.currentTrack)
@@ -82,10 +124,68 @@ export function MusicView() {
   // ─── Player actions (broadcast + audio handled by global player) ──────
   const { playTrack, playNext, removeFromQueue, clearQueue } = useMusicPlayer()
 
-  // Load history on mount
+  // Load history, liked, and playlists on mount
   useEffect(() => {
     setHistory(loadHistory())
+    setLiked(loadLiked())
+    setPlaylists(loadPlaylists())
   }, [])
+
+  // ── Liked songs helpers ──────────────────────────────────────────────
+  const toggleLike = (track: Track) => {
+    setLiked((prev) => {
+      const isLiked = prev.some((t) => t.videoId === track.videoId)
+      const updated = isLiked
+        ? prev.filter((t) => t.videoId !== track.videoId)
+        : [track, ...prev]
+      saveLiked(updated)
+      return updated
+    })
+  }
+
+  const isLiked = (videoId: string) => liked.some((t) => t.videoId === videoId)
+
+  // ── Playlist helpers ─────────────────────────────────────────────────
+  const createPlaylist = (name: string) => {
+    if (!name.trim()) return
+    const newPlaylist: Playlist = {
+      id: `pl-${Date.now()}`,
+      name: name.trim(),
+      tracks: [],
+      createdAt: Date.now(),
+    }
+    setPlaylists((prev) => {
+      const updated = [newPlaylist, ...prev]
+      savePlaylists(updated)
+      return updated
+    })
+    setNewPlaylistName('')
+    setShowNewPlaylistInput(false)
+    toast.success(`Playlist "${newPlaylist.name}" created`)
+  }
+
+  const addToPlaylist = (playlistId: string, track: Track) => {
+    setPlaylists((prev) => {
+      const updated = prev.map((pl) => {
+        if (pl.id !== playlistId) return pl
+        if (pl.tracks.some((t) => t.videoId === track.videoId)) return pl // dedupe
+        return { ...pl, tracks: [...pl.tracks, track] }
+      })
+      savePlaylists(updated)
+      return updated
+    })
+    const pl = playlists.find((p) => p.id === playlistId)
+    toast.success(`Added to "${pl?.name}"`)
+  }
+
+  const deletePlaylist = (playlistId: string) => {
+    setPlaylists((prev) => {
+      const updated = prev.filter((pl) => pl.id !== playlistId)
+      savePlaylists(updated)
+      return updated
+    })
+    toast.success('Playlist deleted')
+  }
 
   // Track when the current track changes — add to history
   useEffect(() => {
@@ -167,25 +267,42 @@ export function MusicView() {
     onError: () => toast.error('Failed to delete room'),
   })
 
-  // Debounced search
+  // Debounced search with AbortController to cancel stale requests
   const handleSearchChange = (value: string) => {
     setSearchQuery(value)
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
+    // Abort any in-flight search request
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort()
+      searchAbortRef.current = null
+    }
     if (!value.trim()) {
       setSearchResults([])
+      setSearching(false)
       return
     }
     searchTimeoutRef.current = setTimeout(async () => {
       setSearching(true)
+      const controller = new AbortController()
+      searchAbortRef.current = controller
       try {
-        const res = await fetch(`/api/music/search?q=${encodeURIComponent(value)}`)
+        const res = await fetch(`/api/music/search?q=${encodeURIComponent(value)}`, {
+          signal: controller.signal,
+        })
         if (!res.ok) throw new Error('Search failed')
         const data = await res.json()
-        setSearchResults(data.tracks || [])
+        // Only update if this request wasn't superseded
+        if (searchAbortRef.current === controller) {
+          setSearchResults(data.tracks || [])
+        }
       } catch (e: any) {
+        if (e.name === 'AbortError') return // expected — superseded by newer search
         toast.error(e.message || 'Search failed')
       } finally {
-        setSearching(false)
+        if (searchAbortRef.current === controller) {
+          setSearching(false)
+          searchAbortRef.current = null
+        }
       }
     }, 500)
   }
@@ -283,6 +400,8 @@ export function MusicView() {
                         isPlaying={
                           isPlaying && currentTrack?.videoId === track.videoId
                         }
+                        isLiked={isLiked(track.videoId)}
+                        onToggleLike={() => toggleLike(track)}
                       />
                     ))}
                   </div>
@@ -636,48 +755,214 @@ export function MusicView() {
                 transition={{ duration: 0.2 }}
                 className="space-y-6"
               >
-                {/* Recently Played */}
-                <div>
-                  <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
-                    <History className="w-3.5 h-3.5" />
-                    Recently Played
-                  </h2>
-                  {history.length === 0 ? (
-                    <Card className="p-8 text-center border-dashed">
-                      <Clock className="w-10 h-10 mx-auto text-muted-foreground mb-2" strokeWidth={1.5} />
-                      <p className="text-sm text-muted-foreground">No play history yet</p>
-                    </Card>
-                  ) : (
-                    <div className="space-y-1">
-                      {history.map((track, i) => (
-                        <TrackRow
-                          key={`${track.videoId}-${i}`}
-                          track={track}
-                          onPlay={() => playTrack(track)}
-                          onAddToQueue={() => playTrack(track, true)}
-                          isCurrent={currentTrack?.videoId === track.videoId}
-                          isPlaying={isPlaying && currentTrack?.videoId === track.videoId}
-                        />
-                      ))}
-                    </div>
-                  )}
+                {/* Library sub-tabs */}
+                <div className="flex gap-1 p-1 bg-muted/50 rounded-lg w-fit">
+                  <button
+                    onClick={() => setLibraryTab('history')}
+                    className={cn(
+                      'flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors',
+                      libraryTab === 'history' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    <History className="w-4 h-4" />
+                    History
+                  </button>
+                  <button
+                    onClick={() => setLibraryTab('liked')}
+                    className={cn(
+                      'flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors',
+                      libraryTab === 'liked' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    <Heart className="w-4 h-4" />
+                    Liked
+                    {liked.length > 0 && (
+                      <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 rounded-full">{liked.length}</span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setLibraryTab('playlists')}
+                    className={cn(
+                      'flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors',
+                      libraryTab === 'playlists' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    <ListMusic className="w-4 h-4" />
+                    Playlists
+                    {playlists.length > 0 && (
+                      <span className="text-[10px] bg-primary/20 text-primary px-1.5 rounded-full">{playlists.length}</span>
+                    )}
+                  </button>
                 </div>
 
-                {/* Clear history button */}
-                {history.length > 0 && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setHistory([])
-                      saveHistory([])
-                      toast.success('History cleared')
-                    }}
-                    className="text-red-400 hover:text-red-300"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 mr-1.5" />
-                    Clear History
-                  </Button>
+                {/* ── HISTORY TAB ────────────────────────────────────────── */}
+                {libraryTab === 'history' && (
+                  <div>
+                    {history.length === 0 ? (
+                      <Card className="p-8 text-center border-dashed">
+                        <Clock className="w-10 h-10 mx-auto text-muted-foreground mb-2" strokeWidth={1.5} />
+                        <p className="text-sm text-muted-foreground">No play history yet</p>
+                        <p className="text-xs text-muted-foreground/60 mt-1">Songs you play will appear here</p>
+                      </Card>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between mb-3">
+                          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                            <History className="w-3.5 h-3.5" />
+                            Recently Played · {history.length}
+                          </h2>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setHistory([])
+                              saveHistory([])
+                              toast.success('History cleared')
+                            }}
+                            className="text-red-400 hover:text-red-300 h-7 text-xs"
+                          >
+                            <Trash2 className="w-3 h-3 mr-1" />
+                            Clear
+                          </Button>
+                        </div>
+                        <div className="space-y-1">
+                          {history.map((track, i) => (
+                            <TrackRow
+                              key={`${track.videoId}-${i}`}
+                              track={track}
+                              onPlay={() => playTrack(track)}
+                              onAddToQueue={() => playTrack(track, true)}
+                              isCurrent={currentTrack?.videoId === track.videoId}
+                              isPlaying={isPlaying && currentTrack?.videoId === track.videoId}
+                              isLiked={isLiked(track.videoId)}
+                              onToggleLike={() => toggleLike(track)}
+                            />
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* ── LIKED TAB ─────────────────────────────────────────── */}
+                {libraryTab === 'liked' && (
+                  <div>
+                    {liked.length === 0 ? (
+                      <Card className="p-8 text-center border-dashed">
+                        <Heart className="w-10 h-10 mx-auto text-muted-foreground mb-2" strokeWidth={1.5} />
+                        <p className="text-sm text-muted-foreground">No liked songs yet</p>
+                        <p className="text-xs text-muted-foreground/60 mt-1">Tap the heart on any song to save it here</p>
+                      </Card>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between mb-3">
+                          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                            <Heart className="w-3.5 h-3.5" />
+                            Liked Songs · {liked.length}
+                          </h2>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              // Play all liked songs starting from the first
+                              playTrack(liked[0])
+                              for (let i = 1; i < liked.length; i++) {
+                                playTrack(liked[i], true)
+                              }
+                            }}
+                            className="h-7 text-xs"
+                          >
+                            <Play className="w-3 h-3 mr-1" />
+                            Play All
+                          </Button>
+                        </div>
+                        <div className="space-y-1">
+                          {liked.map((track, i) => (
+                            <TrackRow
+                              key={`${track.videoId}-${i}`}
+                              track={track}
+                              onPlay={() => playTrack(track)}
+                              onAddToQueue={() => playTrack(track, true)}
+                              isCurrent={currentTrack?.videoId === track.videoId}
+                              isPlaying={isPlaying && currentTrack?.videoId === track.videoId}
+                              isLiked={true}
+                              onToggleLike={() => toggleLike(track)}
+                            />
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* ── PLAYLISTS TAB ─────────────────────────────────────── */}
+                {libraryTab === 'playlists' && (
+                  <div>
+                    {/* Create new playlist */}
+                    <div className="mb-4">
+                      {showNewPlaylistInput ? (
+                        <div className="flex gap-2">
+                          <Input
+                            value={newPlaylistName}
+                            onChange={(e) => setNewPlaylistName(e.target.value)}
+                            placeholder="Playlist name..."
+                            className="flex-1"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') createPlaylist(newPlaylistName)
+                              if (e.key === 'Escape') { setShowNewPlaylistInput(false); setNewPlaylistName('') }
+                            }}
+                          />
+                          <Button size="sm" onClick={() => createPlaylist(newPlaylistName)}>
+                            Create
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => { setShowNewPlaylistInput(false); setNewPlaylistName('') }}>
+                            <X className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowNewPlaylistInput(true)}
+                          className="w-full border-dashed"
+                        >
+                          <Plus className="w-4 h-4 mr-1.5" />
+                          New Playlist
+                        </Button>
+                      )}
+                    </div>
+
+                    {playlists.length === 0 ? (
+                      <Card className="p-8 text-center border-dashed">
+                        <ListMusic className="w-10 h-10 mx-auto text-muted-foreground mb-2" strokeWidth={1.5} />
+                        <p className="text-sm text-muted-foreground">No playlists yet</p>
+                        <p className="text-xs text-muted-foreground/60 mt-1">Create a playlist to organize your music</p>
+                      </Card>
+                    ) : (
+                      <div className="space-y-3">
+                        {playlists.map((pl) => (
+                          <PlaylistCard
+                            key={pl.id}
+                            playlist={pl}
+                            onPlay={() => {
+                              if (pl.tracks.length > 0) {
+                                playTrack(pl.tracks[0])
+                                for (let i = 1; i < pl.tracks.length; i++) {
+                                  playTrack(pl.tracks[i], true)
+                                }
+                              }
+                            }}
+                            onDelete={() => deletePlaylist(pl.id)}
+                            onPlayTrack={(track) => playTrack(track)}
+                            onAddToQueue={(track) => playTrack(track, true)}
+                            currentTrackId={currentTrack?.videoId}
+                            isPlaying={isPlaying}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
               </motion.div>
             )}
@@ -695,17 +980,21 @@ function TrackRow({
   onAddToQueue,
   isCurrent,
   isPlaying,
+  isLiked,
+  onToggleLike,
 }: {
   track: Track
   onPlay: () => void
   onAddToQueue: () => void
   isCurrent: boolean
   isPlaying: boolean
+  isLiked?: boolean
+  onToggleLike?: () => void
 }) {
   return (
     <div
       className={cn(
-        'flex items-center gap-4 p-3 rounded-2xl transition-all group hover:bg-white/[0.04]',
+        'flex items-center gap-2 p-3 rounded-2xl transition-all group hover:bg-white/[0.04]',
         isCurrent && 'bg-primary/5 hover:bg-primary/10',
       )}
     >
@@ -747,15 +1036,109 @@ function TrackRow({
           </div>
         </div>
       </button>
+
+      {/* Like button (heart) — always visible */}
+      {onToggleLike && (
+        <button
+          onClick={onToggleLike}
+          className={cn(
+            'p-2.5 rounded-full transition-all shrink-0',
+            isLiked
+              ? 'text-red-400 hover:text-red-300'
+              : 'text-muted-foreground hover:text-red-400 hover:bg-red-500/10'
+          )}
+          title={isLiked ? 'Remove from Liked' : 'Add to Liked'}
+          aria-label={isLiked ? 'Remove from Liked' : 'Add to Liked'}
+        >
+          <Heart className={cn('w-5 h-5', isLiked && 'fill-current')} />
+        </button>
+      )}
+
+      {/* Add to queue button — always visible */}
       <button
         onClick={onAddToQueue}
-        className="p-2.5 rounded-full text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-primary hover:bg-primary/10 transition-all shrink-0"
+        className="p-2.5 rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shrink-0"
         title="Add to queue"
         aria-label="Add to queue"
       >
         <Plus className="w-5 h-5" />
       </button>
     </div>
+  )
+}
+
+// ─── Playlist Card (expandable) ────────────────────────────────────────────
+function PlaylistCard({
+  playlist,
+  onPlay,
+  onDelete,
+  onPlayTrack,
+  onAddToQueue,
+  currentTrackId,
+  isPlaying,
+}: {
+  playlist: Playlist
+  onPlay: () => void
+  onDelete: () => void
+  onPlayTrack: (track: Track) => void
+  onAddToQueue: (track: Track) => void
+  currentTrackId?: string
+  isPlaying: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <Card className="overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-3 p-3 hover:bg-white/[0.02] transition-colors">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-3 flex-1 min-w-0 text-left"
+        >
+          <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center shrink-0 ring-1 ring-primary/20">
+            <ListMusic className="w-6 h-6 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[15px] font-semibold truncate">{playlist.name}</div>
+            <div className="text-sm text-muted-foreground">
+              {playlist.tracks.length} song{playlist.tracks.length !== 1 ? 's' : ''}
+            </div>
+          </div>
+        </button>
+        {playlist.tracks.length > 0 && (
+          <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={onPlay} title="Play all">
+            <Play className="w-4 h-4" />
+          </Button>
+        )}
+        <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-red-400 hover:text-red-300" onClick={onDelete} title="Delete playlist">
+          <Trash2 className="w-4 h-4" />
+        </Button>
+      </div>
+
+      {/* Expanded track list */}
+      {expanded && (
+        <div className="px-2 pb-2 border-t border-border/30">
+          {playlist.tracks.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              Empty playlist — add songs from search or browse
+            </p>
+          ) : (
+            <div className="space-y-1 pt-2">
+              {playlist.tracks.map((track, i) => (
+                <TrackRow
+                  key={`${track.videoId}-${i}`}
+                  track={track}
+                  onPlay={() => onPlayTrack(track)}
+                  onAddToQueue={() => onAddToQueue(track)}
+                  isCurrent={currentTrackId === track.videoId}
+                  isPlaying={isPlaying && currentTrackId === track.videoId}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
   )
 }
 

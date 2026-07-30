@@ -14,8 +14,8 @@
  *   requests (sending messages, etc.) will fail gracefully.
  */
 
-const CACHE_NAME = 'adoo-v9'
-const API_CACHE = 'adoo-api-v9'
+const CACHE_NAME = 'adoo-v10'
+const API_CACHE = 'adoo-api-v10'
 const APP_SHELL = ['/', '/manifest.json', '/icon.svg']
 
 self.addEventListener('install', (event) => {
@@ -127,7 +127,10 @@ self.addEventListener('fetch', (event) => {
   // This enables offline reading: if the network is down, serve cached API
   // responses (messages, channels, users, etc.). When the network is up,
   // serve cached immediately AND fetch fresh data in the background.
-  if (url.pathname.startsWith('/api/') && !url.pathname.includes('/api/tts') && !url.pathname.includes('/api/music/stream') && !url.pathname.includes('/api/upload') && !url.pathname.includes('/api/music/debug') && !url.pathname.includes('/api/version')) {
+  //
+  // EXCLUSIONS: search and related are network-first (never serve stale)
+  // because the user expects fresh results every time.
+  if (url.pathname.startsWith('/api/') && !url.pathname.includes('/api/tts') && !url.pathname.includes('/api/music/stream') && !url.pathname.includes('/api/upload') && !url.pathname.includes('/api/music/debug') && !url.pathname.includes('/api/version') && !url.pathname.includes('/api/music/search') && !url.pathname.includes('/api/music/related') && !url.pathname.includes('/api/music/predownload')) {
     event.respondWith(
       caches.open(API_CACHE).then((cache) =>
         cache.match(req).then((cached) => {
