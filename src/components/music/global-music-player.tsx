@@ -393,12 +393,24 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
   // ─── Effect: Pre-download upcoming queue tracks ───────────────────────
   // When a track starts playing, pre-download the next 2 tracks in the queue
   // so they're ready to play instantly when the user gets to them.
+  //
+  // The predownload API is fire-and-forget (returns 202 immediately and
+  // downloads in the background). We don't await the response — just fire
+  // the request and let the server handle it.
   useEffect(() => {
     if (!currentTrack || queue.length === 0) return
     // Pre-download the next 2 tracks (or all if queue has fewer)
     const toPreDownload = queue.slice(0, 2)
     for (const track of toPreDownload) {
-      fetch(`/api/music/predownload/${track.videoId}`, { method: 'POST' }).catch(() => {})
+      console.log(`[predownload] requesting ${track.videoId} (${track.title})`)
+      // Fire-and-forget — the server returns 202 immediately and downloads
+      // in the background. We use keepalive so the request survives page
+      // navigation, and catch() to prevent unhandled rejection errors.
+      fetch(`/api/music/predownload/${track.videoId}`, { method: 'POST', keepalive: true })
+        .then((res) => {
+          console.log(`[predownload] ${track.videoId} → HTTP ${res.status} (${res.ok ? 'cached/downloading' : 'error'})`)
+        })
+        .catch((e) => console.error(`[predownload] ${track.videoId} network error:`, e))
     }
   }, [currentTrack, queue])
 
@@ -692,8 +704,8 @@ function PlayerBar({
             className="fixed bottom-20 lg:bottom-6 right-4 z-[60] cursor-grab touch-none"
           >
             <div className={cn(
-              "flex items-center gap-2.5 glass-dark rounded-full p-1.5 pr-3 shadow-xl pointer-events-auto",
-              isPlaying && "adoo-playing-border"
+              "flex items-center gap-2.5 rounded-full p-1.5 pr-3 shadow-xl pointer-events-auto",
+              isPlaying ? "adoo-playing-border" : "glass-dark"
             )}>
               {/* Album art / Play-pause */}
               <button
@@ -760,8 +772,8 @@ function PlayerBar({
             exit={{ y: 120, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
             className={cn(
-              "fixed bottom-16 lg:bottom-4 left-3 right-3 lg:left-1/2 lg:-translate-x-1/2 lg:right-auto lg:w-[660px] z-[60] glass-dark rounded-2xl shadow-2xl overflow-hidden",
-              isPlaying && "adoo-playing-border"
+              "fixed bottom-16 lg:bottom-4 left-3 right-3 lg:left-1/2 lg:-translate-x-1/2 lg:right-auto lg:w-[660px] z-[60] rounded-2xl shadow-2xl overflow-hidden",
+              isPlaying ? "adoo-playing-border" : "glass-dark"
             )}
           >
             {/* Mobile layout */}

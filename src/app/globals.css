@@ -597,20 +597,21 @@
 }
 
 /* ─── Music player: animated playing border (reactbits.dev inspired) ─────── */
-/* A rotating conic-gradient border that appears when audio is playing. */
-/* The .player-playing-border wrapper is added to the player FAB and bar */
-/* when isPlaying is true. It creates a glowing, rotating gradient ring. */
+/* A rotating conic-gradient border that appears when audio is playing.
+ *
+ * Implementation: the element gets padding: 2px + a rotating conic-gradient
+ * background. A ::before pseudo-element masks the center with the element's
+ * background color, leaving only the 2px ring visible. Everything is clipped
+ * by the element's border-radius + overflow:hidden — no overflow outside.
+ */
 @keyframes adoo-spin-border {
   to { transform: rotate(360deg); }
 }
+
 .adoo-playing-border {
   position: relative;
-}
-.adoo-playing-border::before {
-  content: '';
-  position: absolute;
-  inset: -2px;
-  border-radius: inherit;
+  /* The gradient shows through the 2px padding as a border ring */
+  padding: 2px;
   background: conic-gradient(
     from 0deg,
     transparent 0%,
@@ -619,28 +620,36 @@
     #ec4899 45%,
     transparent 60%
   );
+  background-size: 100% 100%;
   animation: adoo-spin-border 3s linear infinite;
-  z-index: -1;
-  opacity: 0.8;
+  /* Clip the gradient to the rounded shape — no overflow */
+  overflow: hidden;
 }
-.adoo-playing-border::after {
+
+/* Mask the center so only the 2px ring shows.
+ * Matches glass-dark's background + backdrop-filter for visual consistency. */
+.adoo-playing-border::before {
   content: '';
   position: absolute;
-  inset: -4px;
+  inset: 2px;
   border-radius: inherit;
-  background: conic-gradient(
-    from 180deg,
-    transparent 0%,
-    #6366f1 15%,
-    #8b5cf6 30%,
-    #ec4899 45%,
-    transparent 60%
-  );
-  animation: adoo-spin-border 4s linear infinite reverse;
-  z-index: -2;
-  opacity: 0.4;
-  filter: blur(8px);
+  background: oklch(0.17 0.008 264 / 0.85);
+  backdrop-filter: blur(32px) saturate(180%);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  z-index: 0;
 }
+
+/* Ensure content sits above the mask */
+.adoo-playing-border > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Subtle outer glow (doesn't cause layout issues — uses filter, not inset) */
+.adoo-playing-border {
+  filter: drop-shadow(0 0 6px rgba(99, 102, 241, 0.3));
+}
+
 /* Equalizer bars indicator (shown on album art when playing) */
 @keyframes adoo-eq-bar {
   0%, 100% { height: 4px; }
