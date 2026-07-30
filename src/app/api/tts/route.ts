@@ -85,7 +85,9 @@ export async function POST(req: Request) {
         // Slow path: pass the raw audio file as voice_wav.
         // IMPORTANT: Pocket TTS expects a valid WAV file (RIFF header).
         // If the uploaded file is webm/mp3/m4a, convert it to WAV with ffmpeg.
-        const audioPath = path.join(process.cwd(), 'public', customVoice.audioUrl)
+        // customVoice.audioUrl may be "/uploads/xxx" (legacy) or "/api/uploads/xxx" (new)
+        const normalizedAudioUrl = customVoice.audioUrl.replace(/^\/api\/uploads\//, '/uploads/')
+        const audioPath = path.join(process.cwd(), 'public', normalizedAudioUrl)
         if (!existsSync(audioPath)) {
           return NextResponse.json({ error: 'voice clip file not found' }, { status: 404 })
         }

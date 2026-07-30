@@ -24,7 +24,10 @@ export async function GET(req: Request) {
 
   if (!src) return NextResponse.json({ error: 'src required' }, { status: 400 })
 
-  const safePath = src.replace(/\.\./g, '').replace(/^\//, '')
+  // Normalize source path — /api/uploads/xxx.png and /uploads/xxx.png both
+  // point to the same file on disk (public/uploads/xxx.png). Strip /api prefix.
+  const normalizedSrc = src.replace(/^\/api\/uploads\//, '/uploads/')
+  const safePath = normalizedSrc.replace(/\.\./g, '').replace(/^\//, '')
   const filePath = path.join(process.cwd(), 'public', safePath)
 
   try {

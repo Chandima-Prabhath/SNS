@@ -68,8 +68,13 @@ export async function POST(req: Request) {
     const bytes = new Uint8Array(await file.arrayBuffer())
     await writeFile(filePath, bytes)
 
+    console.log(`[upload] saved ${filename} (${bytes.length} bytes, type=${file.type})`)
+
+    // Return URL via /api/uploads/ — our dedicated file-serving route that
+    // reads from disk on every request. This bypasses Next.js's static file
+    // serving which can cache/stale-cache newly-added files in production.
     return NextResponse.json({
-      url: `/uploads/${filename}`,
+      url: `/api/uploads/${filename}`,
       type: file.type || 'application/octet-stream',
       size: file.size,
       name: file.name || filename,

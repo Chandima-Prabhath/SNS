@@ -14,8 +14,8 @@
  *   requests (sending messages, etc.) will fail gracefully.
  */
 
-const CACHE_NAME = 'adoo-v8'
-const API_CACHE = 'adoo-api-v8'
+const CACHE_NAME = 'adoo-v9'
+const API_CACHE = 'adoo-api-v9'
 const APP_SHELL = ['/', '/manifest.json', '/icon.svg']
 
 self.addEventListener('install', (event) => {
@@ -84,10 +84,12 @@ self.addEventListener('fetch', (event) => {
 
   // ─── Uploaded files → network-first (always try network, cache on success) ──
   // This prevents stale/empty cached responses for newly uploaded files.
+  // Matches both /uploads/ (legacy static serving) and /api/uploads/ (our
+  // dedicated file-serving route that bypasses Next.js static caching).
   if (url.pathname.includes('/uploads/')) {
     event.respondWith(
       fetch(req).then((res) => {
-        // Only cache successful responses with content
+        // Only cache successful responses with actual content
         if (res.ok && res.headers.get('content-length') !== '0') {
           const copy = res.clone()
           caches.open(CACHE_NAME).then((cache) => cache.put(req, copy))

@@ -76,8 +76,10 @@ export async function POST(req: Request) {
  * audio to WAV using ffmpeg before passing it to pocket-tts.
  */
 async function exportSafetensors(voiceId: string, audioUrl: string) {
-  // Resolve the audio file path (audioUrl is like "/uploads/abc.wav")
-  const audioPath = path.join(process.cwd(), 'public', audioUrl)
+  // Resolve the audio file path. audioUrl may be "/uploads/abc.wav" (legacy)
+  // or "/api/uploads/abc.wav" (new) — both point to public/uploads/abc.wav.
+  const normalizedUrl = audioUrl.replace(/^\/api\/uploads\//, '/uploads/')
+  const audioPath = path.join(process.cwd(), 'public', normalizedUrl)
 
   // Convert to WAV first (pocket-tts requires WAV format)
   const wavPath = await ensureWavFile(audioPath)
@@ -85,7 +87,9 @@ async function exportSafetensors(voiceId: string, audioUrl: string) {
   // Generate the safetensors file path
   const safetensorsFilename = `voice-${voiceId}.safetensors`
   const safetensorsPath = path.join(process.cwd(), 'public', 'uploads', safetensorsFilename)
-  const safetensorsUrl = `/uploads/${safetensorsFilename}`
+  // Use /api/uploads/ so the TTS server can fetch it through our dedicated
+  // file-serving route (bypasses Next.js static file caching in production).
+  const safetensorsUrl = `/api/uploads/${safetensorsFilename}`
 
   // Try to run pocket-tts export-voice
   try {

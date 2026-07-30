@@ -32,7 +32,8 @@ export function ProgressiveImage({
   const [error, setError] = useState(false)
 
   // Only optimize uploaded images (not external URLs or SVGs)
-  const isOptimizable = src.startsWith('/uploads/') || src.startsWith('/api/')
+  // Both /uploads/ (legacy) and /api/uploads/ (new) are optimizable.
+  const isOptimizable = src.startsWith('/uploads/') || src.startsWith('/api/uploads/')
   const previewSrc = isOptimizable
     ? `/api/img?src=${encodeURIComponent(src)}&w=${previewWidth}&q=30`
     : src

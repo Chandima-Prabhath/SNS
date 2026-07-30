@@ -577,6 +577,10 @@ function TtsDialog({
       // for the preview player. The Blob is kept in state so handleSend can
       // upload it to /api/upload.
       const wavBlob = new Blob(collectedChunks as BlobPart[], { type: 'audio/wav' })
+      console.log(`[tts] collected ${collectedChunks.length} chunks, blob size = ${wavBlob.size} bytes`)
+      if (wavBlob.size === 0) {
+        throw new Error('TTS produced empty audio (0 bytes collected from stream)')
+      }
       const blobUrl = URL.createObjectURL(wavBlob)
       setPreviewBlob(wavBlob)
       setPreviewUrl(blobUrl)

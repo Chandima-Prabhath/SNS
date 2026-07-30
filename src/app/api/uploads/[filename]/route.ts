@@ -1,0 +1,132 @@
+import { NextResponse } from 'next/server'
+import { readFile, stat } from 'fs/promises'
+import { existsSync } from 'fs'
+import path from 'path'
+
+// Force dynamic Node.js route — we read from disk on every request.
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+// MIME type map for common upload extensions. Browsers need the correct
+// Content-Type to play audio/video inline.
+const MIME_TYPES: Record<string, string> = {
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.webm': 'audio/webm',
+  '.mp4': 'video/mp4',
+  '.webm-video': 'video/webm',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
+  '.bin': 'application/octet-stream',
+}
+
+/**
+ * GET /api/uploads/[filename] — Serve an uploaded file from public/uploads/.
+ *
+ * WHY THIS EXISTS:
+ *   Next.js's built-in static file serving for `public/` can cache file
+ *   existence checks or return stale 404s for files added at runtime in
+ *   production mode. This caused newly-uploaded TTS audio to appear as
+ *   0:00/0:00 unplayable until the server was restarted. By serving files
+ *   through a dedicated API route that reads from disk on every request,
+ *   we bypass all static-file caching and guarantee the file is served
+ *   immediately after /api/upload writes it.
+ *
+ * Supports HTTP Range requests for audio/video seeking.
+ */
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ filename: string }> }
+) {
+  try {
+    const { filename } = await params
+
+    // Sanitize filename — prevent path traversal (../../etc/passwd etc.)
+    // Only allow alphanumeric, dash, underscore, dot, in the filename itself.
+    if (!filename || !/^[\w\-.]+$/.test(filename)) {
+      return new NextResponse('Invalid filename', { status: 400 })
+    }
+
+    const filePath = path.join(process.cwd(), 'public', 'uploads', filename)
+
+    // Prevent path traversal — resolved path must be inside uploads/
+    const uploadsDir = path.join(process.cwd(), 'public', 'uploads')
+    if (!filePath.startsWith(uploadsDir + path.sep)) {
+      return new NextResponse('Forbidden', { status: 403 })
+    }
+
+    if (!existsSync(filePath)) {
+      console.warn(`[uploads] file not found: ${filename}`)
+      return new NextResponse('Not found', { status: 404 })
+    }
+
+    const fileStat = await stat(filePath)
+    if (fileStat.size === 0) {
+      console.warn(`[uploads] file is 0 bytes: ${filename}`)
+      return new NextResponse('File is empty', { status: 500 })
+    }
+
+    const ext = path.extname(filename).toLowerCase()
+    const contentType = MIME_TYPES[ext] || 'application/octet-stream'
+
+    // Check for Range header (audio/video seeking)
+    const rangeHeader = req.headers.get('range')
+    if (rangeHeader) {
+      // Parse "bytes=start-end"
+      const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader)
+      if (match) {
+        const start = match[1] ? parseInt(match[1], 10) : 0
+        const end = match[2] ? parseInt(match[2], 10) : fileStat.size - 1
+
+        if (start >= fileStat.size || end >= fileStat.size || start > end) {
+          return new NextResponse('Range not satisfiable', {
+            status: 416,
+            headers: {
+              'Content-Range': `bytes */${fileStat.size}`,
+            },
+          })
+        }
+
+        const chunkSize = end - start + 1
+        const buffer = await readFile(filePath)
+        const chunk = buffer.subarray(start, end + 1)
+
+        console.log(`[uploads] serving ${filename} range ${start}-${end}/${fileStat.size} (${chunkSize} bytes, ${contentType})`)
+
+        return new NextResponse(chunk, {
+          status: 206,
+          headers: {
+            'Content-Type': contentType,
+            'Content-Length': String(chunkSize),
+            'Content-Range': `bytes ${start}-${end}/${fileStat.size}`,
+            'Accept-Ranges': 'bytes',
+            'Cache-Control': 'public, max-age=3600',
+          },
+        })
+      }
+    }
+
+    // No range — serve the full file
+    const buffer = await readFile(filePath)
+    console.log(`[uploads] serving ${filename} (${fileStat.size} bytes, ${contentType})`)
+
+    return new NextResponse(buffer, {
+      status: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Content-Length': String(fileStat.size),
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'public, max-age=3600',
+      },
+    })
+  } catch (e: any) {
+    console.error('[uploads] error:', e)
+    return new NextResponse('Internal error', { status: 500 })
+  }
+}
