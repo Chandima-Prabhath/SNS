@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { readFile } from 'fs/promises'
+import { writeFile, mkdir, readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
@@ -101,7 +101,7 @@ export async function POST(req: Request) {
       body: formData,
     })
 
-    console.log(`[tts] TTS server responded in ${Date.now() - ttsStartTime}ms (status: ${ttsRes.status})`)
+    console.log(`[tts] TTS server response headers received in ${Date.now() - ttsStartTime}ms (status: ${ttsRes.status})`)
 
     if (!ttsRes.ok) {
       const errText = await ttsRes.text().catch(() => 'unknown error')
@@ -112,30 +112,56 @@ export async function POST(req: Request) {
       )
     }
 
-    // Buffer the response and save to disk — Next.js Route Handlers don't
-    // support true streaming (they buffer the response body), so streaming
-    // through causes the client to wait for the entire body anyway.
-    // Saving to disk is actually faster because the file write is async
-    // and the client gets the URL immediately.
-    const audioBuffer = Buffer.from(await ttsRes.arrayBuffer())
-
-    const uploadDir = path.join(process.cwd(), 'public', 'uploads')
-    if (!existsSync(uploadDir)) {
-      await mkdir(uploadDir, { recursive: true })
+    if (!ttsRes.body) {
+      return NextResponse.json(
+        { error: 'TTS service returned no body' },
+        { status: 502 }
+      )
     }
 
-    const filename = `tts-${crypto.randomUUID()}.wav`
-    const filePath = path.join(uploadDir, filename)
-    await writeFile(filePath, audioBuffer)
+    // Stream the TTS server's response directly to the client.
+    // The TTS server uses StreamingResponse — it sends the WAV header
+    // immediately (before generation starts) and then streams audio
+    // chunks as they're generated. By piping the body through, the
+    // client can start playing audio within ~200ms instead of waiting
+    // for the full generation to complete (which can take 30+ seconds).
+    //
+    // We also save to disk in the background (tee the stream) so the
+    // audio is available for sending as a message.
+    const [streamForClient, streamForDisk] = ttsRes.body.tee()
 
-    console.log(`[tts] saved ${filename} (${audioBuffer.length} bytes) in ${Date.now() - ttsStartTime}ms total`)
+    // Save to disk in the background — don't block the response
+    ;(async () => {
+      try {
+        const uploadDir = path.join(process.cwd(), 'public', 'uploads')
+        if (!existsSync(uploadDir)) {
+          await mkdir(uploadDir, { recursive: true })
+        }
+        const filename = `tts-${crypto.randomUUID()}.wav`
+        const filePath = path.join(uploadDir, filename)
+        const chunks: Uint8Array[] = []
+        const reader = streamForDisk.getReader()
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (value) chunks.push(value)
+        }
+        const buffer = Buffer.concat(chunks)
+        await writeFile(filePath, buffer)
+        console.log(`[tts] background save complete: ${filename} (${buffer.length} bytes) in ${Date.now() - ttsStartTime}ms total`)
+      } catch (e) {
+        console.error('[tts] background save failed:', e)
+      }
+    })()
 
-    return NextResponse.json({
-      url: `/uploads/${filename}`,
-      type: 'audio',
-      text: truncatedText,
-      voice: customVoiceId ? 'custom' : voice,
-      size: audioBuffer.length,
+    // Return the stream to the client immediately
+    return new Response(streamForClient, {
+      status: 200,
+      headers: {
+        'Content-Type': 'audio/wav',
+        'Transfer-Encoding': 'chunked',
+        'Cache-Control': 'no-store',
+      },
     })
   } catch (e: any) {
     console.error('[tts] error:', e)

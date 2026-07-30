@@ -405,6 +405,7 @@ function TtsDialog({
   const [selectedCustomVoiceId, setSelectedCustomVoiceId] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null)
   const [sending, setSending] = useState(false)
   const qc = useQueryClient()
 
@@ -437,6 +438,7 @@ function TtsDialog({
     if (!text.trim() || generating) return
     setGenerating(true)
     setPreviewUrl(null)
+    setPreviewBlob(null)
     try {
       const body: any = { text }
       if (selectedCustomVoiceId) {
@@ -453,9 +455,82 @@ function TtsDialog({
         const err = await res.json().catch(() => ({ error: 'Generation failed' }))
         throw new Error(err.error || 'Generation failed')
       }
-      // The route saves the audio to disk and returns a URL
-      const data = await res.json()
-      setPreviewUrl(data.url)
+
+      // Stream the response — read chunks as they arrive, play immediately
+      // via Web Audio API (like the Pocket TTS built-in web UI), and
+      // collect the full blob for sending as a message.
+      const reader = res.body!.getReader()
+      const chunks: Uint8Array[] = []
+      let audioCtx: AudioContext | null = null
+      let headerParsed = false
+      let headerBuf = new Uint8Array(44)
+      let headerBytes = 0
+      let pcmBuffer = new Uint8Array(0)
+      let sampleRate = 24000
+      let nextStartTime = 0
+
+      const playChunk = (data: Uint8Array) => {
+        if (!audioCtx) return
+        const samples = Math.floor(data.length / 2)
+        if (samples === 0) return
+        const audioBuffer = audioCtx.createBuffer(1, samples, sampleRate)
+        const int16 = new Int16Array(data.buffer, data.byteOffset, samples)
+        const channelData = audioBuffer.getChannelData(0)
+        for (let i = 0; i < samples; i++) {
+          channelData[i] = int16[i] / 32768
+        }
+        const source = audioCtx.createBufferSource()
+        source.buffer = audioBuffer
+        source.connect(audioCtx.destination)
+        const startTime = Math.max(audioCtx.currentTime, nextStartTime)
+        source.start(startTime)
+        nextStartTime = startTime + audioBuffer.duration
+      }
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (value) {
+          chunks.push(value)
+          // Parse WAV header (first 44 bytes)
+          if (!headerParsed) {
+            const needed = 44 - headerBytes
+            const copy = Math.min(needed, value.length)
+            headerBuf.set(value.slice(0, copy), headerBytes)
+            headerBytes += copy
+            if (headerBytes >= 44) {
+              const view = new DataView(headerBuf.buffer)
+              sampleRate = view.getUint32(24, true)
+              headerParsed = true
+              // Initialize audio context on first chunk (user gesture)
+              if (!audioCtx) {
+                audioCtx = new AudioContext({ latencyHint: 'playback' })
+              }
+              if (value.length > copy) {
+                pcmBuffer = new Uint8Array(value.slice(copy))
+              }
+            }
+          } else {
+            const merged = new Uint8Array(pcmBuffer.length + value.length)
+            merged.set(pcmBuffer)
+            merged.set(value, pcmBuffer.length)
+            if (merged.length >= 16384) {
+              playChunk(merged)
+              pcmBuffer = new Uint8Array(0)
+            } else {
+              pcmBuffer = merged
+            }
+          }
+        }
+      }
+      // Play any remaining PCM
+      if (pcmBuffer.length > 0) playChunk(pcmBuffer)
+
+      // Create blob URL for the preview audio element
+      const blob = new Blob(chunks, { type: 'audio/wav' })
+      const blobUrl = URL.createObjectURL(blob)
+      setPreviewBlob(blob)
+      setPreviewUrl(blobUrl)
       toast.success('Voice generated — preview and send')
     } catch (e: any) {
       toast.error(e.message || 'Failed to generate voice')
@@ -465,13 +540,20 @@ function TtsDialog({
   }
 
   const handleSend = async () => {
-    if (!previewUrl || sending) return
+    if (!previewBlob || !previewUrl || sending) return
     setSending(true)
     try {
-      // The audio is already saved on the server — just send the URL
-      await onSend(previewUrl)
+      // Upload the blob to /api/upload, then send the URL as a message
+      const fd = new FormData()
+      fd.append('file', previewBlob, 'tts.wav')
+      const upRes = await fetch('/api/upload', { method: 'POST', body: fd })
+      if (!upRes.ok) throw new Error('Failed to upload audio')
+      const { url } = await upRes.json()
+      await onSend(url)
       setText('')
+      if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
       setPreviewUrl(null)
+      setPreviewBlob(null)
     } catch {
       toast.error('Failed to send voice message')
     } finally {

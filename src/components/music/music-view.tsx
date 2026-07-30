@@ -84,6 +84,7 @@ export function MusicView() {
   }, [currentTrack])
 
   // ─── Playback state from the global store ─────────────────────────────
+  const currentTrack = useMusicStore((s) => s.currentTrack)
   const isPlaying = useMusicStore((s) => s.isPlaying)
   const queue = useMusicStore((s) => s.queue)
   const autoplay = useMusicStore((s) => s.autoplay)
