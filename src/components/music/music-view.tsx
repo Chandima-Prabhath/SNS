@@ -66,6 +66,22 @@ export function MusicView() {
   const qc = useQueryClient()
   const [history, setHistory] = useState<Track[]>([])
 
+  // ─── Playback state from the global store ─────────────────────────────
+  const currentTrack = useMusicStore((s) => s.currentTrack)
+  const isPlaying = useMusicStore((s) => s.isPlaying)
+  const queue = useMusicStore((s) => s.queue)
+  const autoplay = useMusicStore((s) => s.autoplay)
+  const shuffle = useMusicStore((s) => s.shuffle)
+  const repeat = useMusicStore((s) => s.repeat)
+  const activeRoomId = useMusicStore((s) => s.activeRoomId)
+  const setActiveRoomId = useMusicStore((s) => s.setActiveRoomId)
+  const setShuffle = useMusicStore((s) => s.setShuffle)
+  const setRepeat = useMusicStore((s) => s.setRepeat)
+  const setAutoplay = useMusicStore((s) => s.setAutoplay)
+
+  // ─── Player actions (broadcast + audio handled by global player) ──────
+  const { playTrack, playNext, removeFromQueue, clearQueue } = useMusicPlayer()
+
   // Load history on mount
   useEffect(() => {
     setHistory(loadHistory())
@@ -82,22 +98,6 @@ export function MusicView() {
       })
     }
   }, [currentTrack])
-
-  // ─── Playback state from the global store ─────────────────────────────
-  const currentTrack = useMusicStore((s) => s.currentTrack)
-  const isPlaying = useMusicStore((s) => s.isPlaying)
-  const queue = useMusicStore((s) => s.queue)
-  const autoplay = useMusicStore((s) => s.autoplay)
-  const shuffle = useMusicStore((s) => s.shuffle)
-  const repeat = useMusicStore((s) => s.repeat)
-  const activeRoomId = useMusicStore((s) => s.activeRoomId)
-  const setActiveRoomId = useMusicStore((s) => s.setActiveRoomId)
-  const setShuffle = useMusicStore((s) => s.setShuffle)
-  const setRepeat = useMusicStore((s) => s.setRepeat)
-  const setAutoplay = useMusicStore((s) => s.setAutoplay)
-
-  // ─── Player actions (broadcast + audio handled by global player) ──────
-  const { playTrack, playNext, removeFromQueue, clearQueue } = useMusicPlayer()
 
   // Fetch trending
   const { data: trendingData, isLoading: trendingLoading } = useQuery({

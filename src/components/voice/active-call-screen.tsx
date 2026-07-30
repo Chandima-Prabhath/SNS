@@ -103,7 +103,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
     return (
       <motion.div
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 bg-black flex flex-col"
+        className="fixed inset-0 z-[70] bg-black flex flex-col"
       >
         {/* Top bar */}
         <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between text-white/80 text-sm p-4 pt-safe bg-gradient-to-b from-black/60 to-transparent">
@@ -170,7 +170,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.98 }}
       transition={{ duration: 0.3, ease: 'easeOut' }}
-      className="fixed inset-0 z-50 flex flex-col overflow-hidden"
+      className="fixed inset-0 z-[70] flex flex-col overflow-hidden"
     >
       {/* Animated gradient backdrop — deep navy with primary glow */}
       <div className="absolute inset-0 bg-[oklch(0.13_0.008_264)]" />

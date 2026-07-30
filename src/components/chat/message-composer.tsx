@@ -30,6 +30,7 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
   const [sending, setSending] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [ttsOpen, setTtsOpen] = useState(false)
+  const [showActions, setShowActions] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const recorder = useVoiceRecorder({
@@ -157,36 +158,73 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
           </button>
         </div>
       ) : (
-        /* Cohesive glassmorphic composer bar — wraps the action buttons + input
-           in a single translucent pill so they read as one unified control. */
+        /* Composer bar — on mobile, extra actions are in a popover.
+           On desktop, all buttons are inline. */
         <div className="flex items-end gap-1.5 bg-background/60 backdrop-blur-xl rounded-[26px] p-1.5 pl-2 border border-border/60 shadow-lg ring-1 ring-black/5 transition-shadow focus-within:shadow-xl">
-          {/* Upload button */}
+          {/* Desktop: inline action buttons */}
           <label
-            className="cursor-pointer w-10 h-10 flex items-center justify-center rounded-full transition-all shrink-0 text-muted-foreground hover:bg-primary/10 hover:text-primary active:scale-90"
+            className="hidden md:flex cursor-pointer w-10 h-10 items-center justify-center rounded-full transition-all shrink-0 text-muted-foreground hover:bg-primary/10 hover:text-primary active:scale-90"
             title="Upload image, video, or audio"
           >
             <ImageIcon className="w-[22px] h-[22px] transition-colors" />
             <input type="file" className="hidden" accept="image/*,video/*,audio/*" onChange={handleUpload} disabled={uploading} />
           </label>
 
-          {/* TTS voice message button */}
           <button
             onClick={() => setTtsOpen(true)}
-            className="w-10 h-10 flex items-center justify-center rounded-full transition-all shrink-0 text-muted-foreground hover:bg-primary/10 hover:text-primary active:scale-90"
+            className="hidden md:flex w-10 h-10 items-center justify-center rounded-full transition-all shrink-0 text-muted-foreground hover:bg-primary/10 hover:text-primary active:scale-90"
             title="Send AI voice message"
           >
             <AudioLines className="w-[22px] h-[22px] transition-colors" />
           </button>
 
-          {/* Microphone — record a voice message (sits next to the TTS button) */}
           <button
             onClick={recorder.start}
-            className="w-10 h-10 flex items-center justify-center rounded-full transition-all shrink-0 text-muted-foreground hover:bg-primary/10 hover:text-primary active:scale-90"
+            className="hidden md:flex w-10 h-10 items-center justify-center rounded-full transition-all shrink-0 text-muted-foreground hover:bg-primary/10 hover:text-primary active:scale-90"
             title="Record a voice message"
             aria-label="Record a voice message"
           >
             <Mic className="w-[22px] h-[22px] transition-colors" />
           </button>
+
+          {/* Mobile: single + button that opens a popover with all actions */}
+          <div className="md:hidden relative">
+            <button
+              onClick={() => setShowActions(!showActions)}
+              className="w-10 h-10 flex items-center justify-center rounded-full transition-all shrink-0 text-muted-foreground hover:bg-primary/10 hover:text-primary active:scale-90"
+              title="More actions"
+            >
+              {showActions ? <X className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+            </button>
+
+            {/* Action popover */}
+            {showActions && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setShowActions(false)} />
+                <div className="absolute bottom-14 left-0 z-40 glass-dark rounded-2xl p-2 shadow-2xl min-w-[180px] space-y-1">
+                  <label className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-accent/50 cursor-pointer transition-colors">
+                    <ImageIcon className="w-5 h-5 text-primary" />
+                    <span className="text-sm">Upload</span>
+                    <input type="file" className="hidden" accept="image/*,video/*,audio/*" onChange={(e) => { handleUpload(e); setShowActions(false) }} disabled={uploading} />
+                  </label>
+                  <button
+                    onClick={() => { setTtsOpen(true); setShowActions(false) }}
+                    className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-accent/50 transition-colors text-left"
+                  >
+                    <AudioLines className="w-5 h-5 text-primary" />
+                    <span className="text-sm">AI Voice</span>
+                  </button>
+                  <button
+                    onClick={() => { recorder.start(); setShowActions(false) }}
+                    className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-accent/50 transition-colors text-left"
+                  >
+                    <Mic className="w-5 h-5 text-primary" />
+                    <span className="text-sm">Record</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
 
           {/* Text input — grows up to ~4 lines */}
           <div className="flex-1 min-w-0 bg-transparent rounded-2xl px-3 py-2 flex items-end focus-within:bg-white/5 transition-colors">
