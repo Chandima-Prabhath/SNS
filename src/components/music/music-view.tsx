@@ -482,15 +482,14 @@ export function MusicView() {
 
                 {/* Currently playing */}
                 {currentTrack && (
-                  <StarBorder color="oklch(0.68 0.24 264)" className="w-full">
-                    <SpotlightCard spotlightColor="rgba(var(--primary), 0.15)" className="p-5 rounded-2xl border-0 bg-gradient-to-br from-primary/8 to-transparent">
-                      <div className="text-[10px] uppercase tracking-widest text-primary font-bold mb-3 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_oklch(0.68_0.24_264/0.6)]" />
-                        <ShinyText shimmerDuration={3} className="text-[10px]">Now Playing</ShinyText>
-                      </div>
-                    <div className="flex items-center gap-4">
+                  <SpotlightCard spotlightColor="rgba(var(--primary), 0.15)" className="p-4 rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/8 to-transparent">
+                    <div className="text-[10px] uppercase tracking-widest text-primary font-bold mb-3 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_oklch(0.68_0.24_264/0.6)]" />
+                      <ShinyText shimmerDuration={3} className="text-[10px]">Now Playing</ShinyText>
+                    </div>
+                    <div className="flex items-center gap-3">
                       {currentTrack.thumbnail ? (
-                        <div className="relative w-16 h-16 rounded-xl overflow-hidden shadow-lg ring-1 ring-white/10">
+                        <div className="relative w-12 h-12 md:w-16 md:h-16 rounded-xl overflow-hidden shadow-lg ring-1 ring-white/10 shrink-0">
                           <img
                             src={currentTrack.thumbnail}
                             alt=""
@@ -498,60 +497,59 @@ export function MusicView() {
                           />
                         </div>
                       ) : (
-                        <div className="w-16 h-16 rounded-xl gradient-primary flex items-center justify-center shadow-lg">
-                          <Radio className="w-6 h-6 text-primary-foreground" />
+                        <div className="w-12 h-12 md:w-16 md:h-16 rounded-xl gradient-primary flex items-center justify-center shadow-lg shrink-0">
+                          <Radio className="w-5 h-5 md:w-6 md:h-6 text-primary-foreground" />
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
-                        <div className="text-base font-semibold truncate text-foreground">
+                        <div className="text-sm md:text-base font-semibold truncate text-foreground">
                           {currentTrack.title}
                         </div>
-                        <div className="text-sm text-muted-foreground truncate">
+                        <div className="text-xs md:text-sm text-muted-foreground truncate">
                           {currentTrack.artist}
                         </div>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => setShuffle(!shuffle)}
-                          className={cn(
-                            'p-2.5 rounded-xl transition-all',
-                            shuffle
-                              ? 'text-primary bg-primary/10 shadow-glow'
-                              : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
-                          )}
-                          aria-label="Toggle shuffle"
-                        >
-                          <Shuffle className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setRepeat(!repeat)}
-                          className={cn(
-                            'p-2.5 rounded-xl transition-all',
-                            repeat
-                              ? 'text-primary bg-primary/10 shadow-glow'
-                              : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
-                          )}
-                          aria-label="Toggle repeat"
-                        >
-                          <Repeat className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setAutoplay(!autoplay)}
-                          className={cn(
-                            'p-2.5 rounded-xl transition-all',
-                            autoplay
-                              ? 'text-primary bg-primary/10 shadow-glow'
-                              : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
-                          )}
-                          title="Autoplay recommendations"
-                          aria-label="Toggle autoplay"
-                        >
-                          <Radio className="w-4 h-4" />
-                        </button>
-                      </div>
                     </div>
-                    </SpotlightCard>
-                  </StarBorder>
+                    <div className="flex items-center gap-1.5 mt-3 justify-center">
+                      <button
+                        onClick={() => setShuffle(!shuffle)}
+                        className={cn(
+                          'p-2 rounded-lg transition-all',
+                          shuffle
+                            ? 'text-primary bg-primary/10 shadow-glow'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+                        )}
+                        aria-label="Toggle shuffle"
+                      >
+                        <Shuffle className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => setRepeat(!repeat)}
+                        className={cn(
+                          'p-2 rounded-lg transition-all',
+                          repeat
+                            ? 'text-primary bg-primary/10 shadow-glow'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+                        )}
+                        aria-label="Toggle repeat"
+                      >
+                        <Repeat className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => setAutoplay(!autoplay)}
+                        className={cn(
+                          'p-2 rounded-lg transition-all',
+                          autoplay
+                            ? 'text-primary bg-primary/10 shadow-glow'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+                        )}
+                        title="Autoplay recommendations"
+                        aria-label="Toggle autoplay"
+                      >
+                        <Radio className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </SpotlightCard>
                 )}
 
                 {/* Queue list */}

@@ -443,8 +443,6 @@ function TtsDialog({
   const [selectedCustomVoiceId, setSelectedCustomVoiceId] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null)
-  const [isStreaming, setIsStreaming] = useState(false)
   const [sending, setSending] = useState(false)
   const qc = useQueryClient()
 
@@ -495,86 +493,11 @@ function TtsDialog({
         const err = await res.json().catch(() => ({ error: 'Generation failed' }))
         throw new Error(err.error || 'Generation failed')
       }
-
-      // Stream the response — read chunks as they arrive, play immediately
-      // via Web Audio API, and collect the full blob for the preview player.
-      const reader = res.body!.getReader()
-      const chunks: Uint8Array[] = []
-      let audioCtx: AudioContext | null = null
-      let headerParsed = false
-      let headerBuf = new Uint8Array(44)
-      let headerBytes = 0
-      let pcmBuffer = new Uint8Array(0)
-      let sampleRate = 24000
-      let nextStartTime = 0
-
-      const playChunk = (data: Uint8Array) => {
-        if (!audioCtx) return
-        const samples = Math.floor(data.length / 2)
-        if (samples === 0) return
-        const audioBuffer = audioCtx.createBuffer(1, samples, sampleRate)
-        const int16 = new Int16Array(data.buffer, data.byteOffset, samples)
-        const channelData = audioBuffer.getChannelData(0)
-        for (let i = 0; i < samples; i++) {
-          channelData[i] = int16[i] / 32768
-        }
-        const source = audioCtx.createBufferSource()
-        source.buffer = audioBuffer
-        source.connect(audioCtx.destination)
-        const startTime = Math.max(audioCtx.currentTime, nextStartTime)
-        source.start(startTime)
-        nextStartTime = startTime + audioBuffer.duration
-      }
-
-      // Mark streaming started (shows "Playing..." indicator)
-      setIsStreaming(true)
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        if (value) {
-          chunks.push(value)
-          if (!headerParsed) {
-            const needed = 44 - headerBytes
-            const copy = Math.min(needed, value.length)
-            headerBuf.set(value.slice(0, copy), headerBytes)
-            headerBytes += copy
-            if (headerBytes >= 44) {
-              const view = new DataView(headerBuf.buffer)
-              sampleRate = view.getUint32(24, true)
-              headerParsed = true
-              if (!audioCtx) {
-                audioCtx = new AudioContext({ latencyHint: 'playback' })
-              }
-              if (value.length > copy) {
-                pcmBuffer = new Uint8Array(value.slice(copy))
-              }
-            }
-          } else {
-            const merged = new Uint8Array(pcmBuffer.length + value.length)
-            merged.set(pcmBuffer)
-            merged.set(value, pcmBuffer.length)
-            if (merged.length >= 16384) {
-              playChunk(merged)
-              pcmBuffer = new Uint8Array(0)
-            } else {
-              pcmBuffer = merged
-            }
-          }
-        }
-      }
-      if (pcmBuffer.length > 0) playChunk(pcmBuffer)
-
-      // Streaming complete — create the blob URL for the preview audio element
-      // The <audio> element will show progress bar and play state
-      const blob = new Blob(chunks, { type: 'audio/wav' })
-      const blobUrl = URL.createObjectURL(blob)
-      setPreviewBlob(blob)
-      setPreviewUrl(blobUrl)
-      setIsStreaming(false)
+      // The route saves the audio to disk and returns a URL
+      const data = await res.json()
+      setPreviewUrl(data.url)
       toast.success('Voice generated — preview and send')
     } catch (e: any) {
-      setIsStreaming(false)
       toast.error(e.message || 'Failed to generate voice')
     } finally {
       setGenerating(false)
@@ -582,20 +505,13 @@ function TtsDialog({
   }
 
   const handleSend = async () => {
-    if (!previewBlob || !previewUrl || sending) return
+    if (!previewUrl || sending) return
     setSending(true)
     try {
-      // Upload the blob to /api/upload, then send the URL as a message
-      const fd = new FormData()
-      fd.append('file', previewBlob, 'tts.wav')
-      const upRes = await fetch('/api/upload', { method: 'POST', body: fd })
-      if (!upRes.ok) throw new Error('Failed to upload audio')
-      const { url } = await upRes.json()
-      await onSend(url)
+      // The audio is already saved on the server — just send the URL
+      await onSend(previewUrl)
       setText('')
-      if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
       setPreviewUrl(null)
-      setPreviewBlob(null)
     } catch {
       toast.error('Failed to send voice message')
     } finally {
@@ -759,25 +675,8 @@ function TtsDialog({
               )}
             </div>
 
-            {/* Streaming indicator — shown while audio is being generated and played */}
-            {isStreaming && (
-              <div className="space-y-2">
-                <Label>Playing audio...</Label>
-                <div className="flex items-center gap-2 p-3 rounded-xl bg-primary/10 border border-primary/20">
-                  <div className="flex gap-1 items-center">
-                    <span className="w-1 h-4 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0ms' }} />
-                    <span className="w-1 h-6 bg-primary rounded-full animate-pulse" style={{ animationDelay: '100ms' }} />
-                    <span className="w-1 h-3 bg-primary rounded-full animate-pulse" style={{ animationDelay: '200ms' }} />
-                    <span className="w-1 h-5 bg-primary rounded-full animate-pulse" style={{ animationDelay: '300ms' }} />
-                    <span className="w-1 h-4 bg-primary rounded-full animate-pulse" style={{ animationDelay: '400ms' }} />
-                  </div>
-                  <span className="text-xs text-muted-foreground">Generating and playing...</span>
-                </div>
-              </div>
-            )}
-
-            {/* Preview player — shown after streaming completes */}
-            {previewUrl && !isStreaming && (
+            {/* Preview player */}
+            {previewUrl && (
               <div className="space-y-2">
                 <Label>Preview</Label>
                 <audio controls src={previewUrl} className="w-full" />
