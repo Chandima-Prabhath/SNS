@@ -24,7 +24,16 @@ export async function GET() {
 
   try {
     const youtube = await getYoutube()
-    const home = await youtube.music.getHomeFeed()
+    
+    let home
+    try {
+      home = await youtube.music.getHomeFeed()
+    } catch (e: any) {
+      console.warn('[music/home] getHomeFeed failed, falling back to getExplore:', e?.message || e)
+      // Fallback to getExplore (same as trending) if getHomeFeed fails
+      const explore = await youtube.music.getExplore()
+      home = explore
+    }
 
     const sections: { title: string; tracks: Track[] }[] = []
 

@@ -145,12 +145,11 @@ export function ChatInfoPanel({ channel }: ChatInfoPanelProps) {
     </div>
   )
 
-  // Desktop: inline right panel (only shown when chatInfoOpen AND on desktop)
-  // Mobile: Sheet that slides in from right
+  // Desktop: inline right panel — uses full available width
   if (isDesktop) {
     if (!chatInfoOpen) return null
     return (
-      <div className="hidden lg:flex w-80 shrink-0 border-l bg-sidebar">
+      <div className="hidden lg:flex w-full max-w-sm shrink-0 border-l bg-sidebar">
         {content}
       </div>
     )

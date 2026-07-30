@@ -12,9 +12,9 @@ export interface Track {
 }
 
 interface MusicState {
-  // ─── Playback state ────────────────────────────────────────────────────
   currentTrack: Track | null
   isPlaying: boolean
+  isLoading: boolean
   position: number
   volume: number
 
@@ -30,6 +30,7 @@ interface MusicState {
   // ─── Setters (state only — no socket side-effects) ────────────────────
   setCurrentTrack: (t: Track | null) => void
   setIsPlaying: (b: boolean) => void
+  setIsLoading: (b: boolean) => void
   setPosition: (p: number) => void
   setVolume: (v: number) => void
   setQueue: (q: Track[]) => void
@@ -53,6 +54,7 @@ interface MusicState {
 export const useMusicStore = create<MusicState>((set, get) => ({
   currentTrack: null,
   isPlaying: false,
+  isLoading: false,
   position: 0,
   volume: 0.8,
   queue: [],
@@ -63,6 +65,7 @@ export const useMusicStore = create<MusicState>((set, get) => ({
 
   setCurrentTrack: (currentTrack) => set({ currentTrack }),
   setIsPlaying: (isPlaying) => set({ isPlaying }),
+  setIsLoading: (isLoading) => set({ isLoading }),
   setPosition: (position) => set({ position }),
   setVolume: (volume) => set({ volume }),
   setQueue: (queue) => set({ queue }),

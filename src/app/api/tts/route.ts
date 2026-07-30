@@ -93,11 +93,15 @@ export async function POST(req: Request) {
       formData.append('voice_url', voice)
     }
 
+    console.log(`[tts] calling TTS server at ${ttsUrl}/tts with voice=${customVoiceId ? 'custom' : voice}, text=${truncatedText.length} chars`)
+    const ttsStartTime = Date.now()
+
     const ttsRes = await fetch(`${ttsUrl}/tts`, {
       method: 'POST',
       body: formData,
-      // Don't set Content-Type — fetch sets it with the multipart boundary
     })
+
+    console.log(`[tts] TTS server responded in ${Date.now() - ttsStartTime}ms (status: ${ttsRes.status})`)
 
     if (!ttsRes.ok) {
       const errText = await ttsRes.text().catch(() => 'unknown error')

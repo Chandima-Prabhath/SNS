@@ -13,7 +13,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import {
   Play, Pause, SkipForward, X, Volume2, Music as MusicIcon,
-  Shuffle, Repeat, ChevronUp, ChevronDown,
+  Shuffle, Repeat, ChevronUp, ChevronDown, Loader2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -92,6 +92,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
   // ─── Store state (subscribe to slices) ────────────────────────────────
   const currentTrack = useMusicStore((s) => s.currentTrack)
   const isPlaying = useMusicStore((s) => s.isPlaying)
+  const isLoading = useMusicStore((s) => s.isLoading)
   const position = useMusicStore((s) => s.position)
   const volume = useMusicStore((s) => s.volume)
   const queue = useMusicStore((s) => s.queue)
@@ -160,6 +161,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       setCurrentTrack(track)
       setIsPlaying(true)
       setPosition(0)
+      useMusicStore.getState().setIsLoading(true)
 
       // Broadcast to room (include the full queue so members sync)
       broadcastSync({
@@ -183,7 +185,9 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
         pendingSeekRef.current = null
         try {
           await audioRef.current.play()
+          useMusicStore.getState().setIsLoading(false)
         } catch (e: any) {
+          useMusicStore.getState().setIsLoading(false)
           if (e?.name === 'NotSupportedError' || e?.name === 'MediaError') {
             try {
               const res = await fetch(`/api/music/stream/${track.videoId}`, {
@@ -354,19 +358,35 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     }
     const onError = () => {
       const state = useMusicStore.getState()
+      state.setIsLoading(false)
       if (state.currentTrack) {
         toast.error('Could not play this track — skipping...')
         void playNext()
       }
     }
+    const onWaiting = () => {
+      useMusicStore.getState().setIsLoading(true)
+    }
+    const onPlaying = () => {
+      useMusicStore.getState().setIsLoading(false)
+    }
+    const onCanPlay = () => {
+      useMusicStore.getState().setIsLoading(false)
+    }
 
     audio.addEventListener('timeupdate', onTimeUpdate)
     audio.addEventListener('ended', onEnded)
     audio.addEventListener('error', onError)
+    audio.addEventListener('waiting', onWaiting)
+    audio.addEventListener('playing', onPlaying)
+    audio.addEventListener('canplay', onCanPlay)
     return () => {
       audio.removeEventListener('timeupdate', onTimeUpdate)
       audio.removeEventListener('ended', onEnded)
       audio.removeEventListener('error', onError)
+      audio.removeEventListener('waiting', onWaiting)
+      audio.removeEventListener('playing', onPlaying)
+      audio.removeEventListener('canplay', onCanPlay)
     }
   }, [playNext, setPosition])
 
@@ -552,6 +572,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
           <PlayerBar
             currentTrack={currentTrack}
             isPlaying={isPlaying}
+            isLoading={isLoading}
             position={position}
             volume={volume}
             queue={queue}
@@ -584,6 +605,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
 function PlayerBar({
   currentTrack,
   isPlaying,
+  isLoading,
   position,
   volume,
   queue,
@@ -599,6 +621,7 @@ function PlayerBar({
 }: {
   currentTrack: Track
   isPlaying: boolean
+  isLoading: boolean
   position: number
   volume: number
   queue: Track[]
@@ -615,6 +638,7 @@ function PlayerBar({
   const [expanded, setExpanded] = useState(false)
   const { view } = useAppStore()
   const isDraggingRef = useRef(false)
+  const constraintsRef = useRef<HTMLDivElement>(null)
 
   // Auto-collapse when not on the Music tab
   useEffect(() => {
@@ -627,8 +651,7 @@ function PlayerBar({
     onTogglePlay()
   }, [onTogglePlay])
 
-  // Expand only when the FAB wasn't being dragged — dragging the FAB should
-  // never trigger an expand (a stray click fires after drag-end otherwise).
+  // Expand only when the FAB wasn't being dragged
   const handleExpandClick = useCallback(() => {
     if (isDraggingRef.current) return
     setExpanded(true)
@@ -636,6 +659,9 @@ function PlayerBar({
 
   return (
     <>
+      {/* Invisible drag constraint area — keeps FAB on screen */}
+      <div ref={constraintsRef} className="fixed inset-0 z-0 pointer-events-none" />
+
       {/* ─── Collapsed: Draggable Floating Mini-Player (FAB) ─── */}
       <AnimatePresence>
         {!expanded && (
@@ -645,8 +671,9 @@ function PlayerBar({
             exit={{ scale: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 400, damping: 25 }}
             drag
-            dragElastic={0.2}
-            dragTransition={{ power: 0.2, timeConstant: 200 }}
+            dragConstraints={constraintsRef}
+            dragElastic={0.1}
+            dragTransition={{ power: 0.15, timeConstant: 150 }}
             whileDrag={{ scale: 1.08, cursor: 'grabbing' }}
             onDragStart={() => { isDraggingRef.current = true }}
             onDragEnd={() => { setTimeout(() => { isDraggingRef.current = false }, 100) }}
@@ -670,7 +697,9 @@ function PlayerBar({
                   <MusicIcon className="w-5 h-5 text-primary-foreground relative z-10" />
                 )}
                 <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center">
-                  {isPlaying ? (
+                  {isLoading ? (
+                    <Loader2 className="w-5 h-5 text-white animate-spin relative z-10" />
+                  ) : isPlaying ? (
                     <Pause className="w-5 h-5 text-white relative z-10" />
                   ) : (
                     <Play className="w-5 h-5 text-white ml-0.5 relative z-10" />
@@ -728,7 +757,7 @@ function PlayerBar({
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <Button onClick={onTogglePlay} size="icon" className="rounded-full h-10 w-10 gradient-primary shadow-glow">
-                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
                   </Button>
                   <Button onClick={onNext} variant="ghost" size="icon" className="h-9 w-9 text-foreground">
                     <SkipForward className="w-4 h-4" />
@@ -780,7 +809,7 @@ function PlayerBar({
                     <SkipForward className="w-4 h-4" />
                   </button>
                   <button onClick={onTogglePlay} className="w-10 h-10 rounded-full gradient-primary flex items-center justify-center hover:scale-110 active:scale-95 transition-transform shadow-glow" aria-label={isPlaying ? 'Pause' : 'Play'}>
-                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
                   </button>
                   <button onClick={onStop} className="p-2 rounded-xl text-foreground hover:bg-white/10 transition-colors" aria-label="Stop">
                     <X className="w-4 h-4" />
