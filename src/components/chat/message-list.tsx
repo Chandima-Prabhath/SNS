@@ -8,6 +8,7 @@ import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot, UserX, Copy, P
 import { cn } from '@/lib/utils'
 import { format, isToday, isYesterday } from 'date-fns'
 import { useAppStore } from '@/stores/useAppStore'
+import { VoiceMessagePlayer } from '@/components/chat/voice-message-player'
 import { useSession } from 'next-auth/react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useContextMenu } from '@/components/ui/context-menu-provider'
@@ -639,15 +640,11 @@ function MessageItem(props: MessageItemProps) {
         )}
         {m.mediaUrl && m.mediaType?.startsWith('audio') && (
           <div className="mb-1.5 -mx-1">
-            <div className={cn(
-              'flex items-center gap-2 p-2 rounded-xl',
-              isMine ? 'bg-black/15' : 'bg-black/20'
-            )}>
-              <div className="w-8 h-8 rounded-full gradient-primary flex items-center justify-center shrink-0">
-                <AudioLines className="w-4 h-4 text-primary-foreground" />
-              </div>
-              <audio controls src={m.mediaUrl} className="flex-1 h-8 min-w-0" style={{ maxWidth: '100%' }} />
-            </div>
+            <VoiceMessagePlayer
+              src={m.mediaUrl}
+              isMine={isMine}
+              label={m.mediaType === 'audio' ? 'TTS' : 'Voice'}
+            />
             <TranscriptButton message={m} isMine={isMine} />
           </div>
         )}

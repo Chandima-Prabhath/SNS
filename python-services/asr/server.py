@@ -66,22 +66,28 @@ log = logging.getLogger('asr-server')
 #   - `python server.py` starts fast even if weights aren't downloaded yet
 #   - health checks work before the model is ready
 #   - memory is only consumed when actually needed
+#
+# API compatibility: `fastrtc-moonshine-onnx` (the package the user installed)
+# exposes a simple `moonshine_onnx.transcribe(audio, model_name)` function
+# that handles model loading + caching internally. We DON'T instantiate
+# `MoonshineOnnxModel` directly because its constructor kwargs differ
+# across package versions (`model_type` vs `model` vs `model_name`).
+#
+# By using the function API, we get:
+#   - Automatic model caching (loaded once, reused across requests)
+#   - Forward compatibility with any `moonshine_onnx` package version
+#   - Simpler error handling (no class instantiation to fail on)
 
-_MODEL = None
+_MODEL_READY = False  # set True after first successful transcribe() call
 _MODEL_NAME = os.environ.get('MOONSHINE_MODEL', 'moonshine/tiny')
 _MODEL_PRECISION = os.environ.get('MOONSHINE_PRECISION', 'quantized')  # tiny+quantized = 28MB
 
 
-def get_model():
-    """Lazily load the Moonshine ONNX model. Cached for the lifetime of the process."""
-    global _MODEL
-    if _MODEL is not None:
-        return _MODEL
-
+def _import_moonshine():
+    """Import moonshine_onnx lazily, with a clear error message if missing."""
     try:
-        # Import here so the server starts even if moonshine_onnx isn't installed
-        # yet — /health will report not-loaded, /asr will return a clear error.
-        from moonshine_onnx import MoonshineOnnxModel
+        import moonshine_onnx
+        return moonshine_onnx
     except ImportError as e:
         log.error(f'moonshine_onnx not installed: {e}')
         raise RuntimeError(
@@ -89,16 +95,69 @@ def get_model():
             'pip install onnxruntime soundfile fastrtc-moonshine-onnx librosa'
         )
 
+
+def _do_transcribe(audio_input, moonshine_onnx_module):
+    """
+    Call moonshine_onnx.transcribe() with the right arguments for the
+    installed package version.
+
+    The function signature has shifted across releases:
+      - fastrtc-moonshine-onnx:  transcribe(audio, model_name)
+      - useful-moonshine-onnx:   transcribe(audio, model="moonshine/tiny", precision="quantized")
+      - older versions:          transcribe(audio)  (uses default model)
+
+    We try them in order and cache the working signature.
+    """
+    # Try the fastrtc signature first (what the user has installed)
+    try:
+        return moonshine_onnx_module.transcribe(audio_input, _MODEL_NAME)
+    except TypeError:
+        pass
+    except Exception:
+        raise  # non-signature errors propagate
+
+    # Try the useful-moonshine-onnx signature
+    try:
+        return moonshine_onnx_module.transcribe(
+            audio_input,
+            model=_MODEL_NAME,
+            precision=_MODEL_PRECISION,
+        )
+    except TypeError:
+        pass
+
+    # Last resort: default model
+    return moonshine_onnx_module.transcribe(audio_input)
+
+
+def get_model_status() -> bool:
+    """Returns True if the model has been successfully loaded at least once."""
+    return _MODEL_READY
+
+
+def warm_up_model():
+    """
+    Force the model to load by running a tiny silent transcription.
+    Used by /preload to warm up the server after deploy.
+    """
+    global _MODEL_READY
+    if _MODEL_READY:
+        return
+
+    import numpy as np
+    moonshine_onnx_module = _import_moonshine()
+
+    # Generate 1 second of silence at 16kHz
+    silence = np.zeros(16000, dtype=np.float32)
+
     log.info(f'Loading Moonshine model: {_MODEL_NAME} ({_MODEL_PRECISION})...')
     log.info('  (first load downloads weights from Hugging Face — this can take a minute)')
 
     t0 = time.time()
-    _MODEL = MoonshineOnnxModel(
-        model_type=_MODEL_NAME,
-        model_precision=_MODEL_PRECISION,
-    )
+    _do_transcribe(silence, moonshine_onnx_module)
+    _MODEL_READY = True
     log.info(f'Model loaded in {time.time() - t0:.1f}s')
-    return _MODEL
+    return True
 
 
 # ─── Audio handling ────────────────────────────────────────────────────────
@@ -117,7 +176,7 @@ def load_audio_16k_mono(audio_path: str):
     return audio, sr
 
 
-def transcribe_long(audio_path: str, model) -> tuple[str, float]:
+def transcribe_long(audio_path: str, moonshine_onnx_module) -> tuple[str, float]:
     """
     Transcribe an audio file of arbitrary length.
 
@@ -133,9 +192,9 @@ def transcribe_long(audio_path: str, model) -> tuple[str, float]:
     audio, sr = load_audio_16k_mono(audio_path)
     duration = len(audio) / sr
 
-    # Short file — single call
+    # Short file — single call (pass the file path; moonshine_onnx loads it)
     if duration <= 60:
-        text = model.transcribe(audio_path, _MODEL_NAME)
+        text = _do_transcribe(audio_path, moonshine_onnx_module)
         return text.strip(), duration
 
     # Long file — chunked
@@ -144,23 +203,25 @@ def transcribe_long(audio_path: str, model) -> tuple[str, float]:
     overlap_samples = 2 * sr
     chunks = []
     i = 0
+    chunk_idx = 0
     while i < len(audio):
         chunk = audio[i:i + chunk_samples]
         if len(chunk) < sr * 0.1:  # skip chunks < 0.1s
             break
-        # Write chunk to a temp WAV file (Moonshine accepts file paths)
+        # Write chunk to a temp WAV file (moonshine_onnx accepts file paths)
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
             import soundfile as sf
             sf.write(tmp.name, chunk, sr, format='WAV', subtype='PCM_16')
             try:
-                chunk_text = model.transcribe(tmp.name, _MODEL_NAME)
+                chunk_text = _do_transcribe(tmp.name, moonshine_onnx_module)
                 chunks.append(chunk_text.strip())
             except Exception as e:
-                log.warning(f'Chunk {i//chunk_samples} failed: {e}')
+                log.warning(f'Chunk {chunk_idx} failed: {e}')
                 chunks.append('')
             finally:
                 Path(tmp.name).unlink(missing_ok=True)
         i += chunk_samples - overlap_samples
+        chunk_idx += 1
 
     return ' '.join(c for c in chunks if c), duration
 
@@ -189,12 +250,11 @@ app.add_middleware(
 @app.get('/health')
 async def health():
     """Report server + model status."""
-    loaded = _MODEL is not None
     return {
         'status': 'ok',
         'model': _MODEL_NAME,
         'precision': _MODEL_PRECISION,
-        'loaded': loaded,
+        'loaded': _MODEL_READY,
         'version': '1.0.0',
     }
 
@@ -245,15 +305,18 @@ async def transcribe(
         if len(content) > 50 * 1024 * 1024:
             raise HTTPException(status_code=413, detail='Audio file too large (max 50MB)')
 
-        # Load the model (lazy on first call)
+        # Load moonshine_onnx module (lazy on first call)
         try:
-            model = get_model()
+            moonshine_onnx_module = _import_moonshine()
         except RuntimeError as e:
             raise HTTPException(status_code=503, detail=str(e))
 
         # Transcribe
         try:
-            text, duration = transcribe_long(tmp_path, model)
+            text, duration = transcribe_long(tmp_path, moonshine_onnx_module)
+            # Mark the model as loaded after a successful transcription
+            global _MODEL_READY
+            _MODEL_READY = True
         except Exception as e:
             log.exception(f'Transcription failed for {audio.filename}: {e}')
             raise HTTPException(status_code=500, detail=f'Transcription failed: {e}')
@@ -280,10 +343,10 @@ async def transcribe(
 @app.post('/preload')
 async def preload():
     """Force model preloading. Useful for warming up the server after deploy."""
-    if _MODEL is not None:
+    if _MODEL_READY:
         return {'status': 'already_loaded', 'model': _MODEL_NAME}
     try:
-        get_model()
+        warm_up_model()
         return {'status': 'loaded', 'model': _MODEL_NAME}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
