@@ -13,7 +13,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import {
   Play, Pause, SkipForward, X, Volume2, Music as MusicIcon,
-  Shuffle, Repeat, ChevronUp, ChevronDown, Loader2,
+  Shuffle, Repeat, ChevronUp, ChevronDown, Loader2, ListMusic, Sparkles,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -96,6 +96,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
   const position = useMusicStore((s) => s.position)
   const volume = useMusicStore((s) => s.volume)
   const queue = useMusicStore((s) => s.queue)
+  const radioQueue = useMusicStore((s) => s.radioQueue)
   const shuffle = useMusicStore((s) => s.shuffle)
   const repeat = useMusicStore((s) => s.repeat)
   const activeRoomId = useMusicStore((s) => s.activeRoomId)
@@ -646,6 +647,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
             position={position}
             volume={volume}
             queue={queue}
+            radioQueue={radioQueue}
             shuffle={shuffle}
             repeat={repeat}
             onTogglePlay={togglePlay}
@@ -659,6 +661,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
             onRepeatToggle={() =>
               useMusicStore.getState().setRepeat(!repeat)
             }
+            onPlayTrack={playTrack}
           />
         )}
       </AnimatePresence>
@@ -679,6 +682,7 @@ function PlayerBar({
   position,
   volume,
   queue,
+  radioQueue,
   shuffle,
   repeat,
   onTogglePlay,
@@ -688,6 +692,7 @@ function PlayerBar({
   onVolumeChange,
   onShuffleToggle,
   onRepeatToggle,
+  onPlayTrack,
 }: {
   currentTrack: Track
   isPlaying: boolean
@@ -695,6 +700,7 @@ function PlayerBar({
   position: number
   volume: number
   queue: Track[]
+  radioQueue: Track[]
   shuffle: boolean
   repeat: boolean
   onTogglePlay: () => void
@@ -704,6 +710,7 @@ function PlayerBar({
   onVolumeChange: (v: number) => void
   onShuffleToggle: () => void
   onRepeatToggle: () => void
+  onPlayTrack: (track: Track, queue?: boolean) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const { view } = useAppStore()
@@ -809,115 +816,102 @@ function PlayerBar({
         )}
       </AnimatePresence>
 
-      {/* ─── Expanded: Full Player Bar ─── */}
+      {/* ─── Expanded: Full-Screen Now Playing ─── */}
       <AnimatePresence>
         {expanded && (
           <motion.div
-            initial={{ y: 120, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 120, opacity: 0 }}
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className="fixed bottom-16 lg:bottom-4 left-3 right-3 lg:left-1/2 lg:-translate-x-1/2 lg:right-auto lg:w-[660px] z-[60] pointer-events-auto"
+            className="fixed inset-0 z-[60] pointer-events-auto"
           >
-            <div
-              className={cn(
-                "rounded-2xl shadow-2xl overflow-hidden adoo-playing-border",
-                !isPlaying && "adoo-paused"
+            <div className="absolute inset-0 overflow-y-auto">
+              {/* Blurred background (album art) */}
+              {currentTrack.thumbnail && (
+                <div className="fixed inset-0 z-0">
+                  <img src={currentTrack.thumbnail} alt="" className="w-full h-full object-cover scale-125 blur-3xl opacity-30" />
+                  <div className="absolute inset-0 bg-black/50" />
+                </div>
               )}
-            >
-            {/* Mobile layout */}
-            <div className="lg:hidden px-4 py-3 space-y-2.5">
-              <div className="flex items-center gap-3">
+
+              <div className={cn(
+                "relative z-10 min-h-full flex flex-col",
+              )}>
+            {/* ── MOBILE: Full-screen Now Playing ── */}
+            <div className="lg:hidden flex flex-col min-h-screen-h max-h-screen overflow-y-auto px-6 pt-12 pb-8">
+              {/* Header: chevron down + now playing label */}
+              <div className="flex items-center justify-between mb-8">
+                <button onClick={() => setExpanded(false)} className="p-2 -ml-2 text-foreground/80 hover:text-foreground transition-colors">
+                  <ChevronDown className="w-6 h-6" />
+                </button>
+                <span className="text-xs font-semibold uppercase tracking-wider text-foreground/60">Now Playing</span>
+                <div className="w-10" />
+              </div>
+
+              {/* Large album art */}
+              <div className="relative mx-auto mb-8 shadow-2xl rounded-2xl overflow-hidden">
                 {currentTrack.thumbnail ? (
-                  <img src={currentTrack.thumbnail} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0 ring-1 ring-white/10 shadow-md" />
+                  <img src={currentTrack.thumbnail} alt="" className="w-full max-w-[300px] aspect-square object-cover" />
                 ) : (
-                  <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shrink-0 shadow-md">
-                    <MusicIcon className="w-5 h-5 text-primary-foreground" />
+                  <div className="w-full max-w-[300px] aspect-square gradient-primary flex items-center justify-center">
+                    <MusicIcon className="w-20 h-20 text-primary-foreground/50" />
                   </div>
                 )}
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold truncate">{currentTrack.title}</div>
-                  <div className="text-xs text-muted-foreground truncate">{currentTrack.artist}</div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button onClick={onTogglePlay} size="icon" className="rounded-full h-10 w-10 gradient-primary shadow-glow">
-                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
-                  </Button>
-                  <Button onClick={onNext} variant="ghost" size="icon" className="h-9 w-9 text-foreground">
-                    <SkipForward className="w-4 h-4" />
-                  </Button>
-                  <Button onClick={() => setExpanded(false)} variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground">
-                    <ChevronDown className="w-4 h-4" />
-                  </Button>
-                </div>
+                {/* Playing indicator overlay */}
+                {isPlaying && (
+                  <div className="absolute bottom-3 right-3 bg-black/50 backdrop-blur-md rounded-full px-3 py-1.5 flex items-end gap-0.5 h-7">
+                    <span className="adoo-eq-bar" style={{ height: 6 }} />
+                    <span className="adoo-eq-bar" style={{ height: 10 }} />
+                    <span className="adoo-eq-bar" style={{ height: 5 }} />
+                    <span className="adoo-eq-bar" style={{ height: 8 }} />
+                  </div>
+                )}
               </div>
+
+              {/* Track title + artist */}
+              <div className="text-center mb-6">
+                <div className="text-xl font-bold truncate mb-1">{currentTrack.title}</div>
+                <div className="text-sm text-muted-foreground truncate">{currentTrack.artist}</div>
+              </div>
+
               {/* Progress bar */}
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-muted-foreground tabular-nums w-8 text-right">{formatTime(position)}</span>
+              <div className="mb-2">
                 <input
                   type="range"
                   min={0}
                   max={currentTrack.durationSeconds || 300}
                   value={position}
                   onChange={(e) => onSeek(parseFloat(e.target.value))}
-                  className="flex-1 player-slider"
+                  className="w-full player-slider"
                 />
-                <span className="text-[10px] text-muted-foreground tabular-nums w-8">{formatTime(currentTrack.durationSeconds || 0)}</span>
               </div>
-            </div>
-
-            {/* Desktop layout */}
-            <div className="hidden lg:flex px-5 py-4 pr-7 items-center gap-5">
-              {/* Track info */}
-              <div className="flex items-center gap-3 min-w-0 w-52 shrink-0">
-                {currentTrack.thumbnail ? (
-                  <img src={currentTrack.thumbnail} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0 ring-1 ring-white/10 shadow-md" />
-                ) : (
-                  <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shrink-0 shadow-md">
-                    <MusicIcon className="w-5 h-5 text-primary-foreground" />
-                  </div>
-                )}
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold truncate">{currentTrack.title}</div>
-                  <div className="text-xs text-muted-foreground truncate">{currentTrack.artist}</div>
-                </div>
+              <div className="flex items-center justify-between mb-8 text-[10px] text-muted-foreground tabular-nums">
+                <span>{formatTime(position)}</span>
+                <span>{formatTime(currentTrack.durationSeconds || 0)}</span>
               </div>
 
-              {/* Controls + seek bar */}
-              <div className="flex-1 flex flex-col items-center gap-2">
-                <div className="flex items-center gap-3">
-                  <button onClick={onShuffleToggle} className={cn('p-2 rounded-xl transition-all', shuffle ? 'text-primary bg-primary/15 shadow-glow' : 'text-muted-foreground hover:text-foreground hover:bg-white/5')} aria-label="Shuffle">
-                    <Shuffle className="w-4 h-4" />
-                  </button>
-                  <button onClick={onNext} className="p-2 rounded-xl text-foreground hover:bg-white/10 transition-colors" aria-label="Next">
-                    <SkipForward className="w-4 h-4" />
-                  </button>
-                  <button onClick={onTogglePlay} className="w-10 h-10 rounded-full gradient-primary flex items-center justify-center hover:scale-110 active:scale-95 transition-transform shadow-glow" aria-label={isPlaying ? 'Pause' : 'Play'}>
-                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
-                  </button>
-                  <button onClick={onStop} className="p-2 rounded-xl text-foreground hover:bg-white/10 transition-colors" aria-label="Stop">
-                    <X className="w-4 h-4" />
-                  </button>
-                  <button onClick={onRepeatToggle} className={cn('p-2 rounded-xl transition-all', repeat ? 'text-primary bg-primary/15 shadow-glow' : 'text-muted-foreground hover:text-foreground hover:bg-white/5')} aria-label="Repeat">
-                    <Repeat className="w-4 h-4" />
-                  </button>
-                </div>
-                <div className="flex items-center gap-2.5 w-full max-w-sm">
-                  <span className="text-[10px] text-muted-foreground tabular-nums w-9 text-right">{formatTime(position)}</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={currentTrack.durationSeconds || 300}
-                    value={position}
-                    onChange={(e) => onSeek(parseFloat(e.target.value))}
-                    className="flex-1 player-slider"
-                  />
-                  <span className="text-[10px] text-muted-foreground tabular-nums w-9">{formatTime(currentTrack.durationSeconds || 0)}</span>
-                </div>
+              {/* Main controls */}
+              <div className="flex items-center justify-center gap-8 mb-8">
+                <button onClick={onShuffleToggle} className={cn('p-3 rounded-full transition-all', shuffle ? 'text-primary bg-primary/15' : 'text-foreground/50 hover:text-foreground')}>
+                  <Shuffle className="w-5 h-5" />
+                </button>
+                <button onClick={onNext} className="p-3 rounded-full text-foreground hover:bg-white/10 transition-colors">
+                  <SkipForward className="w-7 h-7" />
+                </button>
+                <button onClick={onTogglePlay} className="w-16 h-16 rounded-full gradient-primary flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-glow" aria-label={isPlaying ? 'Pause' : 'Play'}>
+                  {isLoading ? <Loader2 className="w-7 h-7 animate-spin" /> : isPlaying ? <Pause className="w-7 h-7" /> : <Play className="w-7 h-7 ml-1" />}
+                </button>
+                <button onClick={onStop} className="p-3 rounded-full text-foreground hover:bg-white/10 transition-colors">
+                  <X className="w-6 h-6" />
+                </button>
+                <button onClick={onRepeatToggle} className={cn('p-3 rounded-full transition-all', repeat ? 'text-primary bg-primary/15' : 'text-foreground/50 hover:text-foreground')}>
+                  <Repeat className="w-5 h-5" />
+                </button>
               </div>
 
-              {/* Volume + collapse */}
-              <div className="flex items-center gap-2.5 shrink-0">
+              {/* Volume slider */}
+              <div className="flex items-center gap-3 mb-8">
                 <Volume2 className="w-4 h-4 text-muted-foreground shrink-0" />
                 <input
                   type="range"
@@ -926,12 +920,140 @@ function PlayerBar({
                   step={0.01}
                   value={volume}
                   onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
-                  className="w-20 volume-slider"
+                  className="flex-1 volume-slider"
                 />
-                <button onClick={() => setExpanded(false)} className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors" aria-label="Collapse player">
-                  <ChevronDown className="w-4 h-4" />
-                </button>
               </div>
+
+              {/* Queue preview */}
+              {queue.length > 0 && (
+                <div className="space-y-1.5">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                    Next in Queue ({queue.length})
+                  </h3>
+                  {queue.slice(0, 5).map((track, i) => (
+                    <div
+                      key={`${track.videoId}-${i}`}
+                      className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-all cursor-pointer"
+                      onClick={() => onPlayTrack(track)}
+                    >
+                      {track.thumbnail ? (
+                        <img src={track.thumbnail} alt="" className="w-10 h-10 rounded object-cover shrink-0" />
+                      ) : (
+                        <div className="w-10 h-10 rounded bg-muted flex items-center justify-center shrink-0">
+                          <ListMusic className="w-4 h-4 text-muted-foreground" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate">{track.title}</div>
+                        <div className="text-xs text-muted-foreground truncate">{track.artist}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Up Next (radio queue) */}
+              {queue.length === 0 && radioQueue.length > 0 && (
+                <div className="space-y-1.5">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Up Next (Autoplay)
+                  </h3>
+                  {radioQueue.slice(0, 5).map((track, i) => (
+                    <div
+                      key={`${track.videoId}-${i}`}
+                      className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-all cursor-pointer"
+                      onClick={() => onPlayTrack(track)}
+                    >
+                      {track.thumbnail ? (
+                        <img src={track.thumbnail} alt="" className="w-10 h-10 rounded object-cover shrink-0" />
+                      ) : (
+                        <div className="w-10 h-10 rounded bg-muted flex items-center justify-center shrink-0">
+                          <ListMusic className="w-4 h-4 text-muted-foreground" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate">{track.title}</div>
+                        <div className="text-xs text-muted-foreground truncate">{track.artist}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* ── DESKTOP: Compact bar with full controls ── */}
+            <div className="hidden lg:flex fixed bottom-4 left-1/2 -translate-x-1/2 w-[680px] rounded-2xl shadow-2xl overflow-hidden adoo-playing-border" data-playing={!isPlaying ? 'paused' : undefined}>
+              <div className={cn(
+                "w-full px-5 py-4 pr-7 flex items-center gap-5",
+                !isPlaying && "adoo-paused"
+              )}>
+                {/* Track info */}
+                <div className="flex items-center gap-3 min-w-0 w-52 shrink-0">
+                  {currentTrack.thumbnail ? (
+                    <img src={currentTrack.thumbnail} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0 ring-1 ring-white/10 shadow-md" />
+                  ) : (
+                    <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shrink-0 shadow-md">
+                      <MusicIcon className="w-5 h-5 text-primary-foreground" />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold truncate">{currentTrack.title}</div>
+                    <div className="text-xs text-muted-foreground truncate">{currentTrack.artist}</div>
+                  </div>
+                </div>
+
+                {/* Controls + seek bar */}
+                <div className="flex-1 flex flex-col items-center gap-2">
+                  <div className="flex items-center gap-3">
+                    <button onClick={onShuffleToggle} className={cn('p-2 rounded-xl transition-all', shuffle ? 'text-primary bg-primary/15 shadow-glow' : 'text-muted-foreground hover:text-foreground hover:bg-white/5')} aria-label="Shuffle">
+                      <Shuffle className="w-4 h-4" />
+                    </button>
+                    <button onClick={onNext} className="p-2 rounded-xl text-foreground hover:bg-white/10 transition-colors" aria-label="Next">
+                      <SkipForward className="w-4 h-4" />
+                    </button>
+                    <button onClick={onTogglePlay} className="w-10 h-10 rounded-full gradient-primary flex items-center justify-center hover:scale-110 active:scale-95 transition-transform shadow-glow" aria-label={isPlaying ? 'Pause' : 'Play'}>
+                      {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                    </button>
+                    <button onClick={onStop} className="p-2 rounded-xl text-foreground hover:bg-white/10 transition-colors" aria-label="Stop">
+                      <X className="w-4 h-4" />
+                    </button>
+                    <button onClick={onRepeatToggle} className={cn('p-2 rounded-xl transition-all', repeat ? 'text-primary bg-primary/15 shadow-glow' : 'text-muted-foreground hover:text-foreground hover:bg-white/5')} aria-label="Repeat">
+                      <Repeat className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2.5 w-full max-w-sm">
+                    <span className="text-[10px] text-muted-foreground tabular-nums w-9 text-right">{formatTime(position)}</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={currentTrack.durationSeconds || 300}
+                      value={position}
+                      onChange={(e) => onSeek(parseFloat(e.target.value))}
+                      className="flex-1 player-slider"
+                    />
+                    <span className="text-[10px] text-muted-foreground tabular-nums w-9">{formatTime(currentTrack.durationSeconds || 0)}</span>
+                  </div>
+                </div>
+
+                {/* Volume + collapse */}
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <Volume2 className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={volume}
+                    onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
+                    className="w-20 volume-slider"
+                  />
+                  <button onClick={() => setExpanded(false)} className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors" aria-label="Collapse player">
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
             </div>
             </div>
           </motion.div>
