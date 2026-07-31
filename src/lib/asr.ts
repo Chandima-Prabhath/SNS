@@ -65,12 +65,17 @@ async function convertToWav16kMono(filePath: string): Promise<string | null> {
   try {
     // -y         = overwrite output if exists
     // -i         = input file
+    // -af loudnorm=I=-16:TP=-1.5:LRA=11 — EBU R128 loudness normalization.
+    //   This normalizes the audio to -16 LUFS (standard speech level) which
+    //   dramatically improves Moonshine's accuracy on quiet recordings.
+    //   Without this, Moonshine often returns "..." on quiet or uneven audio.
     // -ar 16000  = 16kHz sample rate (Moonshine requirement)
     // -ac 1      = mono
     // -acodec pcm_s16le = 16-bit PCM
     await execFileAsync('ffmpeg', [
       '-y',
       '-i', filePath,
+      '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
       '-ar', '16000',
       '-ac', '1',
       '-acodec', 'pcm_s16le',
@@ -169,7 +174,23 @@ export async function transcribeAudioFile(
       return null
     }
 
-    return data
+    // ── Garbage detection ──────────────────────────────────────────────
+    // Moonshine sometimes returns garbage when it can't understand the audio:
+    //   - "..." or "…" (dots — model confused by silence/noise)
+    //   - "" (empty string — no speech detected)
+    //   - "." (single dot)
+    //   - Strings that are ONLY punctuation (no alphanumeric chars)
+    //
+    // These are technically "successful" transcriptions (HTTP 200) but the
+    // text is useless. Treat them as failures so callers fall back to
+    // "(transcription unavailable)" instead of showing garbage to users.
+    const cleaned = data.text.trim()
+    if (!cleaned || !/[a-zA-Z0-9]/.test(cleaned)) {
+      console.warn(`[asr] garbage transcription detected: "${cleaned}" — treating as failure`)
+      return null
+    }
+
+    return { ...data, text: cleaned }
   } catch (e: any) {
     if (e?.name === 'AbortError') {
       console.error('[asr] transcription timed out (>60s)')

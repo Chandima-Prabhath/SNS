@@ -32,14 +32,19 @@ interface AuthenticatedSocket {
 // in-memory presence map (userId → { status, socketIds[], username })
 const presence = new Map<string, { status: string; socketIds: Set<string>; username: string }>()
 
-let ioRef: IOServer | null = null
+// Use globalThis to share the io instance across Next.js module contexts.
+// In dev mode, Next.js API routes can load a DIFFERENT copy of this module
+// than the one server.ts initialized — so a module-level `let ioRef` would
+// be null in the API route context. globalThis is shared across all module
+// instances in the same Node.js process.
+const globalForIo = globalThis as unknown as { __adoo_io?: IOServer | null }
 
 export function getIO(): IOServer | null {
-  return ioRef
+  return globalForIo.__adoo_io || null
 }
 
 export function attachRealtime(httpServer: HTTPServer): IOServer {
-  if (ioRef) return ioRef
+  if (globalForIo.__adoo_io) return globalForIo.__adoo_io
 
   const io = new IOServer(httpServer, {
     path: SOCKET_PATH,
@@ -53,7 +58,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
     // Allow large SDP payloads (WebRTC offer/answer can be 5-10KB)
     maxHttpBufferSize: 1e6,
   })
-  ioRef = io
+  globalForIo.__adoo_io = io
 
   // ─────────────────────────────────────────────────────────────────────────
   // Auth middleware — decode NextAuth JWT from cookie

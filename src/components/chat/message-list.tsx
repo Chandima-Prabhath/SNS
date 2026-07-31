@@ -790,20 +790,27 @@ function TranscriptButton({ message, isMine }: { message: ChannelMessage; isMine
   const [loading, setLoading] = useState(false)
   const [manualTranscript, setManualTranscript] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Track whether the user manually re-transcribed. If so, the manual result
+  // takes priority over the (possibly stale/garbage) cached message.transcript.
+  const [manualOverride, setManualOverride] = useState(false)
 
-  // If auto-transcription already produced a transcript, use it directly
-  const transcript = message.transcript || manualTranscript
+  // If auto-transcription already produced a transcript, use it directly —
+  // UNLESS the user has manually re-transcribed (manualOverride), in which
+  // case the manual result wins. This fixes the cache bug where a failed
+  // auto-transcription (e.g. "..." or null) would persist even after a
+  // successful manual retry.
+  const transcript = manualOverride ? manualTranscript : (manualTranscript || message.transcript)
 
   const handleShow = async () => {
-    // If we already have it, just toggle
-    if (transcript) {
+    // If we already have a valid transcript and no error, just toggle
+    if (transcript && !error) {
       setExpanded((v) => !v)
       return
     }
 
     // Otherwise, fetch it on demand via /api/asr
     setLoading(true)
-    setError(null)
+    setError(null) // Clear any previous error before retrying
     try {
       const res = await fetch('/api/asr', {
         method: 'POST',
@@ -818,11 +825,13 @@ function TranscriptButton({ message, isMine }: { message: ChannelMessage; isMine
         throw new Error(err.error || `HTTP ${res.status}`)
       }
       const data = await res.json()
-      if (data.text) {
+      if (data.text && /[a-zA-Z0-9]/.test(data.text)) {
+        // Valid transcription — update state and override the cached value
         setManualTranscript(data.text)
+        setManualOverride(true)
         setExpanded(true)
       } else {
-        setError('No speech detected')
+        setError('No speech detected (transcription returned empty or garbage)')
       }
     } catch (e: any) {
       setError(e?.message || 'Transcription failed — is the ASR server running?')
