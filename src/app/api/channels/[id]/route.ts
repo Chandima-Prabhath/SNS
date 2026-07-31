@@ -61,23 +61,25 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   })
   if (!channel) return NextResponse.json({ error: 'not found' }, { status: 404 })
 
-  const membership = await db.groupMember.findUnique({
-    where: { groupId_userId: { groupId: channel.groupId, userId } },
-  })
-  if (!membership) return NextResponse.json({ error: 'not a member' }, { status: 403 })
-
-  // For DM channels, any member can delete (deletes for both users).
-  // For group channels, only owner/admin can delete.
-  if (!channel.group.isDm) {
-    if (membership.role !== 'owner' && membership.role !== 'admin') {
+  // For DM channels: check ChannelMember (DMs don't have GroupMember rows)
+  // For group channels: check GroupMember
+  if (channel.group.isDm) {
+    const channelMembership = await db.channelMember.findUnique({
+      where: { channelId_userId: { channelId, userId } },
+    })
+    if (!channelMembership) return NextResponse.json({ error: 'not a member' }, { status: 403 })
+  } else {
+    const groupMembership = await db.groupMember.findUnique({
+      where: { groupId_userId: { groupId: channel.groupId, userId } },
+    })
+    if (!groupMembership) return NextResponse.json({ error: 'not a member' }, { status: 403 })
+    if (groupMembership.role !== 'owner' && groupMembership.role !== 'admin') {
       return NextResponse.json({ error: 'only owners and admins can delete channels' }, { status: 403 })
     }
   }
 
   // Delete the channel — cascades to messages, read receipts, channel
   // members, etc. (per the Prisma schema's onDelete: Cascade).
-  // If this was the only channel in the group, the group itself becomes
-  // empty — we leave it (the group row persists for potential re-use).
   await db.channel.delete({ where: { id: channelId } })
 
   return NextResponse.json({ ok: true })

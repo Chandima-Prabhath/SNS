@@ -148,7 +148,8 @@ export function ChatList() {
             if (ok) {
               fetch(`/api/channels/${row.channel.id}`, {
                 method: 'DELETE',
-              }).then(() => {
+              }).then((res) => {
+                if (!res.ok) throw new Error('Delete failed')
                 qc.invalidateQueries({ queryKey: ['channels'] })
                 if (activeChannelId === row.channel.id) setActiveChannel(null)
                 toast.success('Conversation deleted')
