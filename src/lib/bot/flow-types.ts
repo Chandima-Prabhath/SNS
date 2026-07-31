@@ -44,6 +44,9 @@ export type NodeType =
   | 'tts'
   | 'asr_transcribe'
   | 'message_type'
+  | 'regex_extract'
+  | 'json_parse'
+  | 'comment'
 
 export type NodeCategory = 'trigger' | 'output' | 'input' | 'logic' | 'advanced'
 
@@ -92,7 +95,7 @@ export interface FlowNodeData {
 
   // ── condition ──
   variable?: string
-  operator?: 'equals' | 'not_equals' | 'contains' | 'starts_with' | 'exists' | 'not_exists'
+  operator?: 'equals' | 'not_equals' | 'contains' | 'starts_with' | 'ends_with' | 'exists' | 'not_exists' | 'regex_match' | 'regex_not_match' | 'greater_than' | 'less_than' | 'in_array' | 'not_in_array'
   value?: string
 
   // ── set_var ──
@@ -171,6 +174,28 @@ export interface FlowNodeData {
    *  the transcript is only stored in the variable. */
   asrReply?: boolean
   // (uses `variableName` to store the transcript text)
+
+  // ── regex_extract ──
+  /** The regex pattern to match against the input. Uses JavaScript RegExp syntax. */
+  regexPattern?: string
+  /** Flags for the regex (e.g. 'i' for case-insensitive, 'g' for global). */
+  regexFlags?: string
+  /** The input text to match against. Supports {{var}} interpolation. */
+  regexInput?: string
+  // (uses `variableName` to store the first match, or matched group 1 if present)
+
+  // ── json_parse ──
+  /** The JSON string to parse. Supports {{var}} interpolation — typically {{apiResult}}. */
+  jsonInput?: string
+  /** JSON path to extract (dot-notation, e.g. 'data.user.name' or 'choices[0].message.content'). */
+  jsonPath?: string
+  // (uses `variableName` to store the extracted value as a string)
+
+  // ── comment ──
+  /** Comment/note text — shown on the canvas, ignored by the engine. */
+  commentText?: string
+  /** Comment color (for visual categorization). */
+  commentColor?: 'yellow' | 'green' | 'blue' | 'pink' | 'gray'
 
   // ── UI metadata (not used by engine) ──
   /** Node type — stored in data so the editor's CustomNode can read it.
@@ -549,8 +574,38 @@ export async function executeBotFlow(
           case 'not_equals':   met = varValue !== cmp; break
           case 'contains':     met = varValue.includes(cmp); break
           case 'starts_with':  met = varValue.startsWith(cmp); break
+          case 'ends_with':    met = varValue.endsWith(cmp); break
           case 'exists':       met = !!varValue; break
           case 'not_exists':   met = !varValue; break
+          case 'regex_match': {
+            try { met = new RegExp(cmp).test(varValue) } catch { met = false }
+            break
+          }
+          case 'regex_not_match': {
+            try { met = !new RegExp(cmp).test(varValue) } catch { met = false }
+            break
+          }
+          case 'greater_than': {
+            const a = parseFloat(varValue), b = parseFloat(cmp)
+            met = !isNaN(a) && !isNaN(b) && a > b
+            break
+          }
+          case 'less_than': {
+            const a = parseFloat(varValue), b = parseFloat(cmp)
+            met = !isNaN(a) && !isNaN(b) && a < b
+            break
+          }
+          case 'in_array': {
+            // cmp is a comma-separated list, e.g. "yes,yep,ok,confirm"
+            const items = cmp.split(',').map((s) => s.trim()).filter(Boolean)
+            met = items.includes(varValue)
+            break
+          }
+          case 'not_in_array': {
+            const items = cmp.split(',').map((s) => s.trim()).filter(Boolean)
+            met = !items.includes(varValue)
+            break
+          }
         }
 
         trace.push({
@@ -717,6 +772,85 @@ export async function executeBotFlow(
           ctx.variables[vname] = result
           trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: vname, value: result })
         }
+        currentNode = followEdge(currentNode.id, null)
+        break
+      }
+
+      // ── LOGIC: regex_extract ──────────────────────────────────────────
+      case 'regex_extract': {
+        const pattern = currentNode.data.regexPattern || ''
+        const flags = currentNode.data.regexFlags || 'i'
+        const input = interpolate(currentNode.data.regexInput || '{{body}}', ctx)
+        const vname = currentNode.data.variableName || 'match'
+
+        if (!pattern) {
+          trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: 'Regex node has empty pattern' })
+          ctx.variables[vname] = ''
+          currentNode = followEdge(currentNode.id, null)
+          break
+        }
+
+        let matched = ''
+        try {
+          const re = new RegExp(pattern, flags)
+          const m = re.exec(input)
+          if (m) {
+            // If the regex has capture groups, return group 1; otherwise return the full match
+            matched = m[1] !== undefined ? m[1] : m[0]
+          }
+        } catch (e: any) {
+          trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: `Invalid regex: ${e?.message || e}` })
+        }
+
+        ctx.variables[vname] = matched
+        trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: vname, value: matched.slice(0, 100) })
+        currentNode = followEdge(currentNode.id, null)
+        break
+      }
+
+      // ── LOGIC: json_parse ─────────────────────────────────────────────
+      case 'json_parse': {
+        const input = interpolate(currentNode.data.jsonInput || '{{apiResult}}', ctx)
+        const path = currentNode.data.jsonPath || ''
+        const vname = currentNode.data.variableName || 'jsonValue'
+
+        if (!input.trim()) {
+          trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: 'JSON node has empty input' })
+          ctx.variables[vname] = ''
+          currentNode = followEdge(currentNode.id, null)
+          break
+        }
+
+        let result = ''
+        try {
+          const parsed = JSON.parse(input)
+          if (path) {
+            // Navigate dot-notation path with array index support
+            // e.g. 'data.user.name' or 'choices[0].message.content'
+            const parts = path.split(/\.|\[(\d+)\]/).filter(Boolean)
+            let cur: any = parsed
+            for (const part of parts) {
+              if (cur == null) break
+              cur = cur[part]
+            }
+            result = cur == null ? '' : (typeof cur === 'object' ? JSON.stringify(cur) : String(cur))
+          } else {
+            result = typeof parsed === 'object' ? JSON.stringify(parsed) : String(parsed)
+          }
+        } catch (e: any) {
+          trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: `JSON parse failed: ${e?.message || e}` })
+        }
+
+        ctx.variables[vname] = result
+        trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: vname, value: result.slice(0, 100) })
+        currentNode = followEdge(currentNode.id, null)
+        break
+      }
+
+      // ── LOGIC: comment (visual note, no execution) ───────────────────
+      case 'comment': {
+        // Comments are purely visual — they don't do anything when the flow
+        // runs. Just pass through to the next node.
         currentNode = followEdge(currentNode.id, null)
         break
       }
@@ -1131,6 +1265,24 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
     icon: 'Split', color: '#60A5FA', bg: '#60A5FA1A',
     handles: 'multi',
   },
+  regex_extract: {
+    type: 'regex_extract', label: 'Regex Extract', category: 'advanced',
+    description: 'Extracts text matching a regex pattern from a variable',
+    icon: 'Braces', color: '#A78BFA', bg: '#A78BFA1A',
+    handles: 'single',
+  },
+  json_parse: {
+    type: 'json_parse', label: 'JSON Parse', category: 'advanced',
+    description: 'Parses a JSON string and extracts a value by path (e.g. apiResult → choices[0].message)',
+    icon: 'Braces', color: '#34D399', bg: '#34D3991A',
+    handles: 'single',
+  },
+  comment: {
+    type: 'comment', label: 'Comment', category: 'logic',
+    description: 'A visual note — does nothing when the flow runs. Use to document your bot.',
+    icon: 'Terminal', color: '#FBBF24', bg: '#FBBF241A',
+    handles: 'single',
+  },
 }
 
 export const CATEGORY_ORDER: NodeCategory[] = ['trigger', 'output', 'input', 'logic', 'advanced']
@@ -1205,6 +1357,27 @@ export function defaultNodeData(type: NodeType): FlowNodeData {
     case 'message_type':
       return {
         label: 'Message Type',
+      }
+    case 'regex_extract':
+      return {
+        label: 'Regex Extract',
+        regexPattern: '\\d+',  // default: extract first number
+        regexFlags: '',
+        regexInput: '{{body}}',
+        variableName: 'match',
+      }
+    case 'json_parse':
+      return {
+        label: 'JSON Parse',
+        jsonInput: '{{apiResult}}',
+        jsonPath: '',
+        variableName: 'jsonValue',
+      }
+    case 'comment':
+      return {
+        label: 'Comment',
+        commentText: 'This is a note. It does nothing when the flow runs.',
+        commentColor: 'yellow',
       }
   }
 }

@@ -163,6 +163,27 @@ model Group {
 
   channels    Channel[]
   members     GroupMember[]
+  dmLink      DmLink?
+}
+
+// ─── DM deduplication ──────────────────────────────────────────────────────
+// Tracks 1:1 DM groups so we can enforce uniqueness on the (userA, userB)
+// pair. Without this, rapid clicks on "Start DM" create multiple duplicate
+// channels between the same two users.
+//
+// userAId is always the lexicographically SMALLER userId, userBId the larger.
+// This canonical ordering means (A,B) and (B,A) map to the same row, so the
+// unique constraint works regardless of who initiated the DM.
+model DmLink {
+  id        String   @id @default(cuid())
+  userAId   String   // always the smaller userId
+  userBId   String   // always the larger userId
+  groupId   String   @unique
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userAId, userBId])
+  @@index([userBId])
 }
 
 model GroupMember {

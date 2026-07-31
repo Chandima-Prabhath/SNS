@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAppStore } from '@/stores/useAppStore'
 import { usePresence } from '@/hooks/usePresence'
@@ -28,7 +28,7 @@ import {
 } from '@/components/ui/select'
 import {
   Plus, Hash, Volume2, Video, Users, Copy, Check, Settings, Phone, Radio,
-  Shield, Crown, UserPlus, LogOut,
+  Shield, Crown, UserPlus, LogOut, Loader2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -841,6 +841,8 @@ export function StartDmButton() {
   const qc = useQueryClient()
   const setActiveChannel = useAppStore((s) => s.setActiveChannel)
   const setView = useAppStore((s) => s.setView)
+  // Per-target in-flight guard — prevents duplicate DM creation on rapid clicks
+  const inFlightRef = useRef<Set<string>>(new Set())
 
   const { data: users } = useQuery({
     queryKey: ['users'],
@@ -853,20 +855,30 @@ export function StartDmButton() {
 
   const startDm = useMutation({
     mutationFn: async (targetUserId: string) => {
-      const res = await fetch('/api/groups', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetUserId }),
-      })
-      if (!res.ok) throw new Error('failed')
-      return res.json()
+      if (inFlightRef.current.has(targetUserId)) return null
+      inFlightRef.current.add(targetUserId)
+      try {
+        const res = await fetch('/api/groups', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetUserId }),
+        })
+        if (!res.ok) throw new Error('failed')
+        return res.json()
+      } finally {
+        setTimeout(() => inFlightRef.current.delete(targetUserId), 1500)
+      }
     },
     onSuccess: (data) => {
+      if (!data) return
       qc.invalidateQueries({ queryKey: ['channels'] })
       setActiveChannel(data.channel.id)
       setOpen(false)
       setView('chats')
       toast.success('DM started')
+    },
+    onError: () => {
+      toast.error('Failed to start DM')
     },
   })
 
@@ -890,22 +902,27 @@ export function StartDmButton() {
                 No other users yet. Invite some friends!
               </div>
             )}
-            {users?.map((u) => (
-              <button
-                key={u.id}
-                onClick={() => startDm.mutate(u.id)}
-                className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-accent text-left"
-              >
-                <Avatar className="w-9 h-9">
-                  <AvatarImage src={u.avatarUrl || undefined} />
-                  <AvatarFallback>{u.displayName?.charAt(0) || '?'}</AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">{u.displayName}</div>
-                  <div className="text-xs text-muted-foreground truncate">@{u.username}</div>
-                </div>
-              </button>
-            ))}
+            {users?.map((u) => {
+              const pending = startDm.isPending && startDm.variables === u.id
+              return (
+                <button
+                  key={u.id}
+                  onClick={() => startDm.mutate(u.id)}
+                  disabled={startDm.isPending}
+                  className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-accent text-left disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  <Avatar className="w-9 h-9">
+                    <AvatarImage src={u.avatarUrl || undefined} />
+                    <AvatarFallback>{u.displayName?.charAt(0) || '?'}</AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{u.displayName}</div>
+                    <div className="text-xs text-muted-foreground truncate">@{u.username}</div>
+                  </div>
+                  {pending && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground shrink-0" />}
+                </button>
+              )
+            })}
           </div>
         </ScrollArea>
       </DialogContent>

@@ -45,48 +45,80 @@ export async function canPostInChannel(channelId: string, userId: string): Promi
 
 /**
  * Create a DM group between two users (1:1). Returns the existing or new DM channel.
+ *
+ * RACE-SAFE: Uses a DmLink table with a unique constraint on (userAId, userBId)
+ * to guarantee only ONE DM channel can exist between any two users, even under
+ * concurrent requests. The user IDs are canonically ordered (smaller first) so
+ * that (A→B) and (B→A) map to the same row.
+ *
+ * Flow:
+ *   1. Check if a DmLink already exists for this pair → return its channel
+ *   2. Otherwise, create the group + channel + members + DmLink in a transaction
+ *   3. If another concurrent request won the race (P2002 unique violation),
+ *      fall back to fetching the existing channel
+ *
+ * The P2002 fallback is what makes this safe under concurrency — even if two
+ * requests pass step 1 simultaneously, only one wins at step 2; the other
+ * gets a P2002 and fetches the winner's channel.
  */
 export async function getOrCreateDmChannel(userIdA: string, userIdB: string) {
-  // Find groups where both users are members and isDm=true
-  const aGroups = await db.channelMember.findMany({
-    where: { userId: userIdA },
-    include: { channel: { include: { group: true } } },
+  // Canonical ordering: smaller userId first
+  const [userAId, userBId] = [userIdA, userIdB].sort()
+
+  // 1. Fast path — check for existing DM link
+  const existing = await db.dmLink.findUnique({
+    where: { userAId_userBId: { userAId, userBId } },
+    include: { group: { include: { channels: true } } },
   })
-  for (const m of aGroups) {
-    if (!m.channel.group.isDm) continue
-    const other = await db.channelMember.findUnique({
-      where: { channelId_userId: { channelId: m.channelId, userId: userIdB } },
-    })
-    if (other) return m.channel
+  if (existing) {
+    return existing.group.channels[0]
   }
 
-  // Create new DM group + single text channel
+  // 2. Create new DM group + channel + members + DmLink in a transaction
   const userA = await db.user.findUnique({ where: { id: userIdA } })
   const userB = await db.user.findUnique({ where: { id: userIdB } })
   if (!userA || !userB) throw new Error('user not found')
 
-  const group = await db.group.create({
-    data: {
-      name: `${userA.username}-${userB.username}`,
-      isDm: true,
-      ownerId: userIdA,
-      channels: {
-        create: {
-          name: 'dm',
-          type: 'text',
+  try {
+    const result = await db.$transaction(async (tx) => {
+      const group = await tx.group.create({
+        data: {
+          name: `${userA.username}-${userB.username}`,
+          isDm: true,
+          ownerId: userIdA,
+          channels: {
+            create: { name: 'dm', type: 'text' },
+          },
+          dmLink: {
+            create: { userAId, userBId },
+          },
         },
-      },
-    },
-    include: { channels: true },
-  })
+        include: { channels: true },
+      })
 
-  const channel = group.channels[0]
-  await db.channelMember.createMany({
-    data: [
-      { channelId: channel.id, userId: userIdA, role: 'member' },
-      { channelId: channel.id, userId: userIdB, role: 'member' },
-    ],
-  })
+      const channel = group.channels[0]
+      await tx.channelMember.createMany({
+        data: [
+          { channelId: channel.id, userId: userIdA, role: 'member' },
+          { channelId: channel.id, userId: userIdB, role: 'member' },
+        ],
+      })
 
-  return channel
+      return channel
+    })
+    return result
+  } catch (e: any) {
+    // 3. P2002 = unique constraint violation — another concurrent request
+    // already created this DM. Fetch and return it.
+    if (e?.code === 'P2002') {
+      const link = await db.dmLink.findUnique({
+        where: { userAId_userBId: { userAId, userBId } },
+        include: { group: { include: { channels: true } } },
+      })
+      if (link) {
+        return link.group.channels[0]
+      }
+    }
+    throw e
+  }
 }

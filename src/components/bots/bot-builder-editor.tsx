@@ -173,6 +173,15 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
     case 'message_type':
       preview = { label: 'Routes by', value: 'message type (text/voice/image/...)' }
       break
+    case 'regex_extract':
+      preview = { label: 'Extracts', value: data.regexPattern ? `/${data.regexPattern}/${data.regexFlags || ''}` : '(no pattern)' }
+      break
+    case 'json_parse':
+      preview = { label: 'Parses', value: data.jsonPath ? `→ ${data.jsonPath}` : '(no path)' }
+      break
+    case 'comment':
+      preview = { label: 'Note', value: data.commentText ? (data.commentText.length > 40 ? data.commentText.slice(0, 40) + '…' : data.commentText) : '(empty)' }
+      break
   }
 
   return (
@@ -1620,20 +1629,39 @@ function NodeInspectorBody({
               <SelectItem value="not_equals">Not equals (!=)</SelectItem>
               <SelectItem value="contains">Contains</SelectItem>
               <SelectItem value="starts_with">Starts with</SelectItem>
+              <SelectItem value="ends_with">Ends with</SelectItem>
               <SelectItem value="exists">Has any value</SelectItem>
               <SelectItem value="not_exists">Is empty / not set</SelectItem>
+              <SelectItem value="regex_match">Matches regex</SelectItem>
+              <SelectItem value="regex_not_match">Does NOT match regex</SelectItem>
+              <SelectItem value="greater_than">Greater than (&gt;)</SelectItem>
+              <SelectItem value="less_than">Less than (&lt;)</SelectItem>
+              <SelectItem value="in_array">In list (comma-sep)</SelectItem>
+              <SelectItem value="not_in_array">NOT in list</SelectItem>
             </SelectContent>
           </Select>
         </div>
-        {(data.operator === 'equals' || data.operator === 'not_equals' || data.operator === 'contains' || data.operator === 'starts_with') && (
+        {(data.operator === 'equals' || data.operator === 'not_equals' || data.operator === 'contains' || data.operator === 'starts_with' || data.operator === 'ends_with' || data.operator === 'regex_match' || data.operator === 'regex_not_match' || data.operator === 'greater_than' || data.operator === 'less_than' || data.operator === 'in_array' || data.operator === 'not_in_array') && (
           <div className="space-y-2">
-            <Label className="text-white/60 text-xs">Compare with</Label>
+            <Label className="text-white/60 text-xs">
+              {data.operator === 'regex_match' || data.operator === 'regex_not_match' ? 'Regex pattern' : data.operator === 'in_array' || data.operator === 'not_in_array' ? 'Comma-separated list' : data.operator === 'greater_than' || data.operator === 'less_than' ? 'Number to compare' : 'Compare with'}
+            </Label>
             <Input
               value={data.value || ''}
               onChange={(e) => onUpdate({ value: e.target.value })}
-              placeholder="yes"
+              placeholder={
+                data.operator === 'regex_match' || data.operator === 'regex_not_match' ? '^hello.*world$' :
+                data.operator === 'in_array' || data.operator === 'not_in_array' ? 'yes,yep,ok,confirm' :
+                data.operator === 'greater_than' || data.operator === 'less_than' ? '18' : 'yes'
+              }
               className={inputCls}
             />
+            {(data.operator === 'regex_match' || data.operator === 'regex_not_match') && (
+              <p className="text-[11px] text-white/40">Uses JavaScript RegExp syntax. The pattern is tested against the variable&apos;s value.</p>
+            )}
+            {(data.operator === 'in_array' || data.operator === 'not_in_array') && (
+              <p className="text-[11px] text-white/40">The variable&apos;s value must match one of these exactly (case-sensitive).</p>
+            )}
           </div>
         )}
         <div className="bg-white/5 rounded-lg p-3 text-xs text-white/50 space-y-1">
@@ -2107,6 +2135,168 @@ function NodeInspectorBody({
 
         <div className="text-xs text-white/40">
           The detected type is also available as <code className="px-1 py-0.5 rounded bg-white/5 text-blue-300">{'{{messageType}}'}</code> in downstream nodes.
+        </div>
+      </div>
+    )
+  }
+
+  // ── Regex Extract ──────────────────────────────────────────────────
+  if (nodeType === 'regex_extract') {
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Input text</Label>
+          <Input
+            value={data.regexInput || ''}
+            onChange={(e) => onUpdate({ regexInput: e.target.value })}
+            placeholder="{{body}}"
+            className={inputCls}
+          />
+          <VariableHelp />
+          <p className="text-xs text-white/40">The text to search. Defaults to the incoming message body.</p>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Regex pattern</Label>
+          <Input
+            value={data.regexPattern || ''}
+            onChange={(e) => onUpdate({ regexPattern: e.target.value })}
+            placeholder="\d{4}"  // eslint-disable-line no-useless-escape
+            className={cn(inputCls, 'font-mono')}
+          />
+          <p className="text-xs text-white/40">JavaScript RegExp syntax. Use capture groups to extract specific parts.</p>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Flags (optional)</Label>
+          <Input
+            value={data.regexFlags || ''}
+            onChange={(e) => onUpdate({ regexFlags: e.target.value })}
+            placeholder="i  (case-insensitive)"
+            className={cn(inputCls, 'font-mono')}
+          />
+          <p className="text-xs text-white/40">Common: <code className="px-1 py-0.5 rounded bg-white/5">i</code> = case-insensitive, <code className="px-1 py-0.5 rounded bg-white/5">g</code> = global (returns all matches joined).</p>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Output variable</Label>
+          <Input
+            value={data.variableName || ''}
+            onChange={(e) => onUpdate({ variableName: e.target.value })}
+            placeholder="match"
+            className={inputCls}
+          />
+          <p className="text-xs text-white/40">Stores the first match (or capture group 1 if present). Empty string if no match.</p>
+        </div>
+        <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3 text-xs text-white/60">
+          <p className="font-semibold text-purple-400 mb-1 flex items-center gap-1.5">
+            <Braces className="w-3.5 h-3.5" /> Examples
+          </p>
+          <ul className="space-y-1 mt-1">
+            <li><code className="px-1 py-0.5 rounded bg-white/5">{'\\d+'}</code> → first number</li>
+            <li><code className="px-1 py-0.5 rounded bg-white/5">{'(\\w+)@\\w+'}</code> → email username</li>
+            <li><code className="px-1 py-0.5 rounded bg-white/5">{'https?://([^/]+)'}</code> → domain from URL</li>
+          </ul>
+        </div>
+      </div>
+    )
+  }
+
+  // ── JSON Parse ─────────────────────────────────────────────────────
+  if (nodeType === 'json_parse') {
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">JSON input</Label>
+          <Textarea
+            value={data.jsonInput || ''}
+            onChange={(e) => onUpdate({ jsonInput: e.target.value })}
+            placeholder="{{apiResult}}"
+            rows={3}
+            className={cn(inputCls, 'resize-none font-mono text-xs')}
+          />
+          <VariableHelp />
+          <p className="text-xs text-white/40">A JSON string. Typically <code className="px-1 py-0.5 rounded bg-white/5">{'{{apiResult}}'}</code> from an API Call node.</p>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Path to extract (optional)</Label>
+          <Input
+            value={data.jsonPath || ''}
+            onChange={(e) => onUpdate({ jsonPath: e.target.value })}
+            placeholder="data.user.name"
+            className={cn(inputCls, 'font-mono text-xs')}
+          />
+          <p className="text-xs text-white/40">Dot-notation with array indices. Leave empty to return the whole JSON as a string.</p>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Output variable</Label>
+          <Input
+            value={data.variableName || ''}
+            onChange={(e) => onUpdate({ variableName: e.target.value })}
+            placeholder="jsonValue"
+            className={inputCls}
+          />
+        </div>
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3 text-xs text-white/60">
+          <p className="font-semibold text-emerald-400 mb-1 flex items-center gap-1.5">
+            <Braces className="w-3.5 h-3.5" /> Path examples
+          </p>
+          <ul className="space-y-1 mt-1">
+            <li><code className="px-1 py-0.5 rounded bg-white/5">data.user.name</code></li>
+            <li><code className="px-1 py-0.5 rounded bg-white/5">choices[0].message.content</code> (OpenAI format)</li>
+            <li><code className="px-1 py-0.5 rounded bg-white/5">results[0].geometry.location.lat</code></li>
+          </ul>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Comment (visual note) ──────────────────────────────────────────
+  if (nodeType === 'comment') {
+    const commentColors = [
+      { id: 'yellow', label: 'Yellow', color: '#FBBF24' },
+      { id: 'green', label: 'Green', color: '#34D399' },
+      { id: 'blue', label: 'Blue', color: '#60A5FA' },
+      { id: 'pink', label: 'Pink', color: '#F472B6' },
+      { id: 'gray', label: 'Gray', color: '#64748B' },
+    ] as const
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Note text</Label>
+          <Textarea
+            value={data.commentText || ''}
+            onChange={(e) => onUpdate({ commentText: e.target.value })}
+            placeholder="This section handles voice messages..."
+            rows={4}
+            className={cn(inputCls, 'resize-none')}
+          />
+          <p className="text-xs text-white/40">This node does nothing when the flow runs. It&apos;s just a visual note to document your bot.</p>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Color</Label>
+          <div className="flex gap-2">
+            {commentColors.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => onUpdate({ commentColor: c.id as any })}
+                className={cn(
+                  'w-8 h-8 rounded-lg border-2 transition-all',
+                  (data.commentColor || 'yellow') === c.id ? 'border-white scale-110' : 'border-transparent opacity-60 hover:opacity-100'
+                )}
+                style={{ background: c.color }}
+                title={c.label}
+              />
+            ))}
+          </div>
+        </div>
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-white/60">
+          <p className="font-semibold text-amber-400 mb-1 flex items-center gap-1.5">
+            <Terminal className="w-3.5 h-3.5" /> Comment node
+          </p>
+          <p>Use comments to:</p>
+          <ul className="list-disc list-inside mt-1 space-y-0.5">
+            <li>Document what each section of your bot does</li>
+            <li>Leave notes for collaborators</li>
+            <li>Mark TODOs or sections to revisit</li>
+          </ul>
         </div>
       </div>
     )

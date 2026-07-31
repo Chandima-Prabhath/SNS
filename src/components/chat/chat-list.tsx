@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAppStore } from '@/stores/useAppStore'
 import { useTypingStore } from '@/stores/useTypingStore'
@@ -21,7 +21,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
-import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn, UserX, Settings, Crown, Shield, Video, Phone, Menu, Pin, Trash2 } from 'lucide-react'
+import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn, UserX, Settings, Crown, Shield, Video, Phone, Menu, Pin, Trash2, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { format, isToday, isYesterday } from 'date-fns'
@@ -860,6 +860,11 @@ function NewDmButton() {
   const qc = useQueryClient()
   const setActiveChannel = useAppStore((s) => s.setActiveChannel)
   const setView = useAppStore((s) => s.setView)
+  // Per-target in-flight guard: prevents the same user from being clicked
+  // multiple times while the DM creation request is pending. Without this,
+  // rapid clicks (especially during slow dev-mode compilation) create
+  // duplicate DM channels.
+  const inFlightRef = useRef<Set<string>>(new Set())
 
   const { data: users } = useQuery({
     queryKey: ['users'],
@@ -872,19 +877,35 @@ function NewDmButton() {
 
   const startDm = useMutation({
     mutationFn: async (targetUserId: string) => {
-      const res = await fetch('/api/groups', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetUserId }),
-      })
-      if (!res.ok) throw new Error('failed')
-      return res.json()
+      // Per-target guard — if a request for this user is already in flight,
+      // bail out silently. This is a no-op, not an error.
+      if (inFlightRef.current.has(targetUserId)) {
+        return null
+      }
+      inFlightRef.current.add(targetUserId)
+      try {
+        const res = await fetch('/api/groups', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetUserId }),
+        })
+        if (!res.ok) throw new Error('failed')
+        return res.json()
+      } finally {
+        // Small delay so a double-click immediately after success is also
+        // absorbed (the dialog closes on success, but there's a render gap)
+        setTimeout(() => inFlightRef.current.delete(targetUserId), 1500)
+      }
     },
     onSuccess: (data) => {
+      if (!data) return // guard bail-out
       qc.invalidateQueries({ queryKey: ['channels'] })
       setActiveChannel(data.channel.id)
       setOpen(false)
       toast.success('DM started')
+    },
+    onError: () => {
+      toast.error('Failed to start DM')
     },
   })
 
@@ -907,22 +928,27 @@ function NewDmButton() {
                 No other users yet. Invite some friends!
               </div>
             )}
-            {users?.map((u) => (
-              <button
-                key={u.id}
-                onClick={() => startDm.mutate(u.id)}
-                className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-accent text-left"
-              >
-                <Avatar className="w-10 h-10">
-                  <AvatarImage src={u.avatarUrl || undefined} />
-                  <AvatarFallback>{u.displayName?.charAt(0) || '?'}</AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">{u.displayName}</div>
-                  <div className="text-xs text-muted-foreground truncate">@{u.username}</div>
-                </div>
-              </button>
-            ))}
+            {users?.map((u) => {
+              const pending = startDm.isPending && startDm.variables === u.id
+              return (
+                <button
+                  key={u.id}
+                  onClick={() => startDm.mutate(u.id)}
+                  disabled={startDm.isPending}
+                  className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-accent text-left disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  <Avatar className="w-10 h-10">
+                    <AvatarImage src={u.avatarUrl || undefined} />
+                    <AvatarFallback>{u.displayName?.charAt(0) || '?'}</AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{u.displayName}</div>
+                    <div className="text-xs text-muted-foreground truncate">@{u.username}</div>
+                  </div>
+                  {pending && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground shrink-0" />}
+                </button>
+              )
+            })}
           </div>
         </ScrollArea>
       </DialogContent>
