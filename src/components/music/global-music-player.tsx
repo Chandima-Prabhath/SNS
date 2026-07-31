@@ -946,18 +946,23 @@ function PlayerBar({
                 </div>
               </div>
 
-              {/* Right: Volume + expand/collapse */}
+              {/* Right: Volume (vertical popout) + expand/collapse */}
               <div className="flex items-center gap-2 justify-self-end">
-                <Volume2 className="w-4 h-4 text-muted-foreground shrink-0" />
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={volume}
-                  onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
-                  className="w-24 volume-slider"
-                />
+                <div className="volume-popout">
+                  <button className="text-muted-foreground hover:text-foreground transition-colors" aria-label="Volume">
+                    <Volume2 className="w-4 h-4" />
+                  </button>
+                  <div className="volume-track">
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={volume}
+                      onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
+                    />
+                  </div>
+                </div>
                 <div className="w-px h-6 bg-white/10 mx-1" />
                 <button onClick={() => { setExpanded(false); useAppStore.getState().setView('music'); window.location.hash = 'music-queue' }} className="text-muted-foreground hover:text-foreground transition-colors p-1" aria-label="Open full music page">
                   <ChevronUp className="w-4 h-4" />
