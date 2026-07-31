@@ -10,13 +10,27 @@
  *   - Auto-transcription when a voice message is uploaded to a channel
  *   - POST /api/asr (manual client-triggered transcription)
  *
- * Audio format: any format ffmpeg/librosa can read (WAV, MP3, OGG, WebM/Opus,
- * M4A, FLAC). The Python server resamples to 16kHz mono internally.
+ * Audio format handling:
+ *   Voice messages from MediaRecorder are WebM/Opus. The Python server uses
+ *   librosa + PySoundFile (libsndfile) to load audio — but libsndfile doesn't
+ *   support WebM/Opus, so it falls back to `audioread` (ffmpeg-based), which
+ *   is slower and produces garbage quality that Moonshine can't transcribe.
+ *
+ *   FIX: We convert any non-WAV file to 16kHz mono WAV on the Node.js side
+ *   using ffmpeg BEFORE sending it to the Python server. This guarantees
+ *   PySoundFile can load it natively — fast, reliable, no fallbacks.
+ *   Moonshine requires 16kHz (unlike TTS which uses 24kHz).
  */
 
 import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import path from 'path'
+import { tmpdir } from 'os'
+import crypto from 'crypto'
+
+const execFileAsync = promisify(execFile)
 
 export interface AsrResult {
   text: string
@@ -28,11 +42,68 @@ export interface AsrResult {
 }
 
 /**
+ * Convert an audio file to 16kHz mono WAV using ffmpeg.
+ *
+ * Moonshine ASR requires 16kHz mono audio. Voice messages from the browser
+ * are WebM/Opus (or sometimes MP4/AAC on Safari). libsndfile (PySoundFile)
+ * can't decode WebM/Opus, so the Python server's librosa falls back to
+ * `audioread` which produces garbage quality.
+ *
+ * This function converts ANY audio format to the exact format Moonshine
+ * wants: 16kHz, mono, 16-bit PCM WAV. If the file is already a WAV, we still
+ * re-encode to guarantee 16kHz mono (in case it's 48kHz stereo WAV).
+ *
+ * If ffmpeg is not available, returns null and the caller falls back to
+ * sending the original file (which will likely fail at the Python server).
+ *
+ * @returns Path to the temp WAV file, or null if conversion failed.
+ */
+async function convertToWav16kMono(filePath: string): Promise<string | null> {
+  // Generate a temp file path for the converted WAV
+  const tempWavPath = path.join(tmpdir(), `asr-${crypto.randomUUID()}.wav`)
+
+  try {
+    // -y         = overwrite output if exists
+    // -i         = input file
+    // -ar 16000  = 16kHz sample rate (Moonshine requirement)
+    // -ac 1      = mono
+    // -acodec pcm_s16le = 16-bit PCM
+    await execFileAsync('ffmpeg', [
+      '-y',
+      '-i', filePath,
+      '-ar', '16000',
+      '-ac', '1',
+      '-acodec', 'pcm_s16le',
+      tempWavPath,
+    ], { timeout: 30000 })
+
+    return tempWavPath
+  } catch (e: any) {
+    console.error('[asr] ffmpeg conversion failed:', e?.message || e)
+    // Clean up partial temp file if it exists
+    try {
+      const { unlink } = await import('fs/promises')
+      await unlink(tempWavPath).catch(() => {})
+    } catch {}
+    return null
+  }
+}
+
+/**
  * Transcribe an audio file given its absolute filesystem path.
  *
  * Returns the transcript text, or null if transcription failed (server down,
  * file missing, etc.). Callers should handle null gracefully — e.g. the bot
  * node falls back to "(transcription unavailable)".
+ *
+ * This function converts the audio to 16kHz mono WAV before sending it to
+ * the Python ASR server, because:
+ *   1. libsndfile (PySoundFile) can't decode WebM/Opus — the format browser
+ *      voice messages use
+ *   2. The audioread fallback produces garbage quality that Moonshine can't
+ *      transcribe (returns "..." instead of real text)
+ *   3. 16kHz mono is Moonshine's native format — no resampling needed on the
+ *      Python side, faster transcription
  *
  * @param filePath  Absolute path to the audio file on disk.
  * @param language  Optional language code (currently ignored — Moonshine v1 is English-only).
@@ -48,40 +119,34 @@ export async function transcribeAudioFile(
     return null
   }
 
-  // Read file into a Buffer and build a Blob for multipart upload.
-  // We don't stream because most voice messages are < 1MB.
-  let fileBuffer: Buffer
-  try {
-    fileBuffer = await readFile(filePath)
-  } catch (e: any) {
-    console.error('[asr] failed to read file:', e?.message || e)
-    return null
-  }
-
-  if (fileBuffer.length === 0) {
-    console.error('[asr] empty audio file:', filePath)
-    return null
-  }
-
-  // Determine a reasonable filename + MIME for the upload.
-  const ext = path.extname(filePath).toLowerCase() || '.wav'
-  const mimeMap: Record<string, string> = {
-    '.wav': 'audio/wav',
-    '.mp3': 'audio/mpeg',
-    '.ogg': 'audio/ogg',
-    '.webm': 'audio/webm',
-    '.m4a': 'audio/mp4',
-    '.flac': 'audio/flac',
-  }
-  const mimeType = mimeMap[ext] || 'application/octet-stream'
-
-  // Build multipart form — using FormData + Blob is the modern Node 18+ way.
-  const formData = new FormData()
-  const blob = new Blob([new Uint8Array(fileBuffer)], { type: mimeType })
-  formData.append('audio', blob, `audio${ext}`)
-  formData.append('language', language)
+  // ── Convert to 16kHz mono WAV before sending ──────────────────────────
+  // This is the critical fix — without it, WebM files produce garbage
+  // transcriptions because librosa's audioread fallback doesn't decode
+  // Opus correctly.
+  const wavPath = await convertToWav16kMono(filePath)
+  const sendPath = wavPath || filePath // fallback to original if ffmpeg fails
 
   try {
+    // Read the (converted) WAV file
+    let fileBuffer: Buffer
+    try {
+      fileBuffer = await readFile(sendPath)
+    } catch (e: any) {
+      console.error('[asr] failed to read file:', e?.message || e)
+      return null
+    }
+
+    if (fileBuffer.length === 0) {
+      console.error('[asr] empty audio file:', sendPath)
+      return null
+    }
+
+    // Build multipart form — always send as audio/wav since we converted it
+    const formData = new FormData()
+    const blob = new Blob([new Uint8Array(fileBuffer)], { type: 'audio/wav' })
+    formData.append('audio', blob, 'audio.wav')
+    formData.append('language', language)
+
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 60_000) // 60s hard cap
 
@@ -112,6 +177,14 @@ export async function transcribeAudioFile(
       console.error('[asr] fetch failed:', e?.message || e)
     }
     return null
+  } finally {
+    // Clean up the temp WAV file if we created one
+    if (wavPath && wavPath !== filePath) {
+      try {
+        const { unlink } = await import('fs/promises')
+        await unlink(wavPath).catch(() => {})
+      } catch {}
+    }
   }
 }
 
