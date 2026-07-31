@@ -710,8 +710,11 @@ function MessageItem(props: MessageItemProps) {
           </div>
         ) : (
           <>
-            {/* Don't show body text for invite messages (it's JSON) */}
-            {m.mediaType !== 'invite-call' && m.mediaType !== 'invite-music' && (
+            {/* Don't show body text for invite messages (it's JSON) or for
+                audio messages (the VoiceMessagePlayer already communicates
+                what it is via its label — showing "Voice message" text below
+                the player is redundant and looks unstyled). */}
+            {m.mediaType !== 'invite-call' && m.mediaType !== 'invite-music' && !m.mediaType?.startsWith('audio') && (
               <div className="whitespace-pre-wrap">{m.body}</div>
             )}
             {m.editedAt && (

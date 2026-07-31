@@ -60,6 +60,17 @@ export function VoiceMessagePlayer({
     setDuration(0)
   }, [src])
 
+  // Metadata-load timeout — if the browser doesn't fire 'loadedmetadata'
+  // within 3 seconds (e.g. slow network, unsupported format, server not
+  // supporting range requests), stop the spinner anyway so the user sees
+  // the play button instead of an infinite loading state.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsLoading(false)
+    }, 3000)
+    return () => clearTimeout(timer)
+  }, [src])
+
   // Set up audio element event listeners
   useEffect(() => {
     const audio = audioRef.current
@@ -207,21 +218,23 @@ export function VoiceMessagePlayer({
         className="hidden"
       />
 
-      {/* Play / Pause / Loading button */}
+      {/* Play / Pause / Loading button — always clickable. Even if metadata
+          hasn't loaded yet, clicking will attempt to play (the browser will
+          load the audio on demand). The spinner only shows for the first 3s. */}
       <button
         onClick={togglePlay}
-        disabled={isLoading && !duration}
+        disabled={false}
         className={cn(
           'shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all',
           'shadow-md hover:scale-105 active:scale-95',
           isMine
             ? 'bg-gradient-to-br from-primary to-primary/80 text-primary-foreground'
             : 'bg-gradient-to-br from-primary to-primary/80 text-primary-foreground',
-          isLoading && !duration && 'opacity-70'
+          isLoading && !duration && !isPlaying && 'opacity-70'
         )}
         aria-label={isPlaying ? 'Pause' : 'Play'}
       >
-        {isLoading && !duration ? (
+        {isLoading && !duration && !isPlaying ? (
           <Loader2 className="w-4 h-4 animate-spin" />
         ) : isPlaying ? (
           <Pause className="w-4 h-4 fill-current" />
