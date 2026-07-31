@@ -828,7 +828,7 @@ function PlayerBar({
           >
             <div
               className={cn(
-                "rounded-2xl shadow-2xl overflow-hidden adoo-playing-border",
+                "rounded-2xl shadow-2xl adoo-playing-border",
                 !isPlaying && "adoo-paused"
               )}
             >
@@ -947,9 +947,9 @@ function PlayerBar({
               </div>
 
               {/* Right: Volume (vertical popout) + expand/collapse */}
-              <div className="flex items-center gap-2 justify-self-end">
+              <div className="flex items-center gap-1 justify-self-end pr-1 relative z-50">
                 <div className="volume-popout">
-                  <button className="text-muted-foreground hover:text-foreground transition-colors" aria-label="Volume">
+                  <button className="text-muted-foreground hover:text-foreground transition-colors p-1" aria-label="Volume">
                     <Volume2 className="w-4 h-4" />
                   </button>
                   <div className="volume-track">
@@ -963,7 +963,6 @@ function PlayerBar({
                     />
                   </div>
                 </div>
-                <div className="w-px h-6 bg-white/10 mx-1" />
                 <button onClick={() => { setExpanded(false); useAppStore.getState().setView('music'); window.location.hash = 'music-queue' }} className="text-muted-foreground hover:text-foreground transition-colors p-1" aria-label="Open full music page">
                   <ChevronUp className="w-4 h-4" />
                 </button>
