@@ -230,6 +230,11 @@ model Message {
   mediaUrl    String?
   mediaType   String?  // image | video | audio | file
 
+  // ASR transcript for voice messages. Populated asynchronously by the
+  // /api/asr route when a voice message is uploaded. NULL for non-audio
+  // messages or while transcription is in progress.
+  transcript  String?
+
   // Telegram-style inline keyboard buttons — JSON string of BotKeyboardButton[][]
   // Each button: { text: string, callbackData: string }
   // Rendered as tappable buttons under the message. Clicking sends the

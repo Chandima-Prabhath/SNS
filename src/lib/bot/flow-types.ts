@@ -42,6 +42,7 @@ export type NodeType =
   | 'send_media'
   | 'log'
   | 'tts'
+  | 'asr_transcribe'
 
 export type NodeCategory = 'trigger' | 'output' | 'input' | 'logic' | 'advanced'
 
@@ -158,6 +159,18 @@ export interface FlowNodeData {
   ttsVoice?: string
   // (sends the audio as a voice message — no variable needed)
 
+  // ── asr_transcribe ──
+  /** URL of the audio file to transcribe. Supports {{var}} interpolation.
+   *  Typically set to {{mediaUrl}} which the bot framework populates with
+   *  the incoming message's mediaUrl when the user sends a voice message. */
+  asrAudioUrl?: string
+  /** Language hint (currently ignored — Moonshine v1 is English-only). */
+  asrLanguage?: string
+  /** Whether to also send the transcript as a reply message. If false,
+   *  the transcript is only stored in the variable. */
+  asrReply?: boolean
+  // (uses `variableName` to store the transcript text)
+
   // ── UI metadata (not used by engine) ──
   /** Node type — stored in data so the editor's CustomNode can read it.
    *  Duplicates FlowNode.type but is required because ReactFlow sets
@@ -216,6 +229,12 @@ export interface BotExecutionContext {
    *  back to sending text. */
   generateTTS?: (text: string, voice: string) => Promise<string | null>
 
+  /** Transcribe an audio file URL to text using Moonshine ASR. Returns the
+   *  transcript text or null if transcription failed (server down, no audio,
+   *  etc.). Server-only — debug mode should return null and let the engine
+   *  log a clear error. */
+  transcribeAudio?: (mediaUrl: string, language?: string) => Promise<string | null>
+
   /** Show typing indicator — best-effort, no-op if unsupported. */
   setTyping?: (seconds: number) => Promise<void>
 }
@@ -253,6 +272,7 @@ export type TraceEvent =
   | { type: 'branch_taken'; timestamp: number; nodeId: string; handle: string; targetNodeId: string }
   | { type: 'ai_call'; timestamp: number; nodeId: string; model: string; prompt: string; responseLength: number; durationMs: number }
   | { type: 'api_call'; timestamp: number; nodeId: string; url: string; method: string; status: number; durationMs: number }
+  | { type: 'asr_call'; timestamp: number; nodeId: string; audioUrl: string; transcriptLength: number; durationMs: number; success: boolean }
   | { type: 'paused'; timestamp: number; nodeId: string; variableName: string }
   | { type: 'resumed'; timestamp: number; nodeId: string; inputText: string }
   | { type: 'error'; timestamp: number; nodeId?: string; message: string }
@@ -289,6 +309,13 @@ function interpolate(text: string, ctx: BotExecutionContext): string {
   out = out.replace(/\{\{sender\}\}/g, ctx.senderName)
   out = out.replace(/\{\{args\}\}/g, ctx.args.join(' '))
   out = out.replace(/\{\{body\}\}/g, ctx.body)
+  // Convenience: expose the incoming message's media URL/type and any
+  // pre-existing ASR transcript as {{mediaUrl}}, {{mediaType}}, {{transcript}}.
+  // These are also available as ctx.variables (set by visual.ts at flow start)
+  // but the explicit fallbacks here make them work even in debug mode.
+  out = out.replace(/\{\{mediaUrl\}\}/g, ctx.variables.__mediaUrl || '')
+  out = out.replace(/\{\{mediaType\}\}/g, ctx.variables.__mediaType || '')
+  out = out.replace(/\{\{transcript\}\}/g, ctx.variables.__transcript || ctx.variables.transcript || '')
   return out
 }
 
@@ -690,6 +717,65 @@ export async function executeBotFlow(
         break
       }
 
+      // ── ADVANCED: asr_transcribe (Moonshine ASR voice-to-text) ───────
+      case 'asr_transcribe': {
+        const asrStart = now()
+        const asrNode = currentNode
+        const audioUrl = interpolate(asrNode.data.asrAudioUrl || '{{mediaUrl}}', ctx)
+        const language = asrNode.data.asrLanguage || 'en'
+        const shouldReply = asrNode.data.asrReply !== false // default true
+        const vname = asrNode.data.variableName || 'transcript'
+
+        if (!audioUrl || !audioUrl.trim()) {
+          trace.push({ type: 'error', timestamp: now(), nodeId: asrNode.id, message: 'ASR node has no audio URL (set asrAudioUrl or send a voice message)' })
+          currentNode = followEdge(asrNode.id, null)
+          break
+        }
+
+        trace.push({ type: 'log', timestamp: now(), nodeId: asrNode.id, level: 'info', message: `ASR: transcribing "${audioUrl.slice(0, 60)}…" (lang=${language})` })
+
+        let transcript: string | null = null
+        if (ctx.transcribeAudio) {
+          try {
+            transcript = await ctx.transcribeAudio(audioUrl, language)
+          } catch (e: any) {
+            trace.push({ type: 'error', timestamp: now(), nodeId: asrNode.id, message: `ASR failed: ${e?.message || e}` })
+          }
+        } else {
+          // Debug mode — no actual ASR available
+          trace.push({ type: 'error', timestamp: now(), nodeId: asrNode.id, message: 'ASR not available in debug mode' })
+        }
+
+        const transcriptText = transcript?.trim() || ''
+        const success = !!transcriptText
+
+        // Store in variable (even if empty — downstream condition nodes can check `exists`)
+        ctx.variables[vname] = transcriptText
+        trace.push({ type: 'variable_set', timestamp: now(), nodeId: asrNode.id, variable: vname, value: transcriptText.slice(0, 100) })
+        trace.push({
+          type: 'asr_call',
+          timestamp: now(),
+          nodeId: asrNode.id,
+          audioUrl: audioUrl.slice(0, 100),
+          transcriptLength: transcriptText.length,
+          durationMs: now() - asrStart,
+          success,
+        })
+
+        // Optionally send the transcript as a reply (default behavior)
+        if (shouldReply && transcriptText) {
+          await ctx.reply(`📝 ${transcriptText}`)
+          sentCount++
+          trace.push({ type: 'message_sent', timestamp: now(), nodeId: asrNode.id, text: `[transcript] ${transcriptText.slice(0, 80)}` })
+        } else if (shouldReply && !transcriptText) {
+          await ctx.reply('📝 (transcription unavailable — no speech detected or ASR server down)')
+          sentCount++
+        }
+
+        currentNode = followEdge(asrNode.id, null)
+        break
+      }
+
       // ── ADVANCED: api_call ────────────────────────────────────────────
       case 'api_call': {
         const callStart = now()
@@ -934,6 +1020,12 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
     icon: 'AudioLines', color: '#F472B6', bg: '#F472B61A',
     handles: 'single',
   },
+  asr_transcribe: {
+    type: 'asr_transcribe', label: 'Transcribe Audio', category: 'advanced',
+    description: 'Transcribes a voice message to text using Moonshine ASR',
+    icon: 'AudioLines', color: '#22D3EE', bg: '#22D3EE1A',
+    handles: 'single',
+  },
 }
 
 export const CATEGORY_ORDER: NodeCategory[] = ['trigger', 'output', 'input', 'logic', 'advanced']
@@ -996,6 +1088,14 @@ export function defaultNodeData(type: NodeType): FlowNodeData {
         label: 'Voice Message',
         ttsText: 'Hello {{sender}}! This is a voice message from the bot.',
         ttsVoice: 'alba',
+      }
+    case 'asr_transcribe':
+      return {
+        label: 'Transcribe Audio',
+        asrAudioUrl: '{{mediaUrl}}',
+        asrLanguage: 'en',
+        asrReply: true,
+        variableName: 'transcript',
       }
   }
 }

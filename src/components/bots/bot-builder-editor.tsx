@@ -141,6 +141,9 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
     case 'tts':
       preview = { label: 'Speaks', value: data.ttsText ? (data.ttsText.length > 40 ? data.ttsText.slice(0, 40) + '…' : data.ttsText) : '(no text)' }
       break
+    case 'asr_transcribe':
+      preview = { label: 'Transcribes', value: data.asrAudioUrl ? (data.asrAudioUrl.length > 40 ? data.asrAudioUrl.slice(0, 40) + '…' : data.asrAudioUrl) : '{{mediaUrl}}' }
+      break
   }
 
   return (
@@ -1893,6 +1896,102 @@ function NodeInspectorBody({
             <AudioLines className="w-3.5 h-3.5" /> Voice Message
           </p>
           <p>Generates audio using your local Pocket TTS server (TTS_URL) and sends it as a voice message. If TTS fails, falls back to sending the text as a plain message with a 🔊 prefix.</p>
+        </div>
+      </div>
+    )
+  }
+
+  // ── ASR (Transcribe Audio) ──────────────────────────────────────────
+  if (nodeType === 'asr_transcribe') {
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Audio URL to transcribe</Label>
+          <Input
+            value={data.asrAudioUrl || ''}
+            onChange={(e) => onUpdate({ asrAudioUrl: e.target.value })}
+            placeholder="{{mediaUrl}}"
+            className={inputCls}
+          />
+          <VariableHelp />
+          <p className="text-xs text-white/40">
+            Defaults to <code className="px-1 py-0.5 rounded bg-white/5 text-cyan-300">{'{{mediaUrl}}'}</code> which is automatically set to the incoming voice message&apos;s URL.
+            You can also use a static URL like <code className="px-1 py-0.5 rounded bg-white/5 text-cyan-300">/api/uploads/voice-xxx.webm</code>.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Output variable</Label>
+          <Input
+            value={data.variableName || ''}
+            onChange={(e) => onUpdate({ variableName: e.target.value })}
+            placeholder="transcript"
+            className={inputCls}
+          />
+          <p className="text-xs text-white/40">
+            The transcript text will be stored in this variable. Use <code className="px-1 py-0.5 rounded bg-white/5 text-cyan-300">{'{{transcript}}'}</code> in downstream nodes
+            (e.g. <code className="px-1 py-0.5 rounded bg-white/5 text-cyan-300">You said: {'{{transcript}}'}</code>).
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Language hint (optional)</Label>
+          <Input
+            value={data.asrLanguage || 'en'}
+            onChange={(e) => onUpdate({ asrLanguage: e.target.value })}
+            placeholder="en"
+            className={inputCls}
+          />
+          <p className="text-xs text-white/40">
+            Currently ignored — Moonshine v1 is English-only. Future versions will support multilingual transcription.
+          </p>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 py-1">
+          <div>
+            <Label className="text-white/80 text-xs font-medium">Reply with transcript</Label>
+            <p className="text-[11px] text-white/40 mt-0.5">If on, the bot sends the transcript as a reply message (📝 prefix).</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onUpdate({ asrReply: !data.asrReply })}
+            className={
+              'shrink-0 relative w-10 h-6 rounded-full transition-colors ' +
+              (data.asrReply !== false ? 'bg-cyan-500' : 'bg-white/10')
+            }
+            aria-pressed={data.asrReply !== false}
+          >
+            <span
+              className={
+                'absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ' +
+                (data.asrReply !== false ? 'translate-x-4' : 'translate-x-0')
+              }
+            />
+          </button>
+        </div>
+
+        <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-3 text-xs text-white/60">
+          <p className="font-semibold text-cyan-400 mb-1 flex items-center gap-1.5">
+            <AudioLines className="w-3.5 h-3.5" /> Moonshine ASR
+          </p>
+          <p>
+            Transcribes the audio file using your local Moonshine ASR server (ASR_URL).
+            Requires the Python sidecar running at <code className="px-1 py-0.5 rounded bg-white/5 text-cyan-300">localhost:8001</code> —
+            see <code className="px-1 py-0.5 rounded bg-white/5 text-cyan-300">python-services/asr/README.md</code> for setup.
+            If the ASR server is down, the variable is set to an empty string and (if Reply is on) a fallback message is sent.
+          </p>
+        </div>
+
+        <div className="bg-white/[0.03] border border-white/5 rounded-lg p-3 text-xs text-white/50">
+          <p className="font-semibold text-white/70 mb-1.5 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5" /> Example flow
+          </p>
+          <ol className="list-decimal list-inside space-y-0.5">
+            <li>Trigger: any message</li>
+            <li>Condition: <code className="px-1 py-0.5 rounded bg-white/5">{'{{mediaType}}'}</code> contains <code className="px-1 py-0.5 rounded bg-white/5">audio</code></li>
+            <li>This Transcribe Audio node</li>
+            <li>Message: &quot;You said: {'{{transcript}}'}&quot;</li>
+          </ol>
         </div>
       </div>
     )

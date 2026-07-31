@@ -24,6 +24,10 @@ export interface ChannelMessage {
   body: string
   mediaUrl: string | null
   mediaType: string | null
+  /** ASR transcript for voice messages. NULL while transcription is in
+   *  progress or for non-audio messages. Populated by the auto-transcription
+   *  background job or via the /api/asr proxy route. */
+  transcript?: string | null
   /** Telegram-style inline keyboard — JSON string of KeyboardButton[][].
    *  Parsed by the message renderer into tappable buttons. */
   keyboard: string | null
@@ -87,13 +91,24 @@ export function useChannel(channelId: string | null) {
         )
       })
     }
+    const onTranscribed = (payload: { messageId: string; channelId: string; transcript: string }) => {
+      if (payload.channelId !== channelId) return
+      qc.setQueryData(['messages', channelId], (old: ChannelMessage[] | undefined) => {
+        if (!old) return old
+        return old.map((m) =>
+          m.id === payload.messageId ? { ...m, transcript: payload.transcript } : m
+        )
+      })
+    }
     socket.on('channel:message', onMessage)
     socket.on('channel:message-edit', onEdit)
     socket.on('channel:message-delete', onDelete)
+    socket.on('channel:message-transcribed', onTranscribed)
     return () => {
       socket.off('channel:message', onMessage)
       socket.off('channel:message-edit', onEdit)
       socket.off('channel:message-delete', onDelete)
+      socket.off('channel:message-transcribed', onTranscribed)
     }
   }, [socket, channelId, qc])
 

@@ -1,0 +1,26 @@
+# Adoo ASR Server — Python dependencies
+# Install with: pip install -r requirements.txt
+#
+# These packages provide:
+#   - fastapi + uvicorn: HTTP server
+#   - python-multipart: for multipart/form-data file uploads
+#   - onnxruntime: ONNX model runtime (CPU)
+#   - soundfile + librosa: audio I/O and resampling
+#   - numpy: array math
+#   - fastrtc-moonshine-onnx: Moonshine ASR model wrapper
+#
+# Notes:
+#   - ffmpeg must also be installed system-wide for librosa to decode MP3/Opus/WebM:
+#       Ubuntu/Debian: sudo apt install ffmpeg
+#       macOS:         brew install ffmpeg
+#   - First run will download Moonshine weights from Hugging Face (~28MB for
+#     tiny+quantized, ~109MB for tiny+float, cached in ~/.cache/huggingface).
+
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+onnxruntime>=1.16.0
+soundfile>=0.12.1
+librosa>=0.10.0
+numpy>=1.24.0
+fastrtc-moonshine-onnx>=0.1.0

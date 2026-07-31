@@ -14,8 +14,8 @@
  *   requests (sending messages, etc.) will fail gracefully.
  */
 
-const CACHE_NAME = 'adoo-v11'
-const API_CACHE = 'adoo-api-v11'
+const CACHE_NAME = 'adoo-v12'
+const API_CACHE = 'adoo-api-v12'
 const APP_SHELL = ['/', '/manifest.json', '/icon.svg']
 
 self.addEventListener('install', (event) => {
@@ -135,7 +135,7 @@ self.addEventListener('fetch', (event) => {
   // The previous stale-while-revalidate approach served stale cache first
   // and updated in the background, causing delays where mutations weren't
   // visible until a manual refresh.
-  if (url.pathname.startsWith('/api/') && !url.pathname.includes('/api/tts') && !url.pathname.includes('/api/music/stream') && !url.pathname.includes('/api/upload') && !url.pathname.includes('/api/music/debug') && !url.pathname.includes('/api/version') && !url.pathname.includes('/api/music/search') && !url.pathname.includes('/api/music/related') && !url.pathname.includes('/api/music/predownload') && !url.pathname.includes('/api/uploads/')) {
+  if (url.pathname.startsWith('/api/') && !url.pathname.includes('/api/tts') && !url.pathname.includes('/api/music/stream') && !url.pathname.includes('/api/upload') && !url.pathname.includes('/api/music/debug') && !url.pathname.includes('/api/version') && !url.pathname.includes('/api/music/search') && !url.pathname.includes('/api/music/related') && !url.pathname.includes('/api/music/predownload') && !url.pathname.includes('/api/uploads/') && !url.pathname.includes('/api/asr')) {
     event.respondWith(
       caches.open(API_CACHE).then(async (cache) => {
         try {

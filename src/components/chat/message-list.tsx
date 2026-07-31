@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useMemo } from 'react'
 import { useChannel, type ChannelMessage, type KeyboardButton } from '@/hooks/useChannel'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot, UserX, Copy, Pin, AudioLines, ChevronDown, Phone, Video, Music as MusicIcon } from 'lucide-react'
+import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot, UserX, Copy, Pin, AudioLines, ChevronDown, Phone, Video, Music as MusicIcon, FileText, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { format, isToday, isYesterday } from 'date-fns'
 import { useAppStore } from '@/stores/useAppStore'
@@ -648,6 +648,7 @@ function MessageItem(props: MessageItemProps) {
               </div>
               <audio controls src={m.mediaUrl} className="flex-1 h-8 min-w-0" style={{ maxWidth: '100%' }} />
             </div>
+            <TranscriptButton message={m} isMine={isMine} />
           </div>
         )}
 
@@ -750,5 +751,110 @@ function MessageItem(props: MessageItemProps) {
         </div>
       )}
     </motion.div>
+  )
+}
+
+// ─── Transcript button for voice messages ───────────────────────────────────
+//
+// Shows a "Show transcript" toggle below voice messages. The transcript can
+// come from three sources (checked in order):
+//   1. m.transcript — populated by the server's auto-transcription background
+//      job (which fires when the voice message is uploaded)
+//   2. A manual /api/asr call — if auto-transcription hasn't completed yet
+//      (or the server was down when the message was sent), the user can
+//      click the button to force transcription on demand
+//   3. If both fail, we show "(transcription unavailable)"
+
+function TranscriptButton({ message, isMine }: { message: ChannelMessage; isMine: boolean }) {
+  const [expanded, setExpanded] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [manualTranscript, setManualTranscript] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  // If auto-transcription already produced a transcript, use it directly
+  const transcript = message.transcript || manualTranscript
+
+  const handleShow = async () => {
+    // If we already have it, just toggle
+    if (transcript) {
+      setExpanded((v) => !v)
+      return
+    }
+
+    // Otherwise, fetch it on demand via /api/asr
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/asr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mediaUrl: message.mediaUrl,
+          messageId: message.id,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || `HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      if (data.text) {
+        setManualTranscript(data.text)
+        setExpanded(true)
+      } else {
+        setError('No speech detected')
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Transcription failed — is the ASR server running?')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Don't render the button at all if there's no transcript and no mediaUrl
+  // to transcribe
+  if (!message.mediaUrl) return null
+
+  return (
+    <div className="mt-1">
+      <button
+        onClick={handleShow}
+        disabled={loading}
+        className={cn(
+          'flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors',
+          isMine
+            ? 'bg-black/10 hover:bg-black/20 text-foreground/70'
+            : 'bg-black/10 hover:bg-black/20 text-foreground/70',
+          loading && 'opacity-60 cursor-wait'
+        )}
+      >
+        {loading ? (
+          <Loader2 className="w-3 h-3 animate-spin" />
+        ) : (
+          <FileText className="w-3 h-3" />
+        )}
+        {transcript
+          ? (expanded ? 'Hide transcript' : 'Show transcript')
+          : (loading ? 'Transcribing…' : 'Transcribe')}
+      </button>
+
+      {error && (
+        <p className="mt-1 text-[11px] text-red-500/80 px-2">{error}</p>
+      )}
+
+      {expanded && transcript && (
+        <div className={cn(
+          'mt-1.5 px-2.5 py-2 rounded-lg text-xs leading-relaxed border-l-2',
+          isMine
+            ? 'bg-black/10 border-primary/50 text-foreground/80'
+            : 'bg-black/15 border-primary/50 text-foreground/80'
+        )}>
+          <p className="font-medium text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+            Transcript
+          </p>
+          <p>{transcript}</p>
+        </div>
+      )}
+    </div>
   )
 }

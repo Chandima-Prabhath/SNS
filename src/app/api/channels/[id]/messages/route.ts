@@ -154,6 +154,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           body: text,
           replyToId,
           isMention,
+          mediaUrl,
+          mediaType,
         })
       } catch (e) {
         console.error(`[bot dispatch] bot ${botId} failed:`, e)
@@ -161,6 +163,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   } catch (e) {
     console.error('[bot dispatch] error', e)
+  }
+
+  // ── Auto-transcribe voice messages ──────────────────────────────────────
+  // If this is an audio message, kick off transcription in the background.
+  // The result is written to the Message.transcript field and a socket event
+  // is emitted so all clients can show a "Show transcript" button.
+  if (mediaUrl && mediaType?.startsWith('audio')) {
+    // Don't await — fire and forget. The user shouldn't wait for transcription
+    // to finish before their message-send request returns.
+    transcribeVoiceMessage(message.id, mediaUrl, channelId).catch((e) => {
+      console.error('[asr] auto-transcribe failed:', e?.message || e)
+    })
   }
 
   // Fetch any bot reply messages that were created in response to the user's message
@@ -285,4 +299,56 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     data: { deletedAt: new Date(), body: '', mediaUrl: null },
   })
   return NextResponse.json({ message: updated })
+}
+
+// ─── Auto-transcription helper ──────────────────────────────────────────────
+/**
+ * Transcribe a voice message in the background, persist the transcript to the
+ * Message row, and emit a socket event so all clients in the channel can
+ * re-render the message with a "Show transcript" button.
+ *
+ * This function is intentionally NOT awaited by the message-create handler —
+ * transcription can take 1–10 seconds depending on audio length and CPU, and
+ * we don't want to block the message-send response.
+ *
+ * Failures are non-fatal: if the ASR server is down or transcription fails,
+ * the message simply has no transcript (the UI shows no "Show transcript" button).
+ */
+async function transcribeVoiceMessage(
+  messageId: string,
+  mediaUrl: string,
+  channelId: string,
+): Promise<void> {
+  const { transcribeMediaUrl } = await import('@/lib/asr')
+  const transcript = await transcribeMediaUrl(mediaUrl)
+
+  if (!transcript) {
+    console.log(`[asr] no transcript for message ${messageId} (server down or empty audio)`)
+    return
+  }
+
+  // Persist to the database
+  await db.message.update({
+    where: { id: messageId },
+    data: { transcript },
+  })
+
+  // Emit a socket event so all clients in the channel update the message
+  try {
+    const { getIO } = await import('@/lib/realtime-server')
+    const io = getIO()
+    if (io) {
+      io.to(`channel:${channelId}`).emit('channel:message-transcribed', {
+        messageId,
+        channelId,
+        transcript,
+      })
+      console.log(`[asr] emitted transcript for ${messageId} (${transcript.length} chars)`)
+    } else {
+      console.warn('[asr] socket.io not initialized — transcript saved but not broadcast')
+    }
+  } catch (e: any) {
+    console.error('[asr] failed to emit transcript:', e?.message || e)
+    // The transcript is still saved — clients will see it on next reload
+  }
 }

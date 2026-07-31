@@ -57,6 +57,12 @@ export interface BotContext {
     id: string
     body: string
     replyToId?: string | null
+    /** Media URL of the incoming message, if any (voice messages, images, etc.) */
+    mediaUrl?: string | null
+    /** Media MIME type of the incoming message, if any */
+    mediaType?: string | null
+    /** ASR transcript of the incoming voice message, if auto-transcribed */
+    transcript?: string | null
   }
   args: string[]
   command?: string
@@ -76,6 +82,11 @@ export interface BotContext {
   /** Generate TTS audio from text using Pocket TTS. Returns the media URL
    *  or null if generation failed. Server-only. */
   generateTTS?: (text: string, voice: string) => Promise<string | null>
+
+  /** Transcribe an audio file URL to text using Moonshine ASR. Returns the
+   *  transcript text or null if transcription failed. Server-only. */
+  transcribeAudio?: (mediaUrl: string, language?: string) => Promise<string | null>
+
   setState: (state: any) => Promise<void>
   getState: () => Promise<any>
 }
@@ -146,6 +157,12 @@ export async function dispatchBotUpdate(params: {
   body: string
   replyToId?: string | null
   isMention?: boolean
+  /** Media URL of the incoming message (voice messages, images, etc.) */
+  mediaUrl?: string | null
+  /** Media type of the incoming message (audio/webm, image/png, etc.) */
+  mediaType?: string | null
+  /** ASR transcript of the incoming voice message, if auto-transcription is enabled */
+  transcript?: string | null
 }): Promise<void> {
   const bot = await db.bot.findUnique({ where: { id: params.botId } })
   if (!bot || !bot.enabled) return
@@ -258,6 +275,18 @@ export async function dispatchBotUpdate(params: {
     }
   }
 
+  // Helper: transcribe audio via Moonshine ASR Python sidecar.
+  // Returns the transcript text or null on failure. Server-only.
+  const transcribeAudio = async (mediaUrl: string, language?: string): Promise<string | null> => {
+    try {
+      const { transcribeMediaUrl } = await import('@/lib/asr')
+      return await transcribeMediaUrl(mediaUrl, language || 'en')
+    } catch (e: any) {
+      console.error('[bot:asr] failed:', e?.message || e)
+      return null
+    }
+  }
+
   // Helper: state management
   const stateKey = { botId: bot.id, userId: params.senderId }
   const getState = async () => {
@@ -304,6 +333,9 @@ export async function dispatchBotUpdate(params: {
       id: params.messageId,
       body: params.body,
       replyToId: params.replyToId,
+      mediaUrl: params.mediaUrl,
+      mediaType: params.mediaType,
+      transcript: params.transcript,
     },
     args,
     command,
@@ -312,6 +344,7 @@ export async function dispatchBotUpdate(params: {
     replyWithMedia,
     editMessage,
     generateTTS,
+    transcribeAudio,
     getState,
     setState,
   }
@@ -467,6 +500,18 @@ export async function dispatchBotCallback(params: {
     }
   }
 
+  // Helper: transcribe audio via Moonshine ASR (duplicate of dispatchBotUpdate
+  // version — kept inline because framework.ts doesn't extract helpers yet)
+  const transcribeAudio = async (mediaUrl: string, language?: string): Promise<string | null> => {
+    try {
+      const { transcribeMediaUrl } = await import('@/lib/asr')
+      return await transcribeMediaUrl(mediaUrl, language || 'en')
+    } catch (e: any) {
+      console.error('[bot:asr callback] failed:', e?.message || e)
+      return null
+    }
+  }
+
   const stateKey = { botId: bot.id, userId: params.senderId }
   const getState = async () => {
     const session = await db.conversationSession.findUnique({ where: { botId_userId: stateKey } })
@@ -508,6 +553,7 @@ export async function dispatchBotCallback(params: {
     replyWithMedia,
     editMessage,
     generateTTS,
+    transcribeAudio,
     getState,
     setState,
   }

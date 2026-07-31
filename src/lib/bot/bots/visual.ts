@@ -113,6 +113,7 @@ export const visualBot: BotModule = {
 
         // Valid choice — assign and resume from the next node
         state.variables[variableName] = matched
+        seedMediaVars(state.variables, ctx)
         const resume: ResumeDescriptor = {
           nodeId: inputNode.id,
           inputText: matched,
@@ -132,6 +133,7 @@ export const visualBot: BotModule = {
           replyWithMedia: ctx.replyWithMedia,
           editMessage: ctx.editMessage,
           generateTTS: ctx.generateTTS,
+          transcribeAudio: ctx.transcribeAudio,
         }, resume)
 
         await persistSession(ctx, result)
@@ -140,6 +142,7 @@ export const visualBot: BotModule = {
 
       // INPUT: treat the message as the reply and resume
       state.variables[variableName] = ctx.message.body
+      seedMediaVars(state.variables, ctx)
       const resume: ResumeDescriptor = {
         nodeId: inputNode.id,
         inputText: ctx.message.body,
@@ -159,6 +162,7 @@ export const visualBot: BotModule = {
         replyWithMedia: ctx.replyWithMedia,
         editMessage: ctx.editMessage,
         generateTTS: ctx.generateTTS,
+        transcribeAudio: ctx.transcribeAudio,
       }, resume)
 
       await persistSession(ctx, result)
@@ -174,6 +178,7 @@ export const visualBot: BotModule = {
 async function runFromTrigger(flow: BotFlow, ctx: BotContext) {
   const state: VisualSessionState = { ...EMPTY_STATE, ...(await ctx.getState()) }
   if (!state.variables) state.variables = {}
+  seedMediaVars(state.variables, ctx)
 
   const result = await executeBotFlow(flow, {
     channelId: ctx.channelId,
@@ -189,9 +194,23 @@ async function runFromTrigger(flow: BotFlow, ctx: BotContext) {
     replyWithMedia: ctx.replyWithMedia,
     editMessage: ctx.editMessage,
     generateTTS: ctx.generateTTS,
+    transcribeAudio: ctx.transcribeAudio,
   })
 
   await persistSession(ctx, result)
+}
+
+/**
+ * Seed incoming-message media context into ctx.variables so bot flows can
+ * interpolate {{mediaUrl}}, {{mediaType}}, {{transcript}} in node text.
+ *
+ * Uses double-underscore prefix to avoid colliding with user-defined variables
+ * — these are auto-set per-message and shouldn't be writable by the user.
+ */
+function seedMediaVars(variables: Record<string, string>, ctx: BotContext) {
+  variables.__mediaUrl = ctx.message.mediaUrl || ''
+  variables.__mediaType = ctx.message.mediaType || ''
+  variables.__transcript = ctx.message.transcript || ''
 }
 
 async function persistSession(ctx: BotContext, result: {
