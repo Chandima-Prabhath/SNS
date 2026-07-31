@@ -5,7 +5,7 @@ import { useUnreadCounts } from '@/hooks/useUnreadCounts'
 import { useCall } from '@/hooks/useCall'
 import { useSession } from 'next-auth/react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { MessageCircle, Circle, Phone, Settings, Music, Clapperboard } from 'lucide-react'
+import { MessageCircle, Circle, Phone, Settings, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface NavItem {
@@ -14,18 +14,27 @@ interface NavItem {
   icon: typeof MessageCircle
 }
 
+// 5 nav items (down from 6) — Music & Cinema merged into Entertainment.
+// The Entertainment item opens a drawer rather than switching the view directly.
 const NAV_ITEMS: NavItem[] = [
   { key: 'chats', label: 'Chats', icon: MessageCircle },
-  { key: 'music', label: 'Music', icon: Music },
-  { key: 'cinema', label: 'Cinema', icon: Clapperboard },
+  { key: 'entertainment', label: 'Fun', icon: Sparkles },
   { key: 'status', label: 'Status', icon: Circle },
   { key: 'voice', label: 'Calls', icon: Phone },
   { key: 'settings', label: 'Settings', icon: Settings },
 ]
 
+// Returns true if the Entertainment nav item should be highlighted as active.
+// It's "active" when the user is currently inside Music or Cinema (which are
+// the two sub-views reachable through the Entertainment drawer).
+function isEntertainmentActive(view: ViewKey): boolean {
+  return view === 'music' || view === 'cinema' || view === 'entertainment'
+}
+
 export function BottomNav() {
   const view = useAppStore((s) => s.view)
   const setView = useAppStore((s) => s.setView)
+  const setEntertainmentDrawerOpen = useAppStore((s) => s.setEntertainmentDrawerOpen)
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
   const setSidebarOpen = useAppStore((s) => s.setSidebarOpen)
   const activeChannelId = useAppStore((s) => s.activeChannelId)
@@ -37,6 +46,17 @@ export function BottomNav() {
   // composer and the active chat get the full screen.
   const hidden = view === 'chats' && !!activeChannelId
 
+  const handleNavClick = (item: NavItem) => {
+    if (item.key === 'entertainment') {
+      // Open the drawer instead of switching the view directly
+      setEntertainmentDrawerOpen(true)
+      setSidebarOpen(false)
+    } else {
+      setView(item.key)
+      setSidebarOpen(false)
+    }
+  }
+
   return (
     <>
       {sidebarOpen && (
@@ -47,13 +67,13 @@ export function BottomNav() {
           <div className="grid grid-cols-5 max-w-md mx-auto relative px-2">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon
-              const active = view === item.key
+              const active = item.key === 'entertainment' ? isEntertainmentActive(view) : view === item.key
               const showBadge = item.key === 'chats' && totalUnread > 0
               const showCallIndicator = item.key === 'voice' && callStatus !== 'idle'
               return (
                 <button
                   key={item.key}
-                  onClick={() => { setView(item.key); setSidebarOpen(false) }}
+                  onClick={() => handleNavClick(item)}
                   className={cn(
                     'relative flex flex-col items-center justify-center gap-1 py-3 transition-all duration-300',
                     active ? 'text-primary scale-[1.05]' : 'text-muted-foreground hover:text-foreground active:scale-95'
@@ -90,10 +110,19 @@ export function BottomNav() {
 export function DesktopSidebar() {
   const view = useAppStore((s) => s.view)
   const setView = useAppStore((s) => s.setView)
+  const setEntertainmentDrawerOpen = useAppStore((s) => s.setEntertainmentDrawerOpen)
   const { data: session } = useSession()
   const { data: unreadData } = useUnreadCounts()
   const { status: callStatus } = useCall()
   const totalUnread = unreadData?.total || 0
+
+  const handleNavClick = (item: NavItem) => {
+    if (item.key === 'entertainment') {
+      setEntertainmentDrawerOpen(true)
+    } else {
+      setView(item.key)
+    }
+  }
 
   return (
     <aside className="hidden lg:flex w-64 shrink-0 flex-col bg-sidebar border-r border-sidebar-border/50 relative">
@@ -118,13 +147,13 @@ export function DesktopSidebar() {
       <nav className="relative flex-1 flex flex-col gap-1 px-3">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon
-          const active = view === item.key
+          const active = item.key === 'entertainment' ? isEntertainmentActive(view) : view === item.key
           const showBadge = item.key === 'chats' && totalUnread > 0
           const showCallIndicator = item.key === 'voice' && callStatus !== 'idle'
           return (
             <button
               key={item.key}
-              onClick={() => setView(item.key)}
+              onClick={() => handleNavClick(item)}
               className={cn(
                 'relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all press-scale',
                 active

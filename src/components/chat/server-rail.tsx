@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
-  Plus, MessageCircle, Compass, Phone, Settings, Circle, Music, Clapperboard,
+  Plus, MessageCircle, Compass, Phone, Settings, Circle, Sparkles,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -24,15 +24,22 @@ interface NavItem {
   key: ViewKey
   label: string
   icon: typeof MessageCircle
+  /** If true, clicking opens the Entertainment drawer instead of switching the view */
+  opensDrawer?: boolean
 }
 
+// Music + Cinema are merged into the Entertainment item, which opens a drawer
 const NAV_ITEMS: NavItem[] = [
-  { key: 'music', label: 'Music', icon: Music },
-  { key: 'cinema', label: 'Cinema', icon: Clapperboard },
+  { key: 'entertainment', label: 'Entertainment', icon: Sparkles, opensDrawer: true },
   { key: 'status', label: 'Status', icon: Circle },
   { key: 'voice', label: 'Calls', icon: Phone },
   { key: 'settings', label: 'Settings', icon: Settings },
 ]
+
+/** Returns true if the Entertainment rail button should be highlighted */
+function isEntertainmentActive(view: ViewKey): boolean {
+  return view === 'music' || view === 'cinema' || view === 'entertainment'
+}
 
 /**
  * Discord-style server rail — the single primary navigation sidebar.
@@ -62,6 +69,7 @@ export function ServerRail() {
 function DesktopServerRail() {
   const view = useAppStore((s) => s.view)
   const setView = useAppStore((s) => s.setView)
+  const setEntertainmentDrawerOpen = useAppStore((s) => s.setEntertainmentDrawerOpen)
   const selectedGroupId = useAppStore((s) => s.selectedGroupId)
   const setSelectedGroupId = useAppStore((s) => s.setSelectedGroupId)
   const { data: unreadData } = useUnreadCounts()
@@ -132,18 +140,18 @@ function DesktopServerRail() {
       {/* Spacer pushes bottom nav down */}
       <div className="flex-1" />
 
-      {/* Bottom nav: Status, Calls, Settings */}
+      {/* Bottom nav: Entertainment, Status, Calls, Settings */}
       <div className="relative flex flex-col items-center gap-1.5">
         <div className="w-8 h-px bg-sidebar-border/60 mb-0.5" />
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon
-          const active = view === item.key
+          const active = item.opensDrawer ? isEntertainmentActive(view) : view === item.key
           const showCallIndicator = item.key === 'voice' && callStatus !== 'idle'
           return (
             <RailButton
               key={item.key}
               active={active}
-              onClick={() => setView(item.key)}
+              onClick={() => item.opensDrawer ? setEntertainmentDrawerOpen(true) : setView(item.key)}
               label={item.label}
             >
               <Icon className="w-5 h-5" strokeWidth={active ? 2.4 : 2} fill={active && item.key === 'status' ? 'currentColor' : 'none'} />

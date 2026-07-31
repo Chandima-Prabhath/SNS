@@ -11,6 +11,7 @@ import { SettingsView } from '@/components/settings/settings-view'
 import { MusicView } from '@/components/music/music-view'
 import { CinemaView } from '@/components/cinema/cinema-view'
 import { GlobalMusicPlayer } from '@/components/music/global-music-player'
+import { EntertainmentDrawer } from '@/components/layout/entertainment-drawer'
 import { IncomingCallOverlay } from '@/components/voice/incoming-call-overlay'
 import { CallController } from '@/components/voice/call-controller'
 import { FirefoxBanner } from '@/components/voice/firefox-banner'
@@ -86,6 +87,7 @@ export function AppShell() {
             </div>
           </div>
           <BottomNav />
+          <EntertainmentDrawer />
           <IncomingCallOverlay />
           <Toaster />
         </div>

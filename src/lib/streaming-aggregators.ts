@@ -74,19 +74,21 @@ export function getAggregatorsForType(type: 'movie' | 'tv'): Aggregator[] {
 }
 
 /**
- * Recommended iframe attributes for embedding streaming aggregators.
+ * Iframe configuration for embedding streaming aggregators.
  *
- * Most aggregators need:
- *   - allow-scripts        — to run their player JS
- *   - allow-same-origin    — to access their own cookies / localStorage
- *   - allow-presentation   — for fullscreen API
- *   - allow-forms          — some have search/login forms inside
- *   - allow-popups         — some open ads in new tabs (annoying but needed for them to function)
+ * IMPORTANT (2026-07): We DO NOT use the `sandbox` attribute. Both VidLink
+ * and 2Embed explicitly refuse to load when sandboxed (they show a
+ * "Please Disable Sandbox" error). VidSrc and 2Embed also rely on
+ * top-level navigation, popups, and full DOM access to function.
  *
- * We also force `allow-popups-to-escape-sandbox` so any popups the aggregator
- * spawns are not constrained by our sandbox.
+ * Security trade-off: aggregators run with full iframe privileges. This is
+ * acceptable for a small friends-group app where the user explicitly chooses
+ * to embed these third-party players. Mitigations in place:
+ *   - `referrerPolicy="no-referrer"` — aggregator can't see our host
+ *   - Aggregators are loaded only after explicit user click on Play
+ *   - CSP rules in next.config.ts restrict what scripts can run on our origin
  *
- * Note: referrerPolicy="no-referrer" prevents the aggregator from seeing our
- * host (some aggregators block known ad-blocker referrers).
+ * If you re-add `sandbox` to "be safe", the players WILL break again.
  */
-export const IFRAME_SANDBOX = 'allow-scripts allow-same-origin allow-presentation allow-forms allow-popups allow-popups-to-escape-sandbox'
+export const IFRAME_SANDBOX = undefined
+export const IFRAME_ALLOW = 'autoplay; fullscreen; picture-in-picture; encrypted-media; accelerometer; gyroscope'

@@ -8,6 +8,11 @@ interface AppState {
   view: ViewKey
   setView: (v: ViewKey) => void
 
+  // Entertainment drawer (mobile bottom-sheet / desktop popover that holds
+  // Music + Cinema shortcuts). Opened by tapping the Entertainment nav item.
+  entertainmentDrawerOpen: boolean
+  setEntertainmentDrawerOpen: (open: boolean) => void
+
   activeChannelId: string | null
   setActiveChannel: (id: string | null) => void
 
@@ -37,6 +42,9 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   view: 'chats',
   setView: (view) => set({ view }),
+
+  entertainmentDrawerOpen: false,
+  setEntertainmentDrawerOpen: (entertainmentDrawerOpen) => set({ entertainmentDrawerOpen }),
 
   activeChannelId: null,
   setActiveChannel: (id) => set({ activeChannelId: id, chatInfoOpen: false }),

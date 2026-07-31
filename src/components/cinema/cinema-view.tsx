@@ -13,7 +13,7 @@ import {
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { tmdbImage, tmdbBackdrop } from '@/lib/tmdb'
-import { getAggregatorsForType, type Aggregator, IFRAME_SANDBOX } from '@/lib/streaming-aggregators'
+import { getAggregatorsForType, type Aggregator, IFRAME_SANDBOX, IFRAME_ALLOW } from '@/lib/streaming-aggregators'
 import {
   GradientText, GlassSurface, ShinyText, SpotlightCard, BorderGlow,
   TiltedCard, Meteors, AnimatedGradientText, Counter, ShimmerLine, PulseBeam, StarBorder,
@@ -228,7 +228,7 @@ export function CinemaView() {
         </div>
 
         {/* ─── Browse Tabs ───────────────────────────────────────────────── */}
-        <div className="flex gap-1.5 p-1.5 glass-dark rounded-2xl w-fit mb-8">
+        <div className="flex gap-1 p-1 glass-dark rounded-2xl w-full sm:w-fit mb-6 sm:mb-8 overflow-x-auto cinema-row-scroll">
           {([
             ['trending', 'Trending', TrendingUp, Flame],
             ['movies', 'Movies', Film, Film],
@@ -239,14 +239,14 @@ export function CinemaView() {
               key={key}
               onClick={() => setBrowseTab(key)}
               className={cn(
-                'relative flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-300',
+                'relative flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-300 shrink-0 flex-1 sm:flex-initial',
                 browseTab === key
                   ? 'bg-gradient-to-br from-primary to-primary/80 text-primary-foreground shadow-glow'
                   : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
               )}
             >
-              {browseTab === key ? <ActiveIcon className="w-4 h-4" /> : <Icon className="w-4 h-4" />}
-              {label}
+              {browseTab === key ? <ActiveIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Icon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
+              <span className="truncate">{label}</span>
             </button>
           ))}
         </div>
@@ -326,12 +326,46 @@ export function CinemaView() {
 function HeroCarousel({ items, onSelect }: { items: MediaItem[]; onSelect: (item: MediaItem) => void }) {
   const [index, setIndex] = useState(0)
   const [paused, setPaused] = useState(false)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const SLIDE_DURATION = 6000 // 6 seconds per slide
 
+  // Clamp index if items shrink (e.g. after a refetch returns fewer results)
   useEffect(() => {
-    if (paused || items.length <= 1) return
-    const timer = setInterval(() => setIndex((i) => (i + 1) % items.length), 8000)
-    return () => clearInterval(timer)
+    if (index > items.length - 1) setIndex(0)
+  }, [items.length, index])
+
+  // Auto-advance — StrictMode-safe via ref + cleanup
+  useEffect(() => {
+    if (paused || items.length <= 1) {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+      return
+    }
+    intervalRef.current = setInterval(() => {
+      setIndex((i) => (i + 1) % items.length)
+    }, SLIDE_DURATION)
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+    }
   }, [paused, items.length])
+
+  const goTo = (i: number) => {
+    setIndex(((i % items.length) + items.length) % items.length)
+  }
+
+  // No items yet — show a shimmer placeholder
+  if (!items.length) {
+    return (
+      <div className="relative h-[55vh] min-h-[360px] w-full overflow-hidden">
+        <ShimmerLine className="absolute inset-0 !rounded-none" />
+      </div>
+    )
+  }
 
   const current = items[index]
   const backdrop = tmdbBackdrop(current?.backdrop_path, 'w1280') || tmdbImage(current?.poster_path, 'w780')
@@ -339,9 +373,15 @@ function HeroCarousel({ items, onSelect }: { items: MediaItem[]; onSelect: (item
 
   return (
     <div
-      className="relative h-[68vh] min-h-[420px] w-full overflow-hidden"
+      className="relative h-[60vh] min-h-[380px] sm:h-[65vh] sm:min-h-[420px] md:h-[70vh] w-full overflow-hidden"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
+      // Touch handlers — pause on touch, resume after 3s of no touch
+      onTouchStart={() => setPaused(true)}
+      onTouchEnd={() => {
+        // Resume after a brief delay so taps don't immediately restart the timer
+        setTimeout(() => setPaused(false), 3000)
+      }}
     >
       <AnimatePresence mode="wait">
         <motion.div
@@ -349,7 +389,7 @@ function HeroCarousel({ items, onSelect }: { items: MediaItem[]; onSelect: (item
           initial={{ opacity: 0, scale: 1.05 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 1.2, ease: 'easeInOut' }}
+          transition={{ duration: 1, ease: 'easeInOut' }}
           className="absolute inset-0"
         >
           <img
@@ -376,28 +416,28 @@ function HeroCarousel({ items, onSelect }: { items: MediaItem[]; onSelect: (item
       <Meteors count={8} className="opacity-40" />
 
       {/* Content */}
-      <div className="absolute bottom-0 left-0 right-0 p-6 md:p-10 lg:p-14">
+      <div className="absolute bottom-0 left-0 right-0 p-5 sm:p-8 md:p-10 lg:p-14">
         <div className="max-w-6xl mx-auto">
           <motion.div
-            key={current.id}
-            initial={{ opacity: 0, y: 30 }}
+            key={`content-${current.id}`}
+            initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, delay: 0.2 }}
+            transition={{ duration: 0.6, delay: 0.15 }}
           >
             {/* PulseBeam LIVE indicator */}
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center gap-2 mb-3">
               <PulseBeam color="oklch(0.66 0.22 25)" />
               <span className="text-[10px] font-bold uppercase tracking-[0.25em] text-orange-400">
                 Now Trending
               </span>
-              <span className="text-muted-foreground/50">•</span>
-              <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              <span className="text-muted-foreground/50 hidden sm:inline">•</span>
+              <span className="hidden sm:inline text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                 {current.media_type === 'tv' ? 'TV Series' : 'Film'}
               </span>
             </div>
 
-            {/* Title with animated gradient */}
-            <h1 className="text-4xl md:text-6xl lg:text-7xl font-black tracking-tight mb-4 line-clamp-2 max-w-3xl">
+            {/* Title with animated gradient — responsive sizes */}
+            <h1 className="text-3xl sm:text-4xl md:text-6xl lg:text-7xl font-black tracking-tight mb-3 sm:mb-4 line-clamp-2 max-w-3xl">
               <AnimatedGradientText
                 className="drop-shadow-2xl"
                 colors={['#ffffff', '#c7d2fe', '#f5d0fe', '#fed7aa', '#ffffff']}
@@ -408,7 +448,7 @@ function HeroCarousel({ items, onSelect }: { items: MediaItem[]; onSelect: (item
             </h1>
 
             {/* Meta row */}
-            <div className="flex items-center gap-3 mb-4 text-sm">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-3 sm:mb-4 text-xs sm:text-sm">
               {current.vote_average > 0 && (
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg glass-dark">
                   <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
@@ -421,53 +461,67 @@ function HeroCarousel({ items, onSelect }: { items: MediaItem[]; onSelect: (item
                   {(current.release_date || current.first_air_date)!.slice(0, 4)}
                 </div>
               )}
-              <div className="flex items-center gap-1.5 text-muted-foreground">
+              <div className="hidden sm:flex items-center gap-1.5 text-muted-foreground">
                 <Info className="w-3.5 h-3.5" />
                 <span className="capitalize">{current.media_type === 'tv' ? 'Series' : 'Movie'}</span>
               </div>
             </div>
 
-            <p className="text-base text-foreground/70 line-clamp-2 mb-6 max-w-2xl leading-relaxed">
+            <p className="text-sm sm:text-base text-foreground/70 line-clamp-2 sm:line-clamp-3 mb-4 sm:mb-6 max-w-xl sm:max-w-2xl leading-relaxed">
               {current.overview}
             </p>
 
             {/* Action buttons */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
               <StarBorder color="oklch(0.68 0.24 264)" className="rounded-xl">
                 <button
                   onClick={() => onSelect(current)}
-                  className="flex items-center gap-2 px-7 py-3 rounded-xl bg-gradient-to-r from-primary to-primary/80 text-primary-foreground font-bold text-sm hover:from-primary/90 hover:to-primary/70 transition-colors"
+                  className="flex items-center gap-2 px-5 sm:px-7 py-2.5 sm:py-3 rounded-xl bg-gradient-to-r from-primary to-primary/80 text-primary-foreground font-bold text-xs sm:text-sm hover:from-primary/90 hover:to-primary/70 transition-colors"
                 >
-                  <Play className="w-5 h-5 fill-current" />
-                  Watch Now
+                  <Play className="w-4 h-4 sm:w-5 sm:h-5 fill-current" />
+                  <span className="hidden sm:inline">Watch Now</span>
+                  <span className="sm:hidden">Play</span>
                 </button>
               </StarBorder>
               <button
                 onClick={() => onSelect(current)}
-                className="flex items-center gap-2 px-5 py-3 rounded-xl glass-dark text-sm font-semibold hover:scale-105 transition-transform"
+                className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl glass-dark text-xs sm:text-sm font-semibold hover:scale-105 transition-transform"
               >
                 <Info className="w-4 h-4" />
-                Details
+                <span className="hidden sm:inline">Details</span>
               </button>
             </div>
           </motion.div>
         </div>
       </div>
 
-      {/* Carousel indicators */}
-      <div className="absolute bottom-4 right-6 md:right-10 flex gap-1.5 z-20">
+      {/* Carousel indicators with progress bar */}
+      <div className="absolute bottom-3 sm:bottom-4 right-4 sm:right-6 md:right-10 flex gap-1.5 z-20">
         {items.map((_, i) => (
           <button
             key={i}
-            onClick={() => setIndex(i)}
+            onClick={() => goTo(i)}
             className={cn(
               'h-1.5 rounded-full transition-all duration-500',
-              i === index ? 'w-8 bg-primary shadow-glow' : 'w-1.5 bg-white/30 hover:bg-white/50'
+              i === index ? 'w-6 sm:w-8 bg-primary shadow-glow' : 'w-1.5 bg-white/30 hover:bg-white/50'
             )}
             aria-label={`Slide ${i + 1}`}
           />
         ))}
       </div>
+
+      {/* Progress bar at the very bottom — visual cue that the slide is auto-advancing */}
+      {!paused && items.length > 1 && (
+        <div className="absolute bottom-0 inset-x-0 h-0.5 bg-white/5 z-20 overflow-hidden">
+          <motion.div
+            key={`progress-${index}`}
+            initial={{ width: '0%' }}
+            animate={{ width: '100%' }}
+            transition={{ duration: SLIDE_DURATION / 1000, ease: 'linear' }}
+            className="h-full bg-primary/60"
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -490,16 +544,16 @@ function StatCard({
       className="rounded-2xl border-white/10 bg-card/40"
       spotlightColor={`${color.replace('oklch(', 'oklch(').replace(')', ' / 0.2)')}`}
     >
-      <div className="p-4 flex items-center gap-3">
+      <div className="p-3 sm:p-4 flex items-center gap-2 sm:gap-3">
         <div
-          className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+          className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0"
           style={{ background: `${color.replace(')', ' / 0.15)')}`, boxShadow: `0 0 16px ${color.replace(')', ' / 0.4)')}` }}
         >
-          <Icon className="w-5 h-5" style={{ color }} />
+          <Icon className="w-4 h-4 sm:w-5 sm:h-5" style={{ color }} />
         </div>
         <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground truncate">{label}</div>
-          <div className="text-xl font-black">
+          <div className="text-[9px] sm:text-[10px] uppercase tracking-wider text-muted-foreground truncate">{label}</div>
+          <div className="text-lg sm:text-xl font-black">
             <Counter value={value} duration={1.2} />
           </div>
         </div>
@@ -759,7 +813,7 @@ function DetailView({ item, onBack }: { item: { id: number; type: 'movie' | 'tv'
   return (
     <div className="h-full overflow-y-auto gradient-cinematic cinema-scroll">
       {/* ─── Cinematic Backdrop Hero ─────────────────────────────────────── */}
-      <div className="relative h-[55vh] min-h-[400px]">
+      <div className="relative h-[40vh] min-h-[280px] sm:h-[50vh] sm:min-h-[360px] md:h-[55vh] md:min-h-[400px]">
         <motion.div
           initial={{ scale: 1.05, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
@@ -787,39 +841,39 @@ function DetailView({ item, onBack }: { item: { id: number; type: 'movie' | 'tv'
         {/* Back button */}
         <button
           onClick={onBack}
-          className="absolute top-4 left-4 md:top-6 md:left-6 p-2.5 rounded-xl glass-dark border-white/10 z-20 hover:scale-105 transition-transform"
+          className="absolute top-3 left-3 sm:top-4 sm:left-4 md:top-6 md:left-6 p-2 sm:p-2.5 rounded-xl glass-dark border-white/10 z-20 hover:scale-105 transition-transform"
         >
-          <ArrowLeft className="w-5 h-5" />
+          <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
         </button>
 
         {/* Bookmark / Like buttons */}
-        <div className="absolute top-4 right-4 md:top-6 md:right-6 flex gap-2 z-20">
-          <button className="p-2.5 rounded-xl glass-dark border-white/10 hover:scale-105 transition-transform" aria-label="Add to watchlist">
-            <Bookmark className="w-5 h-5" />
+        <div className="absolute top-3 right-3 sm:top-4 sm:right-4 md:top-6 md:right-6 flex gap-2 z-20">
+          <button className="p-2 sm:p-2.5 rounded-xl glass-dark border-white/10 hover:scale-105 transition-transform" aria-label="Add to watchlist">
+            <Bookmark className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
-          <button className="p-2.5 rounded-xl glass-dark border-white/10 hover:scale-105 transition-transform" aria-label="Like">
-            <Heart className="w-5 h-5" />
+          <button className="p-2 sm:p-2.5 rounded-xl glass-dark border-white/10 hover:scale-105 transition-transform" aria-label="Like">
+            <Heart className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
         </div>
       </div>
 
       {/* ─── Detail Body ─────────────────────────────────────────────────── */}
-      <div className="max-w-6xl mx-auto px-4 -mt-32 relative z-10 pb-12">
-        <div className="flex flex-col md:flex-row gap-6 mb-8">
+      <div className="max-w-6xl mx-auto px-4 -mt-24 sm:-mt-28 md:-mt-32 relative z-10 pb-12">
+        <div className="flex flex-col md:flex-row gap-5 sm:gap-6 mb-6 sm:mb-8">
           {/* Poster with TiltedCard */}
-          <div className="shrink-0 mx-auto md:mx-0 -mt-20 md:-mt-24">
+          <div className="shrink-0 mx-auto md:mx-0 -mt-16 sm:-mt-20 md:-mt-24">
             <TiltedCard
               rotateAmplitude={8}
               scaleOnHover={1.04}
               spotlightColor="rgba(99, 102, 241, 0.3)"
               className="rounded-2xl"
             >
-              <div className="w-36 md:w-48 aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10">
+              <div className="w-28 sm:w-36 md:w-48 aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10">
                 {poster ? (
                   <img src={poster} alt="" className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full bg-card flex items-center justify-center">
-                    <Film className="w-12 h-12 text-muted-foreground" />
+                    <Film className="w-10 h-10 sm:w-12 sm:h-12 text-muted-foreground" />
                   </div>
                 )}
               </div>
@@ -827,11 +881,11 @@ function DetailView({ item, onBack }: { item: { id: number; type: 'movie' | 'tv'
           </div>
 
           {/* Title block */}
-          <div className="flex-1 min-w-0 pt-2 md:pt-6">
+          <div className="flex-1 min-w-0 pt-1 sm:pt-2 md:pt-6 text-center md:text-left">
             {detail.tagline && (
               <p className="text-xs italic text-muted-foreground mb-2">{detail.tagline}</p>
             )}
-            <h1 className="text-3xl md:text-5xl font-black tracking-tight mb-3 leading-tight">
+            <h1 className="text-2xl sm:text-3xl md:text-5xl font-black tracking-tight mb-3 leading-tight">
               <AnimatedGradientText
                 colors={['#ffffff', '#c7d2fe', '#f5d0fe', '#ffffff']}
                 animationSpeed={7}
@@ -841,7 +895,7 @@ function DetailView({ item, onBack }: { item: { id: number; type: 'movie' | 'tv'
             </h1>
 
             {/* Meta strip */}
-            <div className="flex flex-wrap items-center gap-3 mb-4 text-xs">
+            <div className="flex flex-wrap items-center justify-center md:justify-start gap-2 sm:gap-3 mb-4 text-xs">
               {detail.vote_average > 0 && (
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg glass-dark">
                   <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
@@ -878,7 +932,7 @@ function DetailView({ item, onBack }: { item: { id: number; type: 'movie' | 'tv'
 
             {/* Genres */}
             {detail.genres && detail.genres.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-5">
+              <div className="flex flex-wrap justify-center md:justify-start gap-2 mb-5">
                 {detail.genres.map((g) => (
                   <span
                     key={g.id}
@@ -890,23 +944,23 @@ function DetailView({ item, onBack }: { item: { id: number; type: 'movie' | 'tv'
               </div>
             )}
 
-            {/* Play button with StarBorder */}
-            <div className="flex items-center gap-3 mb-2">
+            {/* Play button with StarBorder — centered on mobile, left-aligned on desktop */}
+            <div className="flex items-center justify-center md:justify-start gap-2 sm:gap-3 mb-2">
               <StarBorder color="oklch(0.68 0.24 264)" className="rounded-xl">
                 <button
                   onClick={handlePlay}
-                  className="flex items-center gap-2 px-7 py-3 rounded-xl bg-gradient-to-r from-primary to-primary/80 text-primary-foreground font-bold text-sm hover:from-primary/90 hover:to-primary/70 transition-colors"
+                  className="flex items-center gap-2 px-5 sm:px-7 py-2.5 sm:py-3 rounded-xl bg-gradient-to-r from-primary to-primary/80 text-primary-foreground font-bold text-xs sm:text-sm hover:from-primary/90 hover:to-primary/70 transition-colors"
                 >
-                  <Play className="w-5 h-5 fill-current" />
-                  Play {localItem.type === 'tv' ? 'S1:E1' : 'Now'}
+                  <Play className="w-4 h-4 sm:w-5 sm:h-5 fill-current" />
+                  <span>Play {localItem.type === 'tv' ? 'S1:E1' : 'Now'}</span>
                 </button>
               </StarBorder>
               <button
                 onClick={handlePlay}
-                className="flex items-center gap-2 px-4 py-3 rounded-xl glass-dark text-sm font-semibold hover:scale-105 transition-transform"
+                className="flex items-center gap-2 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl glass-dark text-xs sm:text-sm font-semibold hover:scale-105 transition-transform"
               >
                 <Plus className="w-4 h-4" />
-                Trailer
+                <span className="hidden sm:inline">Trailer</span>
               </button>
             </div>
           </div>
@@ -1049,35 +1103,35 @@ function PlayerView({
 
   return (
     <div className="h-full flex flex-col bg-black">
-      {/* Header */}
-      <div className="flex items-center gap-3 p-3 md:p-4 bg-gradient-to-b from-black/90 to-black/60 border-b border-white/5">
+      {/* Header — compact on mobile */}
+      <div className="flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3 md:p-4 bg-gradient-to-b from-black/90 to-black/60 border-b border-white/5">
         <button
           onClick={onBack}
-          className="p-2.5 rounded-xl glass-dark border-white/10 hover:scale-105 transition-transform"
+          className="p-2 sm:p-2.5 rounded-xl glass-dark border-white/10 hover:scale-105 transition-transform shrink-0"
         >
-          <ArrowLeft className="w-5 h-5" />
+          <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
         </button>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <PulseBeam color="oklch(0.66 0.22 25)" />
-            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-orange-400">Now Playing</span>
+            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-[0.2em] text-orange-400">Now Playing</span>
           </div>
-          <div className="text-sm font-semibold truncate mt-0.5">
+          <div className="text-xs sm:text-sm font-semibold truncate mt-0.5">
             {title}
             {type === 'tv' && (
-              <span className="text-muted-foreground font-normal ml-2">S{selectedSeason} • E{selectedEpisode}</span>
+              <span className="text-muted-foreground font-normal ml-1.5 sm:ml-2">S{selectedSeason} • E{selectedEpisode}</span>
             )}
           </div>
         </div>
-        <div className="text-xs text-muted-foreground hidden md:flex items-center gap-2">
+        <div className="text-xs text-muted-foreground hidden md:flex items-center gap-2 shrink-0">
           <Zap className="w-3.5 h-3.5 text-primary" />
           {aggregator.quality}
         </div>
       </div>
 
-      {/* Server selector */}
-      <div className="flex items-center gap-2 p-3 md:p-4 bg-gradient-to-b from-black/60 to-transparent border-b border-white/5 overflow-x-auto">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground shrink-0 mr-1">
+      {/* Server selector — horizontally scrollable on mobile */}
+      <div className="flex items-center gap-1.5 sm:gap-2 p-2.5 sm:p-3 md:p-4 bg-gradient-to-b from-black/60 to-transparent border-b border-white/5 overflow-x-auto cinema-row-scroll">
+        <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-muted-foreground shrink-0 mr-0.5 sm:mr-1">
           Server
         </span>
         {aggregators.map((agg, i) => (
@@ -1085,7 +1139,7 @@ function PlayerView({
             key={agg.id}
             onClick={() => onAggregatorChange(agg)}
             className={cn(
-              'flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold shrink-0 transition-all',
+              'flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-semibold shrink-0 transition-all',
               aggregator.id === agg.id
                 ? 'bg-gradient-to-br from-primary to-primary/80 text-primary-foreground shadow-glow'
                 : 'glass-dark text-muted-foreground hover:text-foreground hover:scale-105'
@@ -1100,7 +1154,7 @@ function PlayerView({
 
       {/* TV Episode selector (when playing) */}
       {type === 'tv' && validSeasons.length > 0 && (
-        <div className="flex gap-2 p-3 md:p-4 bg-black/40 border-b border-white/5 overflow-x-auto">
+        <div className="flex gap-2 p-2.5 sm:p-3 md:p-4 bg-black/40 border-b border-white/5 overflow-x-auto cinema-row-scroll">
           <select
             value={selectedSeason}
             onChange={(e) => { onSeasonChange(parseInt(e.target.value, 10)); onEpisodeChange(1) }}
@@ -1152,15 +1206,14 @@ function PlayerView({
           )}
         </AnimatePresence>
 
-        {/* The actual iframe */}
+        {/* The actual iframe — NO sandbox attribute (aggregators refuse to load sandboxed) */}
         <iframe
           key={embedUrl}
           src={embedUrl}
           className="absolute inset-0 w-full h-full"
           frameBorder="0"
           allowFullScreen
-          sandbox={IFRAME_SANDBOX}
-          allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+          allow={IFRAME_ALLOW}
           referrerPolicy="no-referrer"
           onLoad={() => setIframeLoaded(true)}
         />
