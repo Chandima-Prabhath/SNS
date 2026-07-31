@@ -72,6 +72,21 @@ function saveHistory(tracks: Track[]) {
  */
 export function MusicView() {
   const [tab, setTab] = useState<Tab>('browse')
+
+  // Listen for hash changes — the player's expand button sets #music-queue
+  // to signal that the user wants to see the full queue page
+  useEffect(() => {
+    const checkHash = () => {
+      if (window.location.hash === '#music-queue') {
+        setTab('queue')
+        window.location.hash = '' // clear the hash so it doesn't re-trigger
+      }
+    }
+    checkHash()
+    window.addEventListener('hashchange', checkHash)
+    return () => window.removeEventListener('hashchange', checkHash)
+  }, [])
+
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Track[]>([])
   const [searching, setSearching] = useState(false)
@@ -654,6 +669,43 @@ export function MusicView() {
                 transition={{ duration: 0.2 }}
                 className="space-y-4"
               >
+                {/* Now Playing card */}
+                {currentTrack && (
+                  <div className="relative rounded-2xl overflow-hidden border border-white/10 shadow-xl">
+                    {/* Blurred bg */}
+                    {currentTrack.thumbnail && (
+                      <div className="absolute inset-0">
+                        <img src={currentTrack.thumbnail} alt="" className="w-full h-full object-cover scale-125 blur-2xl opacity-40" />
+                        <div className="absolute inset-0 bg-black/40" />
+                      </div>
+                    )}
+                    <div className="relative z-10 flex items-center gap-4 p-4">
+                      {/* Album art */}
+                      {currentTrack.thumbnail ? (
+                        <img src={currentTrack.thumbnail} alt="" className="w-16 h-16 rounded-xl object-cover shadow-lg ring-1 ring-white/10 shrink-0" />
+                      ) : (
+                        <div className="w-16 h-16 rounded-xl gradient-primary flex items-center justify-center shrink-0 shadow-lg">
+                          <MusicIcon className="w-7 h-7 text-primary-foreground" />
+                        </div>
+                      )}
+                      {/* Track info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs uppercase tracking-wider text-foreground/50 mb-0.5">
+                          {isPlaying ? 'Now Playing' : 'Paused'}
+                        </div>
+                        <div className="text-sm font-bold truncate">{currentTrack.title}</div>
+                        <div className="text-xs text-muted-foreground truncate">{currentTrack.artist}</div>
+                      </div>
+                      {/* Mini controls */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button onClick={() => playNext()} className="p-2 rounded-full text-foreground hover:bg-white/10 transition-colors" aria-label="Next">
+                          <SkipForward className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Headphones className="w-4 h-4 text-primary" />
