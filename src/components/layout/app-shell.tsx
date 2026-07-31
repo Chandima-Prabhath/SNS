@@ -9,6 +9,7 @@ import { StatusView } from '@/components/status/status-view'
 import { VoiceView } from '@/components/voice/voice-view'
 import { SettingsView } from '@/components/settings/settings-view'
 import { MusicView } from '@/components/music/music-view'
+import { CinemaView } from '@/components/cinema/cinema-view'
 import { GlobalMusicPlayer } from '@/components/music/global-music-player'
 import { IncomingCallOverlay } from '@/components/voice/incoming-call-overlay'
 import { CallController } from '@/components/voice/call-controller'
@@ -79,6 +80,7 @@ export function AppShell() {
                 {view === 'status' && <StatusView />}
                 {view === 'voice' && <VoiceView />}
                 {view === 'music' && <MusicView />}
+                {view === 'cinema' && <CinemaView />}
                 {view === 'settings' && <SettingsView />}
               </main>
             </div>

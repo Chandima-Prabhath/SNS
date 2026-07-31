@@ -5,7 +5,7 @@ import { useUnreadCounts } from '@/hooks/useUnreadCounts'
 import { useCall } from '@/hooks/useCall'
 import { useSession } from 'next-auth/react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { MessageCircle, Circle, Phone, Settings, Music } from 'lucide-react'
+import { MessageCircle, Circle, Phone, Settings, Music, Clapperboard } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface NavItem {
@@ -17,6 +17,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { key: 'chats', label: 'Chats', icon: MessageCircle },
   { key: 'music', label: 'Music', icon: Music },
+  { key: 'cinema', label: 'Cinema', icon: Clapperboard },
   { key: 'status', label: 'Status', icon: Circle },
   { key: 'voice', label: 'Calls', icon: Phone },
   { key: 'settings', label: 'Settings', icon: Settings },
