@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, type ReactNode, type CSSProperties } from 'react'
+import { useRef, useEffect, useState, type ReactNode, type CSSProperties } from 'react'
 
 // ─── SpotlightCard ─────────────────────────────────────────────────────────
 // Pure CSS. Cursor-following spotlight gradient on a card.
@@ -214,3 +214,290 @@ export function StarBorder({
     </div>
   )
 }
+
+// ─── TiltedCard ─────────────────────────────────────────────────────────────
+// 3D perspective tilt that follows the cursor. From reactbits.dev /components/tilted-card
+// Adapted for our dark theme. Used for cinematic movie posters.
+
+export function TiltedCard({
+  children,
+  className = '',
+  rotateAmplitude = 12,
+  scaleOnHover = 1.05,
+  showSpotlight = true,
+  spotlightColor = 'rgba(99, 102, 241, 0.25)',
+}: {
+  children: ReactNode
+  className?: string
+  rotateAmplitude?: number
+  scaleOnHover?: number
+  showSpotlight?: boolean
+  spotlightColor?: string
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [isHovering, setIsHovering] = useState(false)
+
+  const handleMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = ref.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    const cx = rect.width / 2
+    const cy = rect.height / 2
+    const rx = ((y - cy) / cy) * -rotateAmplitude
+    const ry = ((x - cx) / cx) * rotateAmplitude
+    el.style.setProperty('--rx', `${rx}deg`)
+    el.style.setProperty('--ry', `${ry}deg`)
+    el.style.setProperty('--mx', `${x}px`)
+    el.style.setProperty('--my', `${y}px`)
+  }
+
+  const handleLeave = () => {
+    const el = ref.current
+    if (!el) return
+    el.style.setProperty('--rx', '0deg')
+    el.style.setProperty('--ry', '0deg')
+    setIsHovering(false)
+  }
+
+  return (
+    <div
+      ref={ref}
+      onMouseMove={handleMove}
+      onMouseEnter={() => setIsHovering(true)}
+      onMouseLeave={handleLeave}
+      className={`relative [perspective:1000px] ${className}`}
+      style={
+        {
+          '--spotlight-color': spotlightColor,
+        } as CSSProperties
+      }
+    >
+      <div
+        className="relative [transform-style:preserve-3d] transition-transform duration-200 ease-out"
+        style={{
+          transform: `rotateX(var(--rx, 0)) rotateY(var(--ry, 0)) scale(${isHovering ? scaleOnHover : 1})`,
+        }}
+      >
+        {showSpotlight && (
+          <div
+            className="pointer-events-none absolute inset-0 z-20 rounded-[inherit] opacity-0 transition-opacity duration-300"
+            style={{
+              opacity: isHovering ? 1 : 0,
+              background: `radial-gradient(circle at var(--mx) var(--my), var(--spotlight-color), transparent 60%)`,
+            }}
+          />
+        )}
+        {children}
+      </div>
+    </div>
+  )
+}
+
+// ─── Meteors ───────────────────────────────────────────────────────────────
+// Animated meteor shower. From reactbits.dev /components/meteors
+// Pure CSS animation — no canvas needed. Used as cinematic background.
+
+export function Meteors({
+  count = 18,
+  className = '',
+}: {
+  count?: number
+  className?: string
+}) {
+  const [meteors, setMeteors] = useState<number[]>([])
+
+  useEffect(() => {
+    setMeteors(Array.from({ length: count }, (_, i) => i))
+  }, [count])
+
+  return (
+    <div className={`pointer-events-none absolute inset-0 overflow-hidden ${className}`}>
+      <style>{`
+        @keyframes meteor-fall {
+          0% {
+            transform: translate(0, 0) rotate(215deg);
+            opacity: 1;
+          }
+          70% { opacity: 1; }
+          100% {
+            transform: translate(-500px, 500px) rotate(215deg);
+            opacity: 0;
+          }
+        }
+      `}</style>
+      {meteors.map((i) => {
+        const left = Math.random() * 100
+        const delay = Math.random() * 6
+        const duration = 4 + Math.random() * 4
+        const size = 1 + Math.random() * 1.5
+        return (
+          <span
+            key={i}
+            className="absolute top-0"
+            style={{
+              left: `${left}%`,
+              animation: `meteor-fall ${duration}s linear ${delay}s infinite`,
+            }}
+          >
+            <span
+              className="block rounded-full bg-white"
+              style={{
+                width: `${size * 80}px`,
+                height: `${size}px`,
+                background: 'linear-gradient(90deg, rgba(255,255,255,0.9), rgba(99,102,241,0.4) 40%, transparent)',
+                boxShadow: '0 0 8px rgba(255,255,255,0.5)',
+              }}
+            />
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── AnimatedGradientText ───────────────────────────────────────────────────
+// Multi-stop animated gradient text with shifting hues.
+// From reactbits.dev /text-animations/animated-gradient-text
+
+export function AnimatedGradientText({
+  children,
+  className = '',
+  colors = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#6366f1'],
+  animationSpeed = 6,
+}: {
+  children: ReactNode
+  className?: string
+  colors?: string[]
+  animationSpeed?: number
+}) {
+  const gradient = colors.join(', ')
+  return (
+    <span
+      className={`inline-block bg-clip-text text-transparent ${className}`}
+      style={{
+        backgroundImage: `linear-gradient(90deg, ${gradient})`,
+        backgroundSize: '250% 100%',
+        animation: `animated-gradient-shift ${animationSpeed}s linear infinite`,
+      }}
+    >
+      <style>{`
+        @keyframes animated-gradient-shift {
+          0% { background-position: 0% 50%; }
+          100% { background-position: 250% 50%; }
+        }
+      `}</style>
+      {children}
+    </span>
+  )
+}
+
+// ─── Counter ───────────────────────────────────────────────────────────────
+// Animated number counter that counts up when in view.
+// From reactbits.dev /components/counter
+
+export function Counter({
+  value,
+  duration = 1.5,
+  decimals = 0,
+  className = '',
+  suffix = '',
+  prefix = '',
+}: {
+  value: number
+  duration?: number
+  decimals?: number
+  className?: string
+  suffix?: string
+  prefix?: string
+}) {
+  const [display, setDisplay] = useState(0)
+  const ref = useRef<HTMLSpanElement>(null)
+  const startedRef = useRef(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && !startedRef.current) {
+            startedRef.current = true
+            const start = performance.now()
+            const animate = (now: number) => {
+              const elapsed = (now - start) / 1000
+              const progress = Math.min(elapsed / duration, 1)
+              const eased = 1 - Math.pow(1 - progress, 3)
+              setDisplay(value * eased)
+              if (progress < 1) requestAnimationFrame(animate)
+              else setDisplay(value)
+            }
+            requestAnimationFrame(animate)
+          }
+        })
+      },
+      { threshold: 0.3 }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [value, duration])
+
+  return (
+    <span ref={ref} className={className}>
+      {prefix}
+      {display.toFixed(decimals)}
+      {suffix}
+    </span>
+  )
+}
+
+// ─── ShimmerLine ────────────────────────────────────────────────────────────
+// Horizontal shimmering line — for loading states under hero / above rows.
+
+export function ShimmerLine({ className = '' }: { className?: string }) {
+  return (
+    <div className={`relative overflow-hidden rounded-full bg-white/5 ${className}`}>
+      <div
+        className="absolute inset-0"
+        style={{
+          background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent)',
+          backgroundSize: '200% 100%',
+          animation: 'shimmer-line 1.8s ease-in-out infinite',
+        }}
+      />
+      <style>{`
+        @keyframes shimmer-line {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+      `}</style>
+    </div>
+  )
+}
+
+// ─── PulseBeam ──────────────────────────────────────────────────────────────
+// Pulsing gradient beam — for "LIVE" / "Now Playing" indicators.
+
+export function PulseBeam({
+  className = '',
+  color = 'oklch(0.68 0.24 264)',
+}: {
+  className?: string
+  color?: string
+}) {
+  return (
+    <span className={`relative inline-flex h-2 w-2 ${className}`}>
+      <span
+        className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75"
+        style={{ background: color }}
+      />
+      <span
+        className="relative inline-flex h-2 w-2 rounded-full"
+        style={{ background: color, boxShadow: `0 0 8px ${color}` }}
+      />
+    </span>
+  )
+}
+
