@@ -216,19 +216,28 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     const state = useMusicStore.getState()
     let nextTrack: Track | null = state.popNextFromQueue()
 
+    // If main queue is empty, try the radio queue (prefetched autoplay tracks)
     if (!nextTrack && state.autoplay && state.currentTrack) {
-      try {
-        const res = await fetch(
-          `/api/music/related/${state.currentTrack.videoId}`,
-        )
-        if (res.ok) {
-          const data = await res.json()
-          if (data.tracks?.length > 0) {
-            nextTrack = data.tracks[0] as Track
+      nextTrack = state.popFromRadioQueue()
+
+      // If radio queue is also empty, fetch related tracks (fallback)
+      if (!nextTrack) {
+        try {
+          console.log('[player] radio queue empty, fetching related tracks...')
+          const res = await fetch(
+            `/api/music/related/${state.currentTrack.videoId}`,
+          )
+          if (res.ok) {
+            const data = await res.json()
+            if (data.tracks?.length > 0) {
+              // Store all but the first in the radio queue
+              state.setRadioQueue(data.tracks.slice(1, 6))
+              nextTrack = data.tracks[0] as Track
+            }
           }
+        } catch {
+          console.error('[player] autoplay fetch failed')
         }
-      } catch {
-        // Autoplay failed — just stop
       }
     }
 
@@ -413,6 +422,43 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
         .catch((e) => console.error(`[predownload] ${track.videoId} network error:`, e))
     }
   }, [currentTrack, queue])
+
+  // ─── Effect: Prefetch radio queue + predownload for autoplay ──────────
+  // When a track starts playing and the main queue is empty, fetch related
+  // tracks ahead of time and store them in the radio queue. Also predownload
+  // the first radio queue track so it's ready to play instantly when the
+  // current song ends — even if the app is in the background on mobile.
+  useEffect(() => {
+    if (!currentTrack) return
+    const state = useMusicStore.getState()
+    if (!state.autoplay) return
+    if (queue.length > 0) return // don't prefetch if main queue has items
+    if (state.radioQueue.length > 0) {
+      // Radio queue already has items — just predownload the first one
+      const nextRadio = state.radioQueue[0]
+      console.log(`[radio] predownloading next: ${nextRadio.videoId} (${nextRadio.title})`)
+      fetch(`/api/music/predownload/${nextRadio.videoId}`, { method: 'POST', keepalive: true })
+        .then((res) => console.log(`[radio] predownload ${nextRadio.videoId} → ${res.status}`))
+        .catch(() => {})
+      return
+    }
+    // Radio queue is empty — fetch related tracks
+    console.log(`[radio] fetching related for ${currentTrack.videoId}...`)
+    fetch(`/api/music/related/${currentTrack.videoId}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.tracks?.length > 0) {
+          const tracks = data.tracks.slice(0, 5)
+          state.setRadioQueue(tracks)
+          console.log(`[radio] got ${tracks.length} tracks, predownloading first: ${tracks[0].title}`)
+          // Predownload the first track
+          fetch(`/api/music/predownload/${tracks[0].videoId}`, { method: 'POST', keepalive: true })
+            .then((res) => console.log(`[radio] predownload ${tracks[0].videoId} → ${res.status}`))
+            .catch(() => {})
+        }
+      })
+      .catch((e) => console.error('[radio] fetch failed:', e))
+  }, [currentTrack, queue.length])
 
   // ─── Effect: Socket.io room sync ──────────────────────────────────────
   // Joins the music room's socket channel, requests the host's current
@@ -704,8 +750,8 @@ function PlayerBar({
             className="fixed bottom-20 lg:bottom-6 right-4 z-[60] cursor-grab touch-none"
           >
             <div className={cn(
-              "flex items-center gap-2.5 rounded-full p-1.5 pr-3 shadow-xl pointer-events-auto",
-              isPlaying ? "adoo-playing-border" : "glass-dark"
+              "flex items-center gap-2.5 rounded-full p-1.5 pr-3 shadow-xl pointer-events-auto adoo-playing-border",
+              !isPlaying && "adoo-paused"
             )}>
               {/* Album art / Play-pause */}
               <button
@@ -775,8 +821,8 @@ function PlayerBar({
           >
             <div
               className={cn(
-                "rounded-2xl shadow-2xl overflow-hidden",
-                isPlaying ? "adoo-playing-border" : "glass-dark"
+                "rounded-2xl shadow-2xl overflow-hidden adoo-playing-border",
+                !isPlaying && "adoo-paused"
               )}
             >
             {/* Mobile layout */}

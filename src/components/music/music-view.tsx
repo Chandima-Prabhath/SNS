@@ -128,21 +128,9 @@ export function MusicView() {
   const shuffle = useMusicStore((s) => s.shuffle)
   const repeat = useMusicStore((s) => s.repeat)
 
-  // ── Up Next: fetch related/autoplay tracks when queue is empty ──────
-  // Shows what will play next via autoplay (fetched ahead of time so the
-  // user can see what's coming).
-  const { data: upNextData } = useQuery({
-    queryKey: ['music-up-next', currentTrack?.videoId],
-    queryFn: async () => {
-      if (!currentTrack?.videoId) return { tracks: [] }
-      const res = await fetch(`/api/music/related/${currentTrack.videoId}`)
-      if (!res.ok) return { tracks: [] }
-      return res.json()
-    },
-    enabled: !!currentTrack?.videoId && queue.length === 0 && autoplay,
-    staleTime: 30_000, // don't refetch too often
-  })
-  const upNextTracks: Track[] = (upNextData?.tracks || []).slice(0, 5)
+  // ── Up Next: read from the music store's radio queue (prefetched by the player) ─
+  const radioQueue = useMusicStore((s) => s.radioQueue)
+  const upNextTracks: Track[] = radioQueue.slice(0, 5)
   const activeRoomId = useMusicStore((s) => s.activeRoomId)
   const setActiveRoomId = useMusicStore((s) => s.setActiveRoomId)
   const setShuffle = useMusicStore((s) => s.setShuffle)
@@ -827,11 +815,12 @@ export function MusicView() {
                       <Sparkles className="w-3.5 h-3.5" />
                       Up Next (Autoplay)
                     </h3>
-                    <div className="space-y-1 opacity-70">
+                    <div className="space-y-1 opacity-80">
                       {upNextTracks.map((track, i) => (
                         <div
                           key={`${track.videoId}-${i}`}
-                          className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/[0.04] transition-all group"
+                          className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/[0.06] transition-all group cursor-pointer"
+                          onClick={() => playTrack(track)}
                         >
                           <span className="text-xs text-muted-foreground w-6 text-center font-medium">
                             {i + 1}
@@ -852,8 +841,15 @@ export function MusicView() {
                             <div className="text-[11px] text-muted-foreground truncate">{track.artist}</div>
                           </div>
                           <button
-                            onClick={() => playTrack(track, true)}
-                            className="p-1.5 rounded-lg text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-primary transition-opacity"
+                            onClick={(e) => { e.stopPropagation(); playTrack(track) }}
+                            className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
+                            title="Play now"
+                          >
+                            <Play className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); playTrack(track, true) }}
+                            className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
                             title="Add to queue"
                           >
                             <Plus className="w-3.5 h-3.5" />

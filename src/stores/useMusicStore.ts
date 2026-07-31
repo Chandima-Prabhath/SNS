@@ -20,6 +20,11 @@ interface MusicState {
 
   // ─── Queue / playback options ──────────────────────────────────────────
   queue: Track[]
+  /** Radio queue — autoplay tracks fetched ahead of time so they're ready
+   *  when the main queue empties. The player populates this when a track
+   *  starts playing, and predownloads the first one. This fixes background
+   *  autoplay on mobile (no fetch needed when the song ends). */
+  radioQueue: Track[]
   autoplay: boolean
   shuffle: boolean
   repeat: boolean
@@ -37,6 +42,8 @@ interface MusicState {
   addToQueue: (t: Track) => void
   removeFromQueue: (i: number) => void
   clearQueue: () => void
+  setRadioQueue: (q: Track[]) => void
+  popFromRadioQueue: () => Track | null
   setAutoplay: (b: boolean) => void
   setShuffle: (b: boolean) => void
   setRepeat: (b: boolean) => void
@@ -58,6 +65,7 @@ export const useMusicStore = create<MusicState>((set, get) => ({
   position: 0,
   volume: 0.8,
   queue: [],
+  radioQueue: [],
   autoplay: true,
   shuffle: false,
   repeat: false,
@@ -72,6 +80,14 @@ export const useMusicStore = create<MusicState>((set, get) => ({
   addToQueue: (t) => set((s) => ({ queue: [...s.queue, t] })),
   removeFromQueue: (i) => set((s) => ({ queue: s.queue.filter((_, j) => j !== i) })),
   clearQueue: () => set({ queue: [] }),
+  setRadioQueue: (radioQueue) => set({ radioQueue }),
+  popFromRadioQueue: () => {
+    const { radioQueue } = get()
+    if (radioQueue.length === 0) return null
+    const track = radioQueue[0]
+    set({ radioQueue: radioQueue.slice(1) })
+    return track
+  },
   setAutoplay: (autoplay) => set({ autoplay }),
   setShuffle: (shuffle) => set({ shuffle }),
   setRepeat: (repeat) => set({ repeat }),

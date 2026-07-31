@@ -620,8 +620,9 @@
   position: relative;
   padding: 2px;
   overflow: hidden;
-  /* No filter/drop-shadow here — it creates a stacking context that breaks
-     fixed positioning on the expanded player. The glow is on ::after. */
+  /* Smooth transition when play state changes — the gradient + padding
+     fade in/out instead of appearing/disappearing abruptly */
+  transition: padding 0.3s ease, opacity 0.3s ease;
 }
 
 /* The rotating gradient — fills the entire element (including padding) */
@@ -640,8 +641,10 @@
   );
   animation: adoo-spin-border 3s linear infinite;
   z-index: 0;
-  /* Glow without affecting the parent's stacking context */
   filter: blur(0.5px);
+  /* Smooth opacity transition on play/pause */
+  opacity: 1;
+  transition: opacity 0.4s ease;
 }
 
 /* The center mask — covers the gradient except in the 2px padding ring.
@@ -656,6 +659,11 @@
   backdrop-filter: blur(40px) saturate(180%);
   -webkit-backdrop-filter: blur(40px) saturate(180%);
   z-index: 1;
+}
+
+/* Paused state — fade the gradient out smoothly (0.4s transition on ::after) */
+.adoo-playing-border.adoo-paused::after {
+  opacity: 0;
 }
 
 /* Content sits above the mask */
