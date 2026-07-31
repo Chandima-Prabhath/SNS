@@ -1,0 +1,1102 @@
+     1→/**
+     2→ * Visual Bot Builder — Types & Execution Engine (v2)
+     3→ *
+     4→ * Architecture
+     5→ * ────────────
+     6→ * A bot flow is a directed graph stored as JSON in `Bot.flow`:
+     7→ *   { nodes: FlowNode[], edges: FlowEdge[] }
+     8→ *
+     9→ * The engine walks the graph starting from a TRIGGER node. Crucially, it
+    10→ * supports **pause/resume** for INPUT and CHOICE nodes — when the engine
+    11→ * reaches one, it stops, persists `{ currentNodeId, variables }` to
+    12→ * ConversationSession, and resumes on the user's next message.
+    13→ *
+    14→ * Node categories (used by the UI for palette grouping):
+    15→ *   - trigger  : starts the flow (1 type, multiple subtypes)
+    16→ *   - output   : bot sends something (message, choice, typing)
+    17→ *   - input    : wait for user reply (text input, choice input)
+    18→ *   - logic    : control flow (condition, set_var, delay, stop)
+    19→ *   - advanced : power features (api_call, random)
+    20→ */
+    21→
+    22→// ─────────────────────────────────────────────────────────────────────────────
+    23→// Node type catalog
+    24→// ─────────────────────────────────────────────────────────────────────────────
+    25→
+    26→export type NodeType =
+    27→  | 'trigger'
+    28→  | 'message'
+    29→  | 'typing'
+    30→  | 'input'
+    31→  | 'wait_choice'
+    32→  | 'condition'
+    33→  | 'switch_case'
+    34→  | 'set_var'
+    35→  | 'counter'
+    36→  | 'format_string'
+    37→  | 'delay'
+    38→  | 'stop'
+    39→  | 'api_call'
+    40→  | 'random'
+    41→  | 'ai_generate'
+    42→  | 'send_media'
+    43→  | 'log'
+    44→  | 'tts'
+    45→  | 'asr_transcribe'
+    46→
+    47→export type NodeCategory = 'trigger' | 'output' | 'input' | 'logic' | 'advanced'
+    48→
+    49→// ─────────────────────────────────────────────────────────────────────────────
+    50→// Flow shape (persisted as JSON in Bot.flow)
+    51→// ─────────────────────────────────────────────────────────────────────────────
+    52→
+    53→export interface FlowNode {
+    54→  id: string
+    55→  type: NodeType
+    56→  position: { x: number; y: number }
+    57→  data: FlowNodeData
+    58→}
+    59→
+    60→export interface FlowEdge {
+    61→  id: string
+    62→  source: string
+    63→  target: string
+    64→  sourceHandle?: string | null
+    65→  label?: string
+    66→}
+    67→
+    68→export interface BotFlow {
+    69→  nodes: FlowNode[]
+    70→  edges: FlowEdge[]
+    71→}
+    72→
+    73→export interface FlowNodeData {
+    74→  // ── trigger ──
+    75→  triggerType?: 'any_message' | 'command' | 'mention'
+    76→  command?: string // without leading slash
+    77→
+    78→  // ── message ──
+    79→  text?: string
+    80→
+    81→  // ── wait_choice ──
+    82→  prompt?: string
+    83→  options?: string[] // quick-reply choices
+    84→  variableName?: string // where to store the reply
+    85→
+    86→  // ── typing ──
+    87→  seconds?: number
+    88→
+    89→  // ── input ──
+    90→  // (uses prompt + variableName from above)
+    91→
+    92→  // ── condition ──
+    93→  variable?: string
+    94→  operator?: 'equals' | 'not_equals' | 'contains' | 'starts_with' | 'exists' | 'not_exists'
+    95→  value?: string
+    96→
+    97→  // ── set_var ──
+    98→  // (uses variable + value from above)
+    99→
+   100→  // ── api_call ──
+   101→  url?: string
+   102→  method?: 'GET' | 'POST'
+   103→  headers?: string // JSON string
+   104→  body?: string
+   105→  // (also uses variableName to store response)
+   106→
+   107→  // ── random ──
+   108→  // (no data — uses N outgoing edges; engine picks one)
+   109→
+   110→  // ── ai_generate ──
+   111→  /** The prompt to send to the LLM. Supports {{var}} interpolation. */
+   112→  aiPrompt?: string
+   113→  /** Optional system prompt to set the LLM's persona/behavior. */
+   114→  aiSystemPrompt?: string
+   115→  /** Ollama model name, e.g. 'gemma3:270m'. */
+   116→  aiModel?: string
+   117→  /** Sampling temperature (0 = deterministic, 1 = creative). */
+   118→  aiTemperature?: number
+   119→  /** Max tokens to generate. */
+   120→  aiMaxTokens?: number
+   121→  // (also uses variableName to store the generated response)
+   122→
+   123→  // ── switch_case ──
+   124→  /** Variable to switch on. */
+   125→  switchVariable?: string
+   126→  /** Case values — each gets its own outgoing handle (case_0, case_1, ...). */
+   127→  cases?: string[]
+   128→  // (uses 'default' handle for unmatched values)
+   129→
+   130→  // ── counter ──
+   131→  // (uses `variable` to hold the counter name)
+   132→  /** Amount to increment by (negative = decrement). */
+   133→  increment?: number
+   134→  /** Starting value when the variable doesn't exist yet. */
+   135→  startValue?: number
+   136→
+   137→  // ── format_string ──
+   138→  // (uses `text` as the template with {{var}} placeholders)
+   139→  // (uses `variableName` to store the result)
+   140→
+   141→  // ── send_media ──
+   142→  /** URL of the media to send (image/video/audio). */
+   143→  mediaUrl?: string
+   144→  /** Caption text. Supports {{var}} interpolation. */
+   145→  caption?: string
+   146→  /** Media type: image, video, audio. */
+   147→  mediaType?: 'image' | 'video' | 'audio'
+   148→
+   149→  // ── log ──
+   150→  /** Message to log. Supports {{var}} interpolation. */
+   151→  logMessage?: string
+   152→  /** Log level. */
+   153→  logLevel?: 'info' | 'warn' | 'error'
+   154→
+   155→  // ── tts ──
+   156→  /** Text to speak. Supports {{var}} interpolation. */
+   157→  ttsText?: string
+   158→  /** Voice name (alba, charles, etc.) or custom voice ID. */
+   159→  ttsVoice?: string
+   160→  // (sends the audio as a voice message — no variable needed)
+   161→
+   162→  // ── asr_transcribe ──
+   163→  /** URL of the audio file to transcribe. Supports {{var}} interpolation.
+   164→   *  Typically set to {{mediaUrl}} which the bot framework populates with
+   165→   *  the incoming message's mediaUrl when the user sends a voice message. */
+   166→  asrAudioUrl?: string
+   167→  /** Language hint (currently ignored — Moonshine v1 is English-only). */
+   168→  asrLanguage?: string
+   169→  /** Whether to also send the transcript as a reply message. If false,
+   170→   *  the transcript is only stored in the variable. */
+   171→  asrReply?: boolean
+   172→  // (uses `variableName` to store the transcript text)
+   173→
+   174→  // ── UI metadata (not used by engine) ──
+   175→  /** Node type — stored in data so the editor's CustomNode can read it.
+   176→   *  Duplicates FlowNode.type but is required because ReactFlow sets
+   177→   *  n.type to 'custom' for all custom nodes. */
+   178→  type?: NodeType
+   179→  label?: string
+   180→}
+   181→
+   182→// ─────────────────────────────────────────────────────────────────────────────
+   183→// Execution context & result
+   184→// ─────────────────────────────────────────────────────────────────────────────
+   185→
+   186→/** A single inline keyboard button (Telegram-style). */
+   187→export interface BotKeyboardButton {
+   188→  text: string
+   189→  /** Value sent back to the bot when the button is clicked. */
+   190→  callbackData: string
+   191→}
+   192→
+   193→export interface BotExecutionContext {
+   194→  channelId: string
+   195→  senderId: string
+   196→  senderName: string
+   197→  messageId: string
+   198→  body: string
+   199→  args: string[]
+   200→  command?: string
+   201→  isMention: boolean
+   202→
+   203→  /**
+   204→   * Variables for the current execution. The caller (visual.ts) is responsible
+   205→   * for loading these from ConversationSession at the start and persisting
+   206→   * them when execution pauses.
+   207→   */
+   208→  variables: Record<string, string>
+   209→
+   210→  /** Helpers — visual.ts wires these to ConversationSession. */
+   211→  getState?: () => Promise<any>
+   212→  setState?: (state: any) => Promise<void>
+   213→
+   214→  /** Reply helper — pushes a message as the bot. Optional keyboard attaches
+   215→   *  Telegram-style inline buttons to the message. Returns the message ID. */
+   216→  reply: (text: string, keyboard?: BotKeyboardButton[][]) => Promise<string>
+   217→
+   218→  /** Reply with media (image/video/audio). The URL should be a path like
+   219→   *  /api/uploads/xxx.wav. Returns the message ID. */
+   220→  replyWithMedia?: (mediaUrl: string, mediaType: string, caption?: string) => Promise<string>
+   221→
+   222→  /** Edit an existing bot message in-place (body + keyboard). Used for
+   223→   *  Telegram-style keyboard updates when a wait_choice loops back. */
+   224→  editMessage?: (messageId: string, text: string, keyboard?: BotKeyboardButton[][]) => Promise<void>
+   225→
+   226→  /** Generate TTS audio from text using Pocket TTS. Returns the media URL
+   227→   *  (e.g. /api/uploads/tts-bot-xxx.wav) or null if generation failed.
+   228→   *  Server-only — debug mode should return null and let the engine fall
+   229→   *  back to sending text. */
+   230→  generateTTS?: (text: string, voice: string) => Promise<string | null>
+   231→
+   232→  /** Transcribe an audio file URL to text using Moonshine ASR. Returns the
+   233→   *  transcript text or null if transcription failed (server down, no audio,
+   234→   *  etc.). Server-only — debug mode should return null and let the engine
+   235→   *  log a clear error. */
+   236→  transcribeAudio?: (mediaUrl: string, language?: string) => Promise<string | null>
+   237→
+   238→  /** Show typing indicator — best-effort, no-op if unsupported. */
+   239→  setTyping?: (seconds: number) => Promise<void>
+   240→}
+   241→
+   242→export interface BotExecutionResult {
+   243→  /** Messages emitted by the run (already sent via ctx.reply by the engine). */
+   244→  sentCount: number
+   245→
+   246→  /** True if the flow paused at an input node, waiting for the next message. */
+   247→  paused: boolean
+   248→
+   249→  /** When paused, the id of the input node we're waiting at. */
+   250→  pausedAtNodeId?: string
+   251→
+   252→  /** Final variable state (caller persists this). */
+   253→  variables: Record<string, string>
+   254→
+   255→  /** Execution trace — ordered list of events for debugging. */
+   256→  trace?: TraceEvent[]
+   257→
+   258→  error?: string
+   259→}
+   260→
+   261→// ─────────────────────────────────────────────────────────────────────────────
+   262→// Execution trace — emitted by the engine for debugging/test-runs
+   263→// ─────────────────────────────────────────────────────────────────────────────
+   264→
+   265→export type TraceEvent =
+   266→  | { type: 'flow_start'; timestamp: number; triggerNodeId?: string; input: { body: string; sender: string; command?: string } }
+   267→  | { type: 'node_enter'; timestamp: number; nodeId: string; nodeType: NodeType; nodeLabel: string }
+   268→  | { type: 'node_exit'; timestamp: number; nodeId: string; durationMs: number }
+   269→  | { type: 'message_sent'; timestamp: number; nodeId: string; text: string }
+   270→  | { type: 'variable_set'; timestamp: number; nodeId: string; variable: string; value: string }
+   271→  | { type: 'condition_eval'; timestamp: number; nodeId: string; variable: string; value: string; operator: string; compareTo: string; result: boolean }
+   272→  | { type: 'branch_taken'; timestamp: number; nodeId: string; handle: string; targetNodeId: string }
+   273→  | { type: 'ai_call'; timestamp: number; nodeId: string; model: string; prompt: string; responseLength: number; durationMs: number }
+   274→  | { type: 'api_call'; timestamp: number; nodeId: string; url: string; method: string; status: number; durationMs: number }
+   275→  | { type: 'asr_call'; timestamp: number; nodeId: string; audioUrl: string; transcriptLength: number; durationMs: number; success: boolean }
+   276→  | { type: 'paused'; timestamp: number; nodeId: string; variableName: string }
+   277→  | { type: 'resumed'; timestamp: number; nodeId: string; inputText: string }
+   278→  | { type: 'error'; timestamp: number; nodeId?: string; message: string }
+   279→  | { type: 'flow_end'; timestamp: number; reason: 'stop' | 'no_edge' | 'max_steps' | 'error'; sentCount: number }
+   280→  | { type: 'log'; timestamp: number; nodeId: string; level: 'info' | 'warn' | 'error'; message: string }
+   281→
+   282→// ─────────────────────────────────────────────────────────────────────────────
+   283→// Engine
+   284→// ─────────────────────────────────────────────────────────────────────────────
+   285→
+   286→const MAX_STEPS = 50
+   287→
+   288→/**
+   289→ * Resume descriptor — when set, the engine resumes from `nodeId` instead of
+   290→ * searching for a trigger. The caller passes this when a paused session
+   291→ * receives its awaited reply.
+   292→ */
+   293→export interface ResumeDescriptor {
+   294→  nodeId: string
+   295→  /** The text to assign to the input variable (usually the user's reply). */
+   296→  inputText: string
+   297→  /** The variable name to assign inputText to. */
+   298→  inputVariable: string
+   299→}
+   300→
+   301→/**
+   302→ * Replace {{var}} placeholders in a string.
+   303→ */
+   304→function interpolate(text: string, ctx: BotExecutionContext): string {
+   305→  let out = text
+   306→  for (const [k, v] of Object.entries(ctx.variables)) {
+   307→    out = out.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), v)
+   308→  }
+   309→  out = out.replace(/\{\{sender\}\}/g, ctx.senderName)
+   310→  out = out.replace(/\{\{args\}\}/g, ctx.args.join(' '))
+   311→  out = out.replace(/\{\{body\}\}/g, ctx.body)
+   312→  // Convenience: expose the incoming message's media URL/type and any
+   313→  // pre-existing ASR transcript as {{mediaUrl}}, {{mediaType}}, {{transcript}}.
+   314→  // These are also available as ctx.variables (set by visual.ts at flow start)
+   315→  // but the explicit fallbacks here make them work even in debug mode.
+   316→  out = out.replace(/\{\{mediaUrl\}\}/g, ctx.variables.__mediaUrl || '')
+   317→  out = out.replace(/\{\{mediaType\}\}/g, ctx.variables.__mediaType || '')
+   318→  out = out.replace(/\{\{transcript\}\}/g, ctx.variables.__transcript || ctx.variables.transcript || '')
+   319→  return out
+   320→}
+   321→
+   322→/**
+   323→ * Execute a bot flow. Returns when:
+   324→ *   - the flow reaches a `stop` node,
+   325→ *   - the flow ends naturally (no outgoing edge),
+   326→ *   - the flow pauses at an INPUT/WAIT_CHOICE node,
+   327→ *   - MAX_STEPS is exceeded.
+   328→ *
+   329→ * Emits trace events for debugging — each node entry/exit, variable change,
+   330→ * message sent, condition evaluation, branch taken, and error is recorded.
+   331→ * The caller can pass these to the UI for a test-run visualization.
+   332→ */
+   333→export async function executeBotFlow(
+   334→  flow: BotFlow,
+   335→  ctx: BotExecutionContext,
+   336→  resume?: ResumeDescriptor
+   337→): Promise<BotExecutionResult> {
+   338→  let sentCount = 0
+   339→  let steps = 0
+   340→  let currentNode: FlowNode | undefined
+   341→  const trace: TraceEvent[] = []
+   342→  const now = () => Date.now()
+   343→
+   344→  // ── Helpers (declared early so the resume block can use them) ─────────
+   345→  const edgesFrom = (nodeId: string, handle?: string | null) =>
+   346→    flow.edges.filter((e) => {
+   347→      if (e.source !== nodeId) return false
+   348→      if (handle === undefined) return true
+   349→      if (handle === null) return !e.sourceHandle
+   350→      return e.sourceHandle === handle
+   351→    })
+   352→
+   353→  const followEdge = (nodeId: string, handle?: string | null): FlowNode | undefined => {
+   354→    const edges = edgesFrom(nodeId, handle)
+   355→    if (edges.length === 0) return undefined
+   356→    return flow.nodes.find((n) => n.id === edges[0].target)
+   357→  }
+   358→
+   359→  // ── Resolve starting node ─────────────────────────────────────────────
+   360→  if (resume) {
+   361→    const inputNode = flow.nodes.find((n) => n.id === resume.nodeId)
+   362→    if (!inputNode) {
+   363→      trace.push({ type: 'error', timestamp: now(), message: 'resume target not found' })
+   364→      return { sentCount: 0, paused: false, variables: ctx.variables, trace, error: 'resume target not found' }
+   365→    }
+   366→    ctx.variables[resume.inputVariable] = resume.inputText
+   367→    trace.push({ type: 'resumed', timestamp: now(), nodeId: inputNode.id, inputText: resume.inputText })
+   368→    trace.push({ type: 'variable_set', timestamp: now(), nodeId: inputNode.id, variable: resume.inputVariable, value: resume.inputText })
+   369→    currentNode = followEdge(inputNode.id, null)
+   370→    if (!currentNode) {
+   371→      trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+   372→      return { sentCount, paused: false, variables: ctx.variables, trace }
+   373→    }
+   374→  } else {
+   375→    const trigger = flow.nodes.find((n) => n.type === 'trigger')
+   376→    if (!trigger) {
+   377→      trace.push({ type: 'error', timestamp: now(), message: 'No trigger node found' })
+   378→      return { sentCount: 0, paused: false, variables: ctx.variables, trace, error: 'No trigger node found' }
+   379→    }
+   380→
+   381→    trace.push({
+   382→      type: 'flow_start',
+   383→      timestamp: now(),
+   384→      triggerNodeId: trigger.id,
+   385→      input: { body: ctx.body, sender: ctx.senderName, command: ctx.command },
+   386→    })
+   387→
+   388→    // Trigger matching
+   389→    const tt = trigger.data.triggerType || 'any_message'
+   390→    if (tt === 'command' && trigger.data.command) {
+   391→      if (!ctx.command || ctx.command !== trigger.data.command.replace(/^\//, '')) {
+   392→        trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+   393→        return { sentCount: 0, paused: false, variables: ctx.variables, trace }
+   394→      }
+   395→    } else if (tt === 'mention') {
+   396→      if (!ctx.isMention) {
+   397→        trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+   398→        return { sentCount: 0, paused: false, variables: ctx.variables, trace }
+   399→      }
+   400→    }
+   401→
+   402→    currentNode = trigger
+   403→  }
+   404→
+   405→  // ── Walk the graph ────────────────────────────────────────────────────
+   406→  while (currentNode && steps < MAX_STEPS) {
+   407→    steps++
+   408→    const nodeStartTime = now()
+   409→    const nodeLabel = currentNode.data?.label || currentNode.type
+   410→
+   411→    trace.push({
+   412→      type: 'node_enter',
+   413→      timestamp: nodeStartTime,
+   414→      nodeId: currentNode.id,
+   415→      nodeType: currentNode.type,
+   416→      nodeLabel,
+   417→    })
+   418→
+   419→    switch (currentNode.type) {
+   420→      // ── TRIGGER ────────────────────────────────────────────────────────
+   421→      case 'trigger':
+   422→        currentNode = followEdge(currentNode.id, null)
+   423→        break
+   424→
+   425→      // ── OUTPUT: message ────────────────────────────────────────────────
+   426→      case 'message': {
+   427→        const text = interpolate(currentNode.data.text || '', ctx)
+   428→        if (text.trim()) {
+   429→          await ctx.reply(text)
+   430→          sentCount++
+   431→          trace.push({ type: 'message_sent', timestamp: now(), nodeId: currentNode.id, text })
+   432→        }
+   433→        currentNode = followEdge(currentNode.id, null)
+   434→        break
+   435→      }
+   436→
+   437→      // ── OUTPUT: send_media ─────────────────────────────────────────────
+   438→      case 'send_media': {
+   439→        const url = interpolate(currentNode.data.mediaUrl || '', ctx)
+   440→        const caption = interpolate(currentNode.data.caption || '', ctx)
+   441→        if (url.trim()) {
+   442→          // ctx.reply is text-only; we log it but the actual media send
+   443→          // would need an extended reply API. For now, send the URL as text.
+   444→          const text = caption ? `${caption}\n${url}` : url
+   445→          await ctx.reply(text)
+   446→          sentCount++
+   447→          trace.push({ type: 'message_sent', timestamp: now(), nodeId: currentNode.id, text })
+   448→        }
+   449→        currentNode = followEdge(currentNode.id, null)
+   450→        break
+   451→      }
+   452→
+   453→      // ── OUTPUT: typing ─────────────────────────────────────────────────
+   454→      case 'typing': {
+   455→        const seconds = currentNode.data.seconds || 1
+   456→        if (ctx.setTyping) await ctx.setTyping(seconds)
+   457→        else await new Promise((r) => setTimeout(r, Math.min(seconds, 2) * 1000))
+   458→        currentNode = followEdge(currentNode.id, null)
+   459→        break
+   460→      }
+   461→
+   462→      // ── INPUT: pause and wait for next message ────────────────────────
+   463→      case 'input': {
+   464→        const prompt = interpolate(currentNode.data.prompt || '', ctx)
+   465→        if (prompt.trim()) {
+   466→          await ctx.reply(prompt)
+   467→          sentCount++
+   468→          trace.push({ type: 'message_sent', timestamp: now(), nodeId: currentNode.id, text: prompt })
+   469→        }
+   470→        trace.push({ type: 'paused', timestamp: now(), nodeId: currentNode.id, variableName: currentNode.data.variableName || 'reply' })
+   471→        trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+   472→        return {
+   473→          sentCount,
+   474→          paused: true,
+   475→          pausedAtNodeId: currentNode.id,
+   476→          variables: ctx.variables,
+   477→          trace,
+   478→        }
+   479→      }
+   480→
+   481→      // ── INPUT: wait_choice ────────────────────────────────────────────
+   482→      case 'wait_choice': {
+   483→        const prompt = interpolate(currentNode.data.prompt || '', ctx)
+   484→        const options = currentNode.data.options || []
+   485→        // Build a Telegram-style inline keyboard — each option is a button.
+   486→        // The button's callbackData is the option text itself, so the resume
+   487→        // path in visual.ts can match it directly.
+   488→        const keyboard: BotKeyboardButton[][] = options.map((opt) => [{
+   489→          text: opt,
+   490→          callbackData: opt,
+   491→        }])
+   492→
+   493→        // Telegram-style behavior: if we have an existing keyboard message
+   494→        // (from a previous pause at this node, i.e. a loop-back), EDIT it
+   495→        // in-place instead of sending a new message. This prevents the bot
+   496→        // from spamming new keyboard messages every time the user clicks a
+   497→        // button that loops back to this menu.
+   498→        //
+   499→        // The keyboardMessageId is set in the session state by visual.ts
+   500→        // when it persists the pause. We read it from ctx.variables under
+   501→        // a reserved key.
+   502→        const existingKeyboardMsgId = ctx.variables['__keyboardMsgId']
+   503→
+   504→        if (prompt.trim()) {
+   505→          if (existingKeyboardMsgId && ctx.editMessage) {
+   506→            // Edit-in-place: update the existing keyboard message
+   507→            await ctx.editMessage(existingKeyboardMsgId, prompt, keyboard)
+   508→            trace.push({ type: 'message_sent', timestamp: now(), nodeId: currentNode.id, text: `[edited] ${prompt}` })
+   509→          } else {
+   510→            // Fresh keyboard: send a new message
+   511→            const msgId = await ctx.reply(prompt, keyboard)
+   512→            sentCount++
+   513→            // Store the message ID so future re-pauses can edit it
+   514→            ctx.variables['__keyboardMsgId'] = msgId
+   515→            trace.push({ type: 'message_sent', timestamp: now(), nodeId: currentNode.id, text: prompt })
+   516→          }
+   517→        }
+   518→        trace.push({ type: 'paused', timestamp: now(), nodeId: currentNode.id, variableName: currentNode.data.variableName || 'choice' })
+   519→        trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+   520→        return {
+   521→          sentCount,
+   522→          paused: true,
+   523→          pausedAtNodeId: currentNode.id,
+   524→          variables: ctx.variables,
+   525→          trace,
+   526→        }
+   527→      }
+   528→
+   529→      // ── LOGIC: condition ──────────────────────────────────────────────
+   530→      case 'condition': {
+   531→        const varName = currentNode.data.variable || ''
+   532→        const varValue = ctx.variables[varName] || ''
+   533→        const op = currentNode.data.operator || 'exists'
+   534→        const cmp = currentNode.data.value || ''
+   535→
+   536→        let met = false
+   537→        switch (op) {
+   538→          case 'equals':       met = varValue === cmp; break
+   539→          case 'not_equals':   met = varValue !== cmp; break
+   540→          case 'contains':     met = varValue.includes(cmp); break
+   541→          case 'starts_with':  met = varValue.startsWith(cmp); break
+   542→          case 'exists':       met = !!varValue; break
+   543→          case 'not_exists':   met = !varValue; break
+   544→        }
+   545→
+   546→        trace.push({
+   547→          type: 'condition_eval',
+   548→          timestamp: now(),
+   549→          nodeId: currentNode.id,
+   550→          variable: varName,
+   551→          value: varValue,
+   552→          operator: op,
+   553→          compareTo: cmp,
+   554→          result: met,
+   555→        })
+   556→
+   557→        const handle = met ? 'true' : 'false'
+   558→        const next = followEdge(currentNode.id, handle)
+   559→        if (next) {
+   560→          trace.push({ type: 'branch_taken', timestamp: now(), nodeId: currentNode.id, handle, targetNodeId: next.id })
+   561→          currentNode = next
+   562→        } else {
+   563→          // No matching branch — fall through to default edge if any
+   564→          const fallback = followEdge(currentNode.id, null)
+   565→          if (fallback) {
+   566→            trace.push({ type: 'branch_taken', timestamp: now(), nodeId: currentNode.id, handle: 'default', targetNodeId: fallback.id })
+   567→            currentNode = fallback
+   568→          } else {
+   569→            trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+   570→            currentNode = undefined
+   571→          }
+   572→        }
+   573→        break
+   574→      }
+   575→
+   576→      // ── LOGIC: switch_case (multi-branch) ─────────────────────────────
+   577→      case 'switch_case': {
+   578→        const varName = currentNode.data.switchVariable || ''
+   579→        const varValue = ctx.variables[varName] || ''
+   580→        const cases = currentNode.data.cases || []
+   581→
+   582→        const matchIdx = cases.findIndex((c) => c === varValue)
+   583→        const handle = matchIdx >= 0 ? `case_${matchIdx}` : 'default'
+   584→
+   585→        trace.push({
+   586→          type: 'condition_eval',
+   587→          timestamp: now(),
+   588→          nodeId: currentNode.id,
+   589→          variable: varName,
+   590→          value: varValue,
+   591→          operator: 'switch',
+   592→          compareTo: matchIdx >= 0 ? cases[matchIdx] : '(default)',
+   593→          result: matchIdx >= 0,
+   594→        })
+   595→
+   596→        const next = followEdge(currentNode.id, handle)
+   597→        if (next) {
+   598→          trace.push({ type: 'branch_taken', timestamp: now(), nodeId: currentNode.id, handle, targetNodeId: next.id })
+   599→          currentNode = next
+   600→        } else {
+   601→          const fallback = followEdge(currentNode.id, null)
+   602→          if (fallback) {
+   603→            trace.push({ type: 'branch_taken', timestamp: now(), nodeId: currentNode.id, handle: 'default', targetNodeId: fallback.id })
+   604→            currentNode = fallback
+   605→          } else {
+   606→            trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+   607→            currentNode = undefined
+   608→          }
+   609→        }
+   610→        break
+   611→      }
+   612→
+   613→      // ── LOGIC: set_var ────────────────────────────────────────────────
+   614→      case 'set_var': {
+   615→        const name = currentNode.data.variable || ''
+   616→        const val = interpolate(currentNode.data.value || '', ctx)
+   617→        if (name) {
+   618→          ctx.variables[name] = val
+   619→          trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: name, value: val })
+   620→        }
+   621→        currentNode = followEdge(currentNode.id, null)
+   622→        break
+   623→      }
+   624→
+   625→      // ── LOGIC: counter (increment/decrement a numeric variable) ───────
+   626→      case 'counter': {
+   627→        const name = currentNode.data.variable || ''
+   628→        const inc = currentNode.data.increment ?? 1
+   629→        const startVal = currentNode.data.startValue ?? 0
+   630→        const current = parseInt(ctx.variables[name] || '', 10)
+   631→        const newVal = isNaN(current) ? startVal + inc : current + inc
+   632→        ctx.variables[name] = String(newVal)
+   633→        trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: name, value: String(newVal) })
+   634→        currentNode = followEdge(currentNode.id, null)
+   635→        break
+   636→      }
+   637→
+   638→      // ── LOGIC: format_string (template a string with variables) ──────
+   639→      case 'format_string': {
+   640→        const template = currentNode.data.text || ''
+   641→        const result = interpolate(template, ctx)
+   642→        const vname = currentNode.data.variableName
+   643→        if (vname) {
+   644→          ctx.variables[vname] = result
+   645→          trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: vname, value: result })
+   646→        }
+   647→        currentNode = followEdge(currentNode.id, null)
+   648→        break
+   649→      }
+   650→
+   651→      // ── LOGIC: delay ──────────────────────────────────────────────────
+   652→      case 'delay': {
+   653→        const s = Math.max(0, Math.min(60, currentNode.data.seconds || 1))
+   654→        await new Promise((r) => setTimeout(r, s * 1000))
+   655→        currentNode = followEdge(currentNode.id, null)
+   656→        break
+   657→      }
+   658→
+   659→      // ── LOGIC: log (debug logging — shows in trace, no user output) ───
+   660→      case 'log': {
+   661→        const msg = interpolate(currentNode.data.logMessage || '', ctx)
+   662→        const level = currentNode.data.logLevel || 'info'
+   663→        trace.push({ type: 'log', timestamp: now(), nodeId: currentNode.id, level, message: msg })
+   664→        currentNode = followEdge(currentNode.id, null)
+   665→        break
+   666→      }
+   667→
+   668→      // ── LOGIC: stop ───────────────────────────────────────────────────
+   669→      case 'stop':
+   670→        trace.push({ type: 'flow_end', timestamp: now(), reason: 'stop', sentCount })
+   671→        return { sentCount, paused: false, variables: ctx.variables, trace }
+   672→
+   673→      // ── OUTPUT: tts (Pocket TTS voice message) ────────────────────────
+   674→      case 'tts': {
+   675→        const ttsStart = now()
+   676→        const ttsNode = currentNode
+   677→        const text = interpolate(ttsNode.data.ttsText || '', ctx)
+   678→        const voice = ttsNode.data.ttsVoice || 'alba'
+   679→
+   680→        if (!text.trim()) {
+   681→          trace.push({ type: 'error', timestamp: now(), nodeId: ttsNode.id, message: 'TTS node has empty text' })
+   682→          currentNode = followEdge(ttsNode.id, null)
+   683→          break
+   684→        }
+   685→
+   686→        trace.push({ type: 'log', timestamp: now(), nodeId: ttsNode.id, level: 'info', message: `TTS: generating "${text.slice(0, 60)}…" with voice=${voice}` })
+   687→
+   688→        let mediaUrl: string | null = null
+   689→        if (ctx.generateTTS) {
+   690→          try {
+   691→            mediaUrl = await ctx.generateTTS(text, voice)
+   692→          } catch (e: any) {
+   693→            trace.push({ type: 'error', timestamp: now(), nodeId: ttsNode.id, message: `TTS failed: ${e?.message || e}` })
+   694→          }
+   695→        } else {
+   696→          // Debug mode — no actual TTS available
+   697→          trace.push({ type: 'error', timestamp: now(), nodeId: ttsNode.id, message: 'TTS not available in debug mode' })
+   698→        }
+   699→
+   700→        if (mediaUrl) {
+   701→          // Send as a voice message
+   702→          if (ctx.replyWithMedia) {
+   703→            await ctx.replyWithMedia(mediaUrl, 'audio')
+   704→          } else {
+   705→            await ctx.reply(`🔊 ${mediaUrl}`)
+   706→          }
+   707→          sentCount++
+   708→          trace.push({ type: 'message_sent', timestamp: now(), nodeId: ttsNode.id, text: `[voice message: ${text.slice(0, 60)}…]` })
+   709→          trace.push({ type: 'ai_call', timestamp: now(), nodeId: ttsNode.id, model: `tts:${voice}`, prompt: text.slice(0, 100), responseLength: 0, durationMs: now() - ttsStart })
+   710→        } else {
+   711→          // Fallback: send the text as a plain message
+   712→          await ctx.reply(`🔊 ${text}`)
+   713→          sentCount++
+   714→          trace.push({ type: 'message_sent', timestamp: now(), nodeId: ttsNode.id, text: `[TTS fallback] ${text.slice(0, 80)}` })
+   715→        }
+   716→        currentNode = followEdge(ttsNode.id, null)
+   717→        break
+   718→      }
+   719→
+   720→      // ── ADVANCED: asr_transcribe (Moonshine ASR voice-to-text) ───────
+   721→      case 'asr_transcribe': {
+   722→        const asrStart = now()
+   723→        const asrNode = currentNode
+   724→        const audioUrl = interpolate(asrNode.data.asrAudioUrl || '{{mediaUrl}}', ctx)
+   725→        const language = asrNode.data.asrLanguage || 'en'
+   726→        const shouldReply = asrNode.data.asrReply !== false // default true
+   727→        const vname = asrNode.data.variableName || 'transcript'
+   728→
+   729→        if (!audioUrl || !audioUrl.trim()) {
+   730→          trace.push({ type: 'error', timestamp: now(), nodeId: asrNode.id, message: 'ASR node has no audio URL (set asrAudioUrl or send a voice message)' })
+   731→          currentNode = followEdge(asrNode.id, null)
+   732→          break
+   733→        }
+   734→
+   735→        trace.push({ type: 'log', timestamp: now(), nodeId: asrNode.id, level: 'info', message: `ASR: transcribing "${audioUrl.slice(0, 60)}…" (lang=${language})` })
+   736→
+   737→        let transcript: string | null = null
+   738→        if (ctx.transcribeAudio) {
+   739→          try {
+   740→            transcript = await ctx.transcribeAudio(audioUrl, language)
+   741→          } catch (e: any) {
+   742→            trace.push({ type: 'error', timestamp: now(), nodeId: asrNode.id, message: `ASR failed: ${e?.message || e}` })
+   743→          }
+   744→        } else {
+   745→          // Debug mode — no actual ASR available
+   746→          trace.push({ type: 'error', timestamp: now(), nodeId: asrNode.id, message: 'ASR not available in debug mode' })
+   747→        }
+   748→
+   749→        const transcriptText = transcript?.trim() || ''
+   750→        const success = !!transcriptText
+   751→
+   752→        // Store in variable (even if empty — downstream condition nodes can check `exists`)
+   753→        ctx.variables[vname] = transcriptText
+   754→        trace.push({ type: 'variable_set', timestamp: now(), nodeId: asrNode.id, variable: vname, value: transcriptText.slice(0, 100) })
+   755→        trace.push({
+   756→          type: 'asr_call',
+   757→          timestamp: now(),
+   758→          nodeId: asrNode.id,
+   759→          audioUrl: audioUrl.slice(0, 100),
+   760→          transcriptLength: transcriptText.length,
+   761→          durationMs: now() - asrStart,
+   762→          success,
+   763→        })
+   764→
+   765→        // Optionally send the transcript as a reply (default behavior)
+   766→        if (shouldReply && transcriptText) {
+   767→          await ctx.reply(`📝 ${transcriptText}`)
+   768→          sentCount++
+   769→          trace.push({ type: 'message_sent', timestamp: now(), nodeId: asrNode.id, text: `[transcript] ${transcriptText.slice(0, 80)}` })
+   770→        } else if (shouldReply && !transcriptText) {
+   771→          await ctx.reply('📝 (transcription unavailable — no speech detected or ASR server down)')
+   772→          sentCount++
+   773→        }
+   774→
+   775→        currentNode = followEdge(asrNode.id, null)
+   776→        break
+   777→      }
+   778→
+   779→      // ── ADVANCED: api_call ────────────────────────────────────────────
+   780→      case 'api_call': {
+   781→        const callStart = now()
+   782→        try {
+   783→          const url = interpolate(currentNode.data.url || '', ctx)
+   784→          const method = currentNode.data.method || 'GET'
+   785→          const headers = currentNode.data.headers ? JSON.parse(currentNode.data.headers) : {}
+   786→          const body = currentNode.data.body ? interpolate(currentNode.data.body, ctx) : undefined
+   787→          const res = await fetch(url, { method, headers, body })
+   788→          const text = await res.text()
+   789→          const vname = currentNode.data.variableName
+   790→          if (vname) {
+   791→            ctx.variables[vname] = text.slice(0, 4000)
+   792→            trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: vname, value: text.slice(0, 200) + (text.length > 200 ? '…' : '') })
+   793→          }
+   794→          trace.push({ type: 'api_call', timestamp: now(), nodeId: currentNode.id, url, method, status: res.status, durationMs: now() - callStart })
+   795→        } catch (e: any) {
+   796→          trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: `API call failed: ${e?.message || e}` })
+   797→        }
+   798→        currentNode = followEdge(currentNode.id, null)
+   799→        break
+   800→      }
+   801→
+   802→      // ── ADVANCED: random ──────────────────────────────────────────────
+   803→      case 'random': {
+   804→        const allEdges = edgesFrom(currentNode.id, undefined)
+   805→        if (allEdges.length === 0) {
+   806→          trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+   807→          currentNode = undefined
+   808→          break
+   809→        }
+   810→        const pick = allEdges[Math.floor(Math.random() * allEdges.length)]
+   811→        const target = flow.nodes.find((n) => n.id === pick.target)
+   812→        if (target) {
+   813→          trace.push({ type: 'branch_taken', timestamp: now(), nodeId: currentNode.id, handle: pick.sourceHandle || 'random', targetNodeId: target.id })
+   814→          currentNode = target
+   815→        } else {
+   816→          currentNode = undefined
+   817→        }
+   818→        break
+   819→      }
+   820→
+   821→      // ── ADVANCED: ai_generate ──────────────────────────────────────────
+   822→      case 'ai_generate': {
+   823→        const vname = currentNode.data.variableName || 'aiResponse'
+   824→        const callStart = now()
+   825→        try {
+   826→          const model = currentNode.data.aiModel || 'gemma3:270m'
+   827→          const prompt = interpolate(currentNode.data.aiPrompt || '', ctx)
+   828→          const systemPrompt = currentNode.data.aiSystemPrompt
+   829→            ? interpolate(currentNode.data.aiSystemPrompt, ctx)
+   830→            : undefined
+   831→          const temperature = currentNode.data.aiTemperature ?? 0.7
+   832→          const maxTokens = currentNode.data.aiMaxTokens ?? 256
+   833→
+   834→          const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434'
+   835→          const res = await fetch(`${ollamaUrl}/api/generate`, {
+   836→            method: 'POST',
+   837→            headers: { 'Content-Type': 'application/json' },
+   838→            body: JSON.stringify({
+   839→              model, prompt, system: systemPrompt, stream: false,
+   840→              options: { temperature, num_predict: maxTokens },
+   841→            }),
+   842→          })
+   843→
+   844→          if (!res.ok) {
+   845→            const errText = await res.text().catch(() => 'unknown error')
+   846→            const errMsg = `Ollama error ${res.status}: ${errText.slice(0, 100)}`
+   847→            ctx.variables[vname] = `[AI error: ${res.status}]`
+   848→            trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: errMsg })
+   849→            trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: vname, value: ctx.variables[vname] })
+   850→            trace.push({ type: 'ai_call', timestamp: now(), nodeId: currentNode.id, model, prompt: prompt.slice(0, 100), responseLength: 0, durationMs: now() - callStart })
+   851→          } else {
+   852→            const data = await res.json()
+   853→            const generated: string = data.response || ''
+   854→            ctx.variables[vname] = generated.slice(0, 4000)
+   855→            trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: vname, value: generated.slice(0, 200) + (generated.length > 200 ? '…' : '') })
+   856→            trace.push({ type: 'ai_call', timestamp: now(), nodeId: currentNode.id, model, prompt: prompt.slice(0, 100), responseLength: generated.length, durationMs: now() - callStart })
+   857→          }
+   858→        } catch (e: any) {
+   859→          ctx.variables[vname] = `[AI error: ${e?.message || 'unavailable'}]`
+   860→          trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: `AI generate failed: ${e?.message || e}` })
+   861→          trace.push({ type: 'variable_set', timestamp: now(), nodeId: currentNode.id, variable: vname, value: ctx.variables[vname] })
+   862→        }
+   863→        currentNode = followEdge(currentNode.id, null)
+   864→        break
+   865→      }
+   866→
+   867→      default:
+   868→        trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: `unknown node type: ${currentNode.type}` })
+   869→        return { sentCount, paused: false, variables: ctx.variables, trace, error: `unknown node type: ${currentNode.type}` }
+   870→    }
+   871→
+   872→    // Record node exit
+   873→    if (currentNode) {
+   874→      trace.push({ type: 'node_exit', timestamp: now(), nodeId: currentNode.id, durationMs: 0 })
+   875→    }
+   876→  }
+   877→
+   878→  if (steps >= MAX_STEPS) {
+   879→    await ctx.reply('⚠️ Bot flow exceeded maximum steps (possible infinite loop).')
+   880→    trace.push({ type: 'error', timestamp: now(), message: 'max steps exceeded' })
+   881→    trace.push({ type: 'flow_end', timestamp: now(), reason: 'max_steps', sentCount })
+   882→    return { sentCount, paused: false, variables: ctx.variables, trace, error: 'max steps' }
+   883→  }
+   884→
+   885→  trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+   886→  return { sentCount, paused: false, variables: ctx.variables, trace }
+   887→}
+   888→
+   889→// ─────────────────────────────────────────────────────────────────────────────
+   890→// UI metadata — node catalog (used by the editor for palette + rendering)
+   891→// ─────────────────────────────────────────────────────────────────────────────
+   892→
+   893→export interface NodeDef {
+   894→  type: NodeType
+   895→  label: string
+   896→  category: NodeCategory
+   897→  description: string
+   898→  /** Lucide icon name (string — editor maps it to the component). */
+   899→  icon: string
+   900→  /** Hex color, used for accents, borders, handles. */
+   901→  color: string
+   902→  /** Background tint, hex with alpha. */
+   903→  bg: string
+   904→  /** Handle layout: 'single' | 'true_false' | 'multi' */
+   905→  handles: 'single' | 'true_false' | 'multi'
+   906→  /** Whether this node can be the starting point of the flow. */
+   907→  isStart?: boolean
+   908→  /** Whether this node pauses execution and waits for the next message. */
+   909→  pauses?: boolean
+   910→  /** Whether this node terminates the flow. */
+   911→  terminates?: boolean
+   912→}
+   913→
+   914→export const NODE_DEFS: Record<NodeType, NodeDef> = {
+   915→  trigger: {
+   916→    type: 'trigger', label: 'Trigger', category: 'trigger',
+   917→    description: 'Starts the bot when a message, command, or mention arrives',
+   918→    icon: 'Zap', color: '#A78BFA', bg: '#A78BFA1A',
+   919→    handles: 'single', isStart: true,
+   920→  },
+   921→  message: {
+   922→    type: 'message', label: 'Send Message', category: 'output',
+   923→    description: 'Sends a text message to the channel',
+   924→    icon: 'Send', color: '#34D399', bg: '#34D3991A',
+   925→    handles: 'single',
+   926→  },
+   927→  send_media: {
+   928→    type: 'send_media', label: 'Send Media', category: 'output',
+   929→    description: 'Sends an image, video, or audio file',
+   930→    icon: 'Image', color: '#4ADE80', bg: '#4ADE801A',
+   931→    handles: 'single',
+   932→  },
+   933→  typing: {
+   934→    type: 'typing', label: 'Typing Pause', category: 'output',
+   935→    description: 'Shows a typing indicator for a moment',
+   936→    icon: 'Loader', color: '#6EE7B7', bg: '#6EE7B71A',
+   937→    handles: 'single',
+   938→  },
+   939→  input: {
+   940→    type: 'input', label: 'Wait for Reply', category: 'input',
+   941→    description: 'Asks a question and waits for the next message',
+   942→    icon: 'Keyboard', color: '#F87171', bg: '#F871711A',
+   943→    handles: 'single', pauses: true,
+   944→  },
+   945→  wait_choice: {
+   946→    type: 'wait_choice', label: 'Wait for Choice', category: 'input',
+   947→    description: 'Waits for the user to pick one of N options',
+   948→    icon: 'MousePointerClick', color: '#FB923C', bg: '#FB923C1A',
+   949→    handles: 'single', pauses: true,
+   950→  },
+   951→  condition: {
+   952→    type: 'condition', label: 'Condition', category: 'logic',
+   953→    description: 'Branches based on a variable comparison (true/false)',
+   954→    icon: 'GitBranch', color: '#FBBF24', bg: '#FBBF241A',
+   955→    handles: 'true_false',
+   956→  },
+   957→  switch_case: {
+   958→    type: 'switch_case', label: 'Switch', category: 'logic',
+   959→    description: 'Multi-branch based on exact variable value match',
+   960→    icon: 'Split', color: '#FB7185', bg: '#FB71851A',
+   961→    handles: 'multi',
+   962→  },
+   963→  set_var: {
+   964→    type: 'set_var', label: 'Set Variable', category: 'logic',
+   965→    description: 'Sets a variable to a value',
+   966→    icon: 'Variable', color: '#FCD34D', bg: '#FCD34D1A',
+   967→    handles: 'single',
+   968→  },
+   969→  counter: {
+   970→    type: 'counter', label: 'Counter', category: 'logic',
+   971→    description: 'Increments or decrements a numeric variable',
+   972→    icon: 'Hash', color: '#FACC15', bg: '#FACC151A',
+   973→    handles: 'single',
+   974→  },
+   975→  format_string: {
+   976→    type: 'format_string', label: 'Format String', category: 'logic',
+   977→    description: 'Builds a string from a template with {{variables}}',
+   978→    icon: 'Braces', color: '#E0E7FF', bg: '#E0E7FF1A',
+   979→    handles: 'single',
+   980→  },
+   981→  delay: {
+   982→    type: 'delay', label: 'Delay', category: 'logic',
+   983→    description: 'Waits for N seconds before continuing',
+   984→    icon: 'Clock', color: '#F59E0B', bg: '#F59E0B1A',
+   985→    handles: 'single',
+   986→  },
+   987→  log: {
+   988→    type: 'log', label: 'Log', category: 'logic',
+   989→    description: 'Debug log — shows in the trace panel, no user output',
+   990→    icon: 'Terminal', color: '#94A3B8', bg: '#94A3B81A',
+   991→    handles: 'single',
+   992→  },
+   993→  stop: {
+   994→    type: 'stop', label: 'Stop', category: 'logic',
+   995→    description: 'Ends the flow immediately',
+   996→    icon: 'Square', color: '#EF4444', bg: '#EF44441A',
+   997→    handles: 'single', terminates: true,
+   998→  },
+   999→  api_call: {
+  1000→    type: 'api_call', label: 'API Call', category: 'advanced',
+  1001→    description: 'Calls an external HTTP endpoint',
+  1002→    icon: 'Webhook', color: '#22D3EE', bg: '#22D3EE1A',
+  1003→    handles: 'single',
+  1004→  },
+  1005→  random: {
+  1006→    type: 'random', label: 'Random Branch', category: 'advanced',
+  1007→    description: 'Picks one outgoing edge at random',
+  1008→    icon: 'Shuffle', color: '#2DD4BF', bg: '#2DD4BF1A',
+  1009→    handles: 'multi',
+  1010→  },
+  1011→  ai_generate: {
+  1012→    type: 'ai_generate', label: 'AI Generate', category: 'advanced',
+  1013→    description: 'Generates text with a local Ollama LLM',
+  1014→    icon: 'Sparkles', color: '#C084FC', bg: '#C084FC1A',
+  1015→    handles: 'single',
+  1016→  },
+  1017→  tts: {
+  1018→    type: 'tts', label: 'Voice Message', category: 'output',
+  1019→    description: 'Generates a TTS voice message from text using Pocket TTS',
+  1020→    icon: 'AudioLines', color: '#F472B6', bg: '#F472B61A',
+  1021→    handles: 'single',
+  1022→  },
+  1023→  asr_transcribe: {
+  1024→    type: 'asr_transcribe', label: 'Transcribe Audio', category: 'advanced',
+  1025→    description: 'Transcribes a voice message to text using Moonshine ASR',
+  1026→    icon: 'AudioLines', color: '#22D3EE', bg: '#22D3EE1A',
+  1027→    handles: 'single',
+  1028→  },
+  1029→}
+  1030→
+  1031→export const CATEGORY_ORDER: NodeCategory[] = ['trigger', 'output', 'input', 'logic', 'advanced']
+  1032→
+  1033→export const CATEGORY_LABELS: Record<NodeCategory, string> = {
+  1034→  trigger: 'Triggers',
+  1035→  output: 'Output',
+  1036→  input: 'Input',
+  1037→  logic: 'Logic',
+  1038→  advanced: 'Advanced',
+  1039→}
+  1040→
+  1041→/** Default data factory — gives every new node a sensible starting state. */
+  1042→export function defaultNodeData(type: NodeType): FlowNodeData {
+  1043→  switch (type) {
+  1044→    case 'trigger':
+  1045→      return { triggerType: 'any_message', label: 'Trigger' }
+  1046→    case 'message':
+  1047→      return { text: 'Hello {{sender}}!', label: 'Send Message' }
+  1048→    case 'send_media':
+  1049→      return { mediaUrl: '', caption: '', mediaType: 'image', label: 'Send Media' }
+  1050→    case 'typing':
+  1051→      return { seconds: 2, label: 'Typing Pause' }
+  1052→    case 'input':
+  1053→      return { prompt: 'What is your name?', variableName: 'userName', label: 'Wait for Reply' }
+  1054→    case 'wait_choice':
+  1055→      return { prompt: 'Pick one:', options: ['Yes', 'No'], variableName: 'choice', label: 'Wait for Choice' }
+  1056→    case 'condition':
+  1057→      return { variable: '', operator: 'exists', value: '', label: 'Condition' }
+  1058→    case 'switch_case':
+  1059→      return { switchVariable: '', cases: ['yes', 'no'], label: 'Switch' }
+  1060→    case 'set_var':
+  1061→      return { variable: '', value: '', label: 'Set Variable' }
+  1062→    case 'counter':
+  1063→      return { variable: 'count', increment: 1, startValue: 0, label: 'Counter' }
+  1064→    case 'format_string':
+  1065→      return { text: 'Hello {{name}}!', variableName: 'formatted', label: 'Format String' }
+  1066→    case 'delay':
+  1067→      return { seconds: 1, label: 'Delay' }
+  1068→    case 'log':
+  1069→      return { logMessage: 'Debug: {{body}}', logLevel: 'info', label: 'Log' }
+  1070→    case 'stop':
+  1071→      return { label: 'Stop' }
+  1072→    case 'api_call':
+  1073→      return { url: '', method: 'GET', variableName: 'apiResult', label: 'API Call' }
+  1074→    case 'random':
+  1075→      return { label: 'Random Branch' }
+  1076→    case 'ai_generate':
+  1077→      return {
+  1078→        label: 'AI Generate',
+  1079→        aiPrompt: 'Summarize this message in one sentence: {{body}}',
+  1080→        aiSystemPrompt: '',
+  1081→        aiModel: 'gemma3:270m',
+  1082→        aiTemperature: 0.7,
+  1083→        aiMaxTokens: 256,
+  1084→        variableName: 'aiResponse',
+  1085→      }
+  1086→    case 'tts':
+  1087→      return {
+  1088→        label: 'Voice Message',
+  1089→        ttsText: 'Hello {{sender}}! This is a voice message from the bot.',
+  1090→        ttsVoice: 'alba',
+  1091→      }
+  1092→    case 'asr_transcribe':
+  1093→      return {
+  1094→        label: 'Transcribe Audio',
+  1095→        asrAudioUrl: '{{mediaUrl}}',
+  1096→        asrLanguage: 'en',
+  1097→        asrReply: true,
+  1098→        variableName: 'transcript',
+  1099→      }
+  1100→  }
+  1101→}
+  1102→
