@@ -54,9 +54,37 @@ export async function POST(req: Request) {
     const bytes = new Uint8Array(await file.arrayBuffer())
     await writeFile(filePath, bytes)
 
+    // Determine the MIME type. Prefer file.type (set by the browser), but
+    // fall back to detecting from the extension. This matters because:
+    //   - Some browsers don't set file.type for Blob-created Files
+    //   - WebM audio recordings can get tagged as 'video/webm' by some browsers
+    //   - The caller (message-composer) uses this type to decide how to render
+    //     the message (audio player vs video element vs image)
+    const EXT_MIME: Record<string, string> = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.mp3': 'audio/mpeg',
+      '.wav': 'audio/wav',
+      '.ogg': 'audio/ogg',
+      '.webm': 'audio/webm',   // WebM from voice recordings is audio, not video
+      '.m4a': 'audio/mp4',
+      '.flac': 'audio/flac',
+      '.mp4': 'video/mp4',
+      '.mov': 'video/quicktime',
+      '.avi': 'video/x-msvideo',
+      '.pdf': 'application/pdf',
+      '.txt': 'text/plain',
+    }
+    const detectedType = file.type && file.type !== 'application/octet-stream'
+      ? file.type
+      : (EXT_MIME[safeExt] || 'application/octet-stream')
+
     return NextResponse.json({
       url: `/api/uploads/${filename}`,
-      type: file.type || 'application/octet-stream',
+      type: detectedType,
       size: file.size,
       name: file.name || filename,
     })

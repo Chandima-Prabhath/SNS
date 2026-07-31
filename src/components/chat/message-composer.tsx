@@ -410,7 +410,14 @@ function useVoiceRecorder({
         throw new Error(t.slice(0, 120) || 'Upload failed')
       }
       const data = await res.json()
-      await onSend(data.url, data.type || mime || 'audio/webm')
+      // ALWAYS use the MIME type we recorded with (from MediaRecorder), NOT
+      // data.type from the upload response. The upload route returns
+      // file.type which can come back as 'video/webm' (WebM is primarily a
+      // video container) or 'application/octet-stream' (if the type is lost
+      // in FormData serialization). Either of those would cause the message
+      // to render as a <video> element (black square) instead of our custom
+      // VoiceMessagePlayer. We KNOW we recorded audio, so use mime directly.
+      await onSend(data.url, mime || 'audio/webm')
       toast.success('Voice message sent')
     } catch (e: any) {
       toast.error(e?.message || 'Failed to send voice message')

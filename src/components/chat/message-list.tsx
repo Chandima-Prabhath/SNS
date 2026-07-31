@@ -16,6 +16,23 @@ import { useCall } from '@/hooks/useCall'
 import { useMusicStore } from '@/stores/useMusicStore'
 import { toast } from 'sonner'
 
+/**
+ * Detect whether a media URL + mediaType combination represents an audio file.
+ *
+ * We check BOTH the mediaType AND the file extension, because some browsers
+ * tag WebM audio recordings as 'video/webm' (WebM is primarily a video
+ * container) or 'application/octet-stream' (if the type is lost in FormData
+ * upload). Without this check, voice messages would render as a black
+ * <video> square instead of the custom VoiceMessagePlayer.
+ */
+function isAudioFile(mediaUrl: string | null | undefined, mediaType: string | null | undefined): boolean {
+  if (mediaType?.startsWith('audio')) return true
+  if (!mediaUrl) return false
+  const AUDIO_EXTENSIONS = ['.webm', '.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac']
+  const lower = mediaUrl.toLowerCase()
+  return AUDIO_EXTENSIONS.some((ext) => lower.endsWith(ext))
+}
+
 interface MessageListProps {
   channelId: string
 }
@@ -631,14 +648,17 @@ function MessageItem(props: MessageItemProps) {
           }
         })()}
 
-        {/* Media */}
+        {/* Media — detect audio by both mediaType AND file extension, because
+            some older voice messages may have been stored with mediaType
+            'video/webm' or 'application/octet-stream' due to a browser bug
+            where WebM audio recordings get misclassified. */}
         {m.mediaUrl && m.mediaType?.startsWith('image') && (
           <img src={m.mediaUrl} alt="" className="rounded-lg mb-1.5 max-w-full -mx-1 w-[calc(100%+0.5rem)]" />
         )}
-        {m.mediaUrl && m.mediaType?.startsWith('video') && (
+        {m.mediaUrl && m.mediaType?.startsWith('video') && !isAudioFile(m.mediaUrl, m.mediaType) && (
           <video src={m.mediaUrl} controls className="rounded-lg mb-1.5 max-w-full -mx-1 w-[calc(100%+0.5rem)]" />
         )}
-        {m.mediaUrl && m.mediaType?.startsWith('audio') && (
+        {m.mediaUrl && (m.mediaType?.startsWith('audio') || isAudioFile(m.mediaUrl, m.mediaType)) && (
           <div className="mb-1.5 -mx-1">
             <VoiceMessagePlayer
               src={m.mediaUrl}
@@ -714,7 +734,7 @@ function MessageItem(props: MessageItemProps) {
                 audio messages (the VoiceMessagePlayer already communicates
                 what it is via its label — showing "Voice message" text below
                 the player is redundant and looks unstyled). */}
-            {m.mediaType !== 'invite-call' && m.mediaType !== 'invite-music' && !m.mediaType?.startsWith('audio') && (
+            {m.mediaType !== 'invite-call' && m.mediaType !== 'invite-music' && !m.mediaType?.startsWith('audio') && !isAudioFile(m.mediaUrl, m.mediaType) && (
               <div className="whitespace-pre-wrap">{m.body}</div>
             )}
             {m.editedAt && (
