@@ -669,7 +669,7 @@ export function MusicView() {
                 transition={{ duration: 0.2 }}
                 className="space-y-4"
               >
-                {/* Now Playing card */}
+                {/* Now Playing card — blurred bg + full controls */}
                 {currentTrack && (
                   <div className="relative rounded-2xl overflow-hidden border border-white/10 shadow-xl">
                     {/* Blurred bg */}
@@ -679,27 +679,60 @@ export function MusicView() {
                         <div className="absolute inset-0 bg-black/40" />
                       </div>
                     )}
-                    <div className="relative z-10 flex items-center gap-4 p-4">
-                      {/* Album art */}
-                      {currentTrack.thumbnail ? (
-                        <img src={currentTrack.thumbnail} alt="" className="w-16 h-16 rounded-xl object-cover shadow-lg ring-1 ring-white/10 shrink-0" />
-                      ) : (
-                        <div className="w-16 h-16 rounded-xl gradient-primary flex items-center justify-center shrink-0 shadow-lg">
-                          <MusicIcon className="w-7 h-7 text-primary-foreground" />
+                    <div className="relative z-10 p-4 space-y-3">
+                      {/* Track info row */}
+                      <div className="flex items-center gap-4">
+                        {currentTrack.thumbnail ? (
+                          <img src={currentTrack.thumbnail} alt="" className="w-16 h-16 rounded-xl object-cover shadow-lg ring-1 ring-white/10 shrink-0" />
+                        ) : (
+                          <div className="w-16 h-16 rounded-xl gradient-primary flex items-center justify-center shrink-0 shadow-lg">
+                            <MusicIcon className="w-7 h-7 text-primary-foreground" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs uppercase tracking-wider text-foreground/50 mb-0.5 flex items-center gap-1.5">
+                            {isPlaying && <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />}
+                            {isPlaying ? 'Now Playing' : 'Paused'}
+                          </div>
+                          <div className="text-sm font-bold truncate">{currentTrack.title}</div>
+                          <div className="text-xs text-muted-foreground truncate">{currentTrack.artist}</div>
                         </div>
-                      )}
-                      {/* Track info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs uppercase tracking-wider text-foreground/50 mb-0.5">
-                          {isPlaying ? 'Now Playing' : 'Paused'}
-                        </div>
-                        <div className="text-sm font-bold truncate">{currentTrack.title}</div>
-                        <div className="text-xs text-muted-foreground truncate">{currentTrack.artist}</div>
-                      </div>
-                      {/* Mini controls */}
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button onClick={() => playNext()} className="p-2 rounded-full text-foreground hover:bg-white/10 transition-colors" aria-label="Next">
+                        <button onClick={() => playNext()} className="p-2.5 rounded-full text-foreground hover:bg-white/10 transition-colors shrink-0" aria-label="Next">
                           <SkipForward className="w-4 h-4" />
+                        </button>
+                      </div>
+                      {/* Action buttons row */}
+                      <div className="flex items-center gap-1.5 justify-center">
+                        <button
+                          onClick={() => setShuffle(!shuffle)}
+                          className={cn(
+                            'p-2 rounded-lg transition-all',
+                            shuffle ? 'text-primary bg-primary/10 shadow-glow' : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+                          )}
+                          aria-label="Toggle shuffle"
+                        >
+                          <Shuffle className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setRepeat(!repeat)}
+                          className={cn(
+                            'p-2 rounded-lg transition-all',
+                            repeat ? 'text-primary bg-primary/10 shadow-glow' : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+                          )}
+                          aria-label="Toggle repeat"
+                        >
+                          <Repeat className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setAutoplay(!autoplay)}
+                          className={cn(
+                            'p-2 rounded-lg transition-all',
+                            autoplay ? 'text-primary bg-primary/10 shadow-glow' : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
+                          )}
+                          title="Autoplay recommendations"
+                          aria-label="Toggle autoplay"
+                        >
+                          <Radio className="w-4 h-4" />
                         </button>
                       </div>
                     </div>
@@ -727,78 +760,6 @@ export function MusicView() {
                     </Button>
                   )}
                 </div>
-
-                {/* Currently playing */}
-                {currentTrack && (
-                  <SpotlightCard spotlightColor="rgba(var(--primary), 0.15)" className="p-4 rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/8 to-transparent">
-                    <div className="text-[10px] uppercase tracking-widest text-primary font-bold mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_oklch(0.68_0.24_264/0.6)]" />
-                      <ShinyText shimmerDuration={3} className="text-[10px]">Now Playing</ShinyText>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      {currentTrack.thumbnail ? (
-                        <div className="relative w-12 h-12 md:w-16 md:h-16 rounded-xl overflow-hidden shadow-lg ring-1 ring-white/10 shrink-0">
-                          <img
-                            src={currentTrack.thumbnail}
-                            alt=""
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                      ) : (
-                        <div className="w-12 h-12 md:w-16 md:h-16 rounded-xl gradient-primary flex items-center justify-center shadow-lg shrink-0">
-                          <Radio className="w-5 h-5 md:w-6 md:h-6 text-primary-foreground" />
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm md:text-base font-semibold truncate text-foreground">
-                          {currentTrack.title}
-                        </div>
-                        <div className="text-xs md:text-sm text-muted-foreground truncate">
-                          {currentTrack.artist}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-3 justify-center">
-                      <button
-                        onClick={() => setShuffle(!shuffle)}
-                        className={cn(
-                          'p-2 rounded-lg transition-all',
-                          shuffle
-                            ? 'text-primary bg-primary/10 shadow-glow'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
-                        )}
-                        aria-label="Toggle shuffle"
-                      >
-                        <Shuffle className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => setRepeat(!repeat)}
-                        className={cn(
-                          'p-2 rounded-lg transition-all',
-                          repeat
-                            ? 'text-primary bg-primary/10 shadow-glow'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
-                        )}
-                        aria-label="Toggle repeat"
-                      >
-                        <Repeat className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => setAutoplay(!autoplay)}
-                        className={cn(
-                          'p-2 rounded-lg transition-all',
-                          autoplay
-                            ? 'text-primary bg-primary/10 shadow-glow'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-white/5',
-                        )}
-                        title="Autoplay recommendations"
-                        aria-label="Toggle autoplay"
-                      >
-                        <Radio className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </SpotlightCard>
-                )}
 
                 {/* Queue list */}
                 {queue.length === 0 ? (
