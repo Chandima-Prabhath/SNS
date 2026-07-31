@@ -35,6 +35,19 @@ export async function POST(req: Request) {
 
     const ext = path.extname(file.name || '').toLowerCase().slice(0, 8) || '.bin'
     const safeExt = /^[\w.-]+$/.test(ext) ? ext : '.bin'
+
+    // Extension allowlist — reject SVG, HTML, JS, etc. (XSS prevention)
+    const ALLOWED_EXTENSIONS = new Set([
+      '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico',
+      '.mp3', '.wav', '.ogg', '.webm', '.m4a', '.flac',
+      '.mp4', '.mov', '.avi',
+      '.pdf', '.txt',
+      '.safetensors', '.bin',
+    ])
+    if (!ALLOWED_EXTENSIONS.has(safeExt)) {
+      return NextResponse.json({ error: 'File type not allowed' }, { status: 403 })
+    }
+
     const filename = `${Date.now()}-${crypto.randomUUID()}${safeExt}`
     const filePath = path.join(uploadDir, filename)
 

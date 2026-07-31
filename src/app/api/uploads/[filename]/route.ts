@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 import { readFile, stat } from 'fs/promises'
 import { existsSync } from 'fs'
 import path from 'path'
@@ -6,6 +8,16 @@ import path from 'path'
 // Force dynamic Node.js route — we read from disk on every request.
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+// Allowed file extensions — blocks SVG (XSS), HTML, JS, etc.
+const ALLOWED_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico',
+  '.mp3', '.wav', '.ogg', '.webm', '.m4a', '.flac',
+  '.mp4', '.mov', '.avi',
+  '.pdf', '.txt',
+  '.safetensors',
+  '.bin',
+])
 
 // MIME type map for common upload extensions. Browsers need the correct
 // Content-Type to play audio/video inline.
@@ -45,12 +57,23 @@ export async function GET(
   { params }: { params: Promise<{ filename: string }> }
 ) {
   try {
+    // Auth check — require an authenticated session
+    const session = await getServerSession(authOptions)
+    if (!session?.user) {
+      return new NextResponse('Unauthorized', { status: 401 })
+    }
+
     const { filename } = await params
 
     // Sanitize filename — prevent path traversal (../../etc/passwd etc.)
-    // Only allow alphanumeric, dash, underscore, dot, in the filename itself.
     if (!filename || !/^[\w\-.]+$/.test(filename)) {
       return new NextResponse('Invalid filename', { status: 400 })
+    }
+
+    // Extension allowlist — blocks SVG (XSS), HTML, JS, etc.
+    const ext = path.extname(filename).toLowerCase()
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      return new NextResponse('File type not allowed', { status: 403 })
     }
 
     const filePath = path.join(process.cwd(), 'public', 'uploads', filename)
@@ -72,7 +95,6 @@ export async function GET(
       return new NextResponse('File is empty', { status: 500 })
     }
 
-    const ext = path.extname(filename).toLowerCase()
     const contentType = MIME_TYPES[ext] || 'application/octet-stream'
 
     // Check for Range header (audio/video seeking)

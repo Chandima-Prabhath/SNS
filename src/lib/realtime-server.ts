@@ -182,8 +182,14 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
     setPresence(userId, username, 'online', socket.id)
 
     // ─── Chat channel subscriptions ──────────────────────────────────────
-    socket.on('channel:join', (channelId: string) => {
-      socket.join(`channel:${channelId}`)
+    socket.on('channel:join', async (channelId: string) => {
+      // Verify membership before joining the socket room (C8 fix)
+      const membership = await db.channelMember.findUnique({
+        where: { channelId_userId: { channelId, userId: socket.userId } },
+      }).catch(() => null)
+      if (membership) {
+        socket.join(`channel:${channelId}`)
+      }
     })
 
     socket.on('channel:leave', (channelId: string) => {
@@ -191,11 +197,17 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
     })
 
     socket.on('channel:message', (payload: { channelId: string; message: any }) => {
-      socket.to(`channel:${payload.channelId}`).emit('channel:message', payload.message)
+      // C9 fix: only broadcast messages from the authenticated user
+      if (payload.message?.senderId === userId) {
+        socket.to(`channel:${payload.channelId}`).emit('channel:message', payload.message)
+      }
     })
 
     socket.on('channel:message-edit', (payload: { channelId: string; message: any }) => {
-      socket.to(`channel:${payload.channelId}`).emit('channel:message-edit', payload.message)
+      // C9 fix: only broadcast edits for the user's own messages
+      if (payload.message?.senderId === userId) {
+        socket.to(`channel:${payload.channelId}`).emit('channel:message-edit', payload.message)
+      }
     })
 
     socket.on('channel:message-delete', (payload: { channelId: string; messageId: string }) => {

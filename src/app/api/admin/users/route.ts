@@ -44,6 +44,12 @@ export async function PATCH(req: Request) {
   const updated = await db.user.update({
     where: { id: userId },
     data: { role },
+    // H7 fix: never return passwordHash in the response
+    select: {
+      id: true, username: true, displayName: true, email: true,
+      avatarUrl: true, role: true, status: true, createdAt: true,
+      lastSeenAt: true,
+    },
   })
   return NextResponse.json({ user: updated })
 }

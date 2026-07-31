@@ -1,0 +1,1007 @@
+     1→'use client'
+     2→
+     3→import { useState, useMemo } from 'react'
+     4→import { useSession } from 'next-auth/react'
+     5→import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+     6→import { Card } from '@/components/ui/card'
+     7→import { Button } from '@/components/ui/button'
+     8→import { Input } from '@/components/ui/input'
+     9→import { Label } from '@/components/ui/label'
+    10→import { Textarea } from '@/components/ui/textarea'
+    11→import { Switch } from '@/components/ui/switch'
+    12→import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+    13→import { Badge } from '@/components/ui/badge'
+    14→import {
+    15→  Loader2,
+    16→  Save,
+    17→  LogOut,
+    18→  ChevronRight,
+    19→  Bot,
+    20→  Shield,
+    21→  User,
+    22→  Server,
+    23→  Plus,
+    24→  Trash2,
+    25→  Check,
+    26→  X,
+    27→  Terminal,
+    28→  Hash,
+    29→  Sparkles,
+    30→} from 'lucide-react'
+    31→import { signOut } from 'next-auth/react'
+    32→import { toast } from 'sonner'
+    33→import { cn } from '@/lib/utils'
+    34→import { useConfirm } from '@/hooks/useConfirm'
+    35→import { motion, AnimatePresence } from 'framer-motion'
+    36→import { generateAvatarCandidates, AVATAR_STYLES } from '@/lib/avatar'
+    37→import { SpotlightCard, GlassSurface, GradientText, ShinyText } from '@/components/reactbits'
+    38→// BotBuilderEditor is now loaded via the standalone /bot-builder/[id] route
+    39→import {
+    40→  Select,
+    41→  SelectContent,
+    42→  SelectItem,
+    43→  SelectTrigger,
+    44→  SelectValue,
+    45→} from '@/components/ui/select'
+    46→
+    47→type SettingsSection = 'profile' | 'privacy' | 'bots' | 'admin' | 'system'
+    48→
+    49→export function SettingsView() {
+    50→  const { data: session } = useSession()
+    51→  const [section, setSection] = useState<SettingsSection>('profile')
+    52→
+    53→  const role = (session?.user as any)?.role
+    54→  const isAdmin = role === 'admin' || role === 'owner'
+    55→
+    56→  const sections: { key: SettingsSection; label: string; icon: typeof User; adminOnly?: boolean }[] = [
+    57→    { key: 'profile', label: 'Profile', icon: User },
+    58→    { key: 'privacy', label: 'Privacy', icon: Shield },
+    59→    { key: 'bots', label: 'Bots', icon: Bot },
+    60→    ...(isAdmin ? [{ key: 'admin' as SettingsSection, label: 'Admin', icon: Shield, adminOnly: true as const }] : []),
+    61→    { key: 'system', label: 'System', icon: Server },
+    62→  ]
+    63→
+    64→  return (
+    65→    <div className="h-full overflow-hidden flex flex-col mesh-gradient">
+    66→      <div className="max-w-4xl w-full mx-auto p-4 md:p-6 flex-1 flex flex-col min-h-0 lg:pb-0 pb-20">
+    67→        {/* Header with gradient text */}
+    68→        <div className="mb-5 shrink-0">
+    69→          <h1 className="text-3xl font-bold tracking-tight">
+    70→            <GradientText>Settings</GradientText>
+    71→          </h1>
+    72→          <p className="text-sm text-muted-foreground mt-1">Manage your profile, privacy, and more</p>
+    73→        </div>
+    74→
+    75→        {/* Section navigation — glassmorphic pill bar */}
+    76→        <GlassSurface className="mb-4 shrink-0" blur={16} opacity={0.05}>
+    77→          <div className="flex gap-1.5 overflow-x-auto no-scrollbar p-1.5">
+    78→            {sections.map((s) => {
+    79→              const Icon = s.icon
+    80→              const active = section === s.key
+    81→              return (
+    82→                <button
+    83→                  key={s.key}
+    84→                  onClick={() => setSection(s.key)}
+    85→                  className={cn(
+    86→                    'flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap shrink-0',
+    87→                    active
+    88→                      ? 'gradient-primary text-primary-foreground shadow-glow'
+    89→                      : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
+    90→                  )}
+    91→                >
+    92→                  <Icon className="w-4 h-4" />
+    93→                  <span>{s.label}</span>
+    94→                </button>
+    95→              )
+    96→            })}
+    97→          </div>
+    98→        </GlassSurface>
+    99→
+   100→        {/* Section content — scrollable */}
+   101→        <div className="flex-1 min-h-0 overflow-y-auto pb-4">
+   102→          <AnimatePresence mode="wait">
+   103→            <motion.div
+   104→              key={section}
+   105→              initial={{ opacity: 0, y: 8 }}
+   106→              animate={{ opacity: 1, y: 0 }}
+   107→              exit={{ opacity: 0, y: -8 }}
+   108→              transition={{ duration: 0.15 }}
+   109→            >
+   110→              {section === 'profile' && <ProfileSection />}
+   111→              {section === 'privacy' && <PrivacySection />}
+   112→              {section === 'bots' && <BotsSection />}
+   113→              {section === 'admin' && isAdmin && <AdminSection />}
+   114→              {section === 'system' && <SystemSection />}
+   115→            </motion.div>
+   116→          </AnimatePresence>
+   117→        </div>
+   118→
+   119→        {/* Sign out */}
+   120→        <div className="pt-6 shrink-0 flex justify-center">
+   121→          <Button
+   122→            variant="outline"
+   123→            onClick={async () => {
+   124→              // Clear the cached session so offline mode doesn't let them back in
+   125→              try { localStorage.removeItem('adoo-session-cache') } catch {}
+   126→              await signOut({ callbackUrl: '/', redirect: false })
+   127→              window.location.replace('/')
+   128→            }}
+   129→            className="w-full sm:w-auto h-12 px-8 rounded-xl text-red-500 border-red-500/20 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/30 transition-all bg-red-500/5 shadow-[0_0_15px_rgba(239,68,68,0.1)]"
+   130→          >
+   131→            <LogOut className="w-4 h-4 mr-2" /> Sign out securely
+   132→          </Button>
+   133→        </div>
+   134→      </div>
+   135→    </div>
+   136→  )
+   137→}
+   138→
+   139→// ─── Profile ──────────────────────────────────────────────────────────────
+   140→
+   141→function ProfileSection() {
+   142→  const { data: session } = useSession()
+   143→  const qc = useQueryClient()
+   144→
+   145→  const { data: me, isLoading } = useQuery({
+   146→    queryKey: ['me'],
+   147→    queryFn: async () => {
+   148→      const res = await fetch('/api/auth/me')
+   149→      const data = await res.json()
+   150→      return data.user
+   151→    },
+   152→  })
+   153→
+   154→  const [displayName, setDisplayName] = useState('')
+   155→  const [bio, setBio] = useState('')
+   156→  const [avatarUrl, setAvatarUrl] = useState('')
+   157→  const [customStatus, setCustomStatus] = useState('')
+   158→  const [uploading, setUploading] = useState(false)
+   159→
+   160→  // Sync from server once
+   161→  useState(() => {
+   162→    if (me) {
+   163→      setDisplayName(me.displayName || '')
+   164→      setBio(me.bio || '')
+   165→      setAvatarUrl(me.avatarUrl || '')
+   166→      setCustomStatus(me.customStatus || '')
+   167→    }
+   168→  })
+   169→
+   170→  // Also sync on data change
+   171→  if (me && displayName === '' && me.displayName) {
+   172→    setDisplayName(me.displayName)
+   173→    setBio(me.bio || '')
+   174→    setAvatarUrl(me.avatarUrl || '')
+   175→    setCustomStatus(me.customStatus || '')
+   176→  }
+   177→
+   178→  const update = useMutation({
+   179→    mutationFn: async (data: any) => {
+   180→      const res = await fetch(`/api/users/me`, {
+   181→        method: 'PATCH',
+   182→        headers: { 'Content-Type': 'application/json' },
+   183→        body: JSON.stringify(data),
+   184→      })
+   185→      if (!res.ok) throw new Error('failed')
+   186→      return res.json()
+   187→    },
+   188→    onSuccess: () => {
+   189→      qc.invalidateQueries({ queryKey: ['me'] })
+   190→      toast.success('Saved')
+   191→    },
+   192→    onError: () => toast.error('Failed to save'),
+   193→  })
+   194→
+   195→  const handleSave = () => {
+   196→    update.mutate({ displayName, bio, avatarUrl, customStatus })
+   197→  }
+   198→
+   199→  const handleAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
+   200→    const file = e.target.files?.[0]
+   201→    if (!file) return
+   202→    setUploading(true)
+   203→    try {
+   204→      const formData = new FormData()
+   205→      formData.append('file', file)
+   206→      const res = await fetch('/api/upload', { method: 'POST', body: formData })
+   207→      if (!res.ok) {
+   208→        const text = await res.text()
+   209→        throw new Error(text.slice(0, 120) || 'Upload failed')
+   210→      }
+   211→      const data = await res.json()
+   212→      setAvatarUrl(data.url)
+   213→      toast.success('Avatar uploaded — click Save to apply')
+   214→    } catch (e: any) {
+   215→      toast.error(e.message || 'Upload failed')
+   216→    } finally {
+   217→      setUploading(false)
+   218→      e.target.value = ''
+   219→    }
+   220→  }
+   221→
+   222→  if (isLoading) return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin" /></div>
+   223→
+   224→  return (
+   225→    <div className="space-y-6">
+   226→      <GlassSurface blur={16} opacity={0.03} className="p-6">
+   227→        <div className="flex flex-col md:flex-row gap-8 items-start md:items-center">
+   228→          <AvatarPicker
+   229→            currentAvatarUrl={avatarUrl}
+   230→            userId={me?.id || 'seed'}
+   231→            onPick={(url) => { setAvatarUrl(url); toast.success('Avatar selected — click Save to apply') }}
+   232→            onUpload={handleAvatar}
+   233→            uploading={uploading}
+   234→          />
+   235→          <div className="flex-1 space-y-1">
+   236→            <h2 className="text-xl font-semibold"><ShinyText shimmerDuration={3}>{displayName || 'Your Profile'}</ShinyText></h2>
+   237→            <p className="text-sm text-muted-foreground">Manage your public persona</p>
+   238→          </div>
+   239→        </div>
+   240→      </GlassSurface>
+   241→
+   242→      <GlassSurface blur={16} opacity={0.03} className="p-6 space-y-6">
+   243→        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+   244→          <div className="space-y-2">
+   245→            <Label htmlFor="displayName" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Display name</Label>
+   246→            <Input id="displayName" value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="h-12 bg-black/20 border-white/10 rounded-xl px-4 focus-visible:ring-primary/50 transition-all" />
+   247→          </div>
+   248→
+   249→          <div className="space-y-2">
+   250→            <Label htmlFor="username" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Username</Label>
+   251→            <Input id="username" value={me?.username || ''} disabled className="h-12 bg-black/20 border-white/5 rounded-xl px-4 opacity-70 cursor-not-allowed" />
+   252→            <p className="text-[10px] text-muted-foreground pl-1">Username cannot be changed.</p>
+   253→          </div>
+   254→        </div>
+   255→
+   256→        <div className="space-y-2">
+   257→          <Label htmlFor="customStatus" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Custom status</Label>
+   258→          <Input
+   259→            id="customStatus"
+   260→            value={customStatus}
+   261→            onChange={(e) => setCustomStatus(e.target.value)}
+   262→            placeholder="Listening to lofi beats"
+   263→            maxLength={80}
+   264→            className="h-12 bg-black/20 border-white/10 rounded-xl px-4 focus-visible:ring-primary/50 transition-all"
+   265→          />
+   266→        </div>
+   267→
+   268→        <div className="space-y-2">
+   269→          <Label htmlFor="bio" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Bio</Label>
+   270→          <Textarea
+   271→            id="bio"
+   272→            value={bio}
+   273→            onChange={(e) => setBio(e.target.value)}
+   274→            placeholder="Tell your friends a bit about yourself."
+   275→            rows={3}
+   276→            className="bg-black/20 border-white/10 rounded-xl p-4 focus-visible:ring-primary/50 transition-all resize-none"
+   277→          />
+   278→        </div>
+   279→
+   280→        <div className="pt-2 flex justify-end">
+   281→          <Button onClick={handleSave} disabled={update.isPending} className="h-11 px-6 rounded-xl gradient-primary shadow-glow hover:scale-105 active:scale-95 transition-all font-semibold">
+   282→            {update.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+   283→            Save changes
+   284→          </Button>
+   285→        </div>
+   286→      </GlassSurface>
+   287→    </div>
+   288→  )
+   289→}
+   290→
+   291→// ─── Privacy ──────────────────────────────────────────────────────────────
+   292→
+   293→function PrivacySection() {
+   294→  const qc = useQueryClient()
+   295→  const { data: me } = useQuery({
+   296→    queryKey: ['me'],
+   297→    queryFn: async () => {
+   298→      const res = await fetch('/api/auth/me')
+   299→      const data = await res.json()
+   300→      return data.user
+   301→    },
+   302→  })
+   303→
+   304→  const [lastSeenVisible, setLastSeenVisible] = useState(true)
+   305→  const [readReceipts, setReadReceipts] = useState(true)
+   306→  const [typingIndicators, setTypingIndicators] = useState(true)
+   307→
+   308→  if (me && lastSeenVisible && !me.lastSeenVisible === false) {
+   309→    // initial sync — only run once
+   310→  }
+   311→  useState(() => {
+   312→    if (me) {
+   313→      setLastSeenVisible(me.lastSeenVisible ?? true)
+   314→      setReadReceipts(me.readReceiptsEnabled ?? true)
+   315→      setTypingIndicators(me.typingIndicatorsEnabled ?? true)
+   316→    }
+   317→  })
+   318→
+   319→  const update = useMutation({
+   320→    mutationFn: async (data: any) => {
+   321→      const res = await fetch(`/api/users/me`, {
+   322→        method: 'PATCH',
+   323→        headers: { 'Content-Type': 'application/json' },
+   324→        body: JSON.stringify(data),
+   325→      })
+   326→      if (!res.ok) throw new Error('failed')
+   327→      return res.json()
+   328→    },
+   329→    onSuccess: () => {
+   330→      qc.invalidateQueries({ queryKey: ['me'] })
+   331→      toast.success('Saved')
+   332→    },
+   333→  })
+   334→
+   335→  const handleToggle = (key: 'lastSeenVisible' | 'readReceiptsEnabled' | 'typingIndicatorsEnabled', value: boolean) => {
+   336→    if (key === 'lastSeenVisible') setLastSeenVisible(value)
+   337→    if (key === 'readReceiptsEnabled') setReadReceipts(value)
+   338→    if (key === 'typingIndicatorsEnabled') setTypingIndicators(value)
+   339→    update.mutate({ [key]: value })
+   340→  }
+   341→
+   342→  return (
+   343→    <GlassSurface blur={16} opacity={0.03} className="overflow-hidden">
+   344→      <div className="divide-y divide-white/5">
+   345→        <PrivacyRow
+   346→          title="Last seen visible"
+   347→          desc="Show when you were last active"
+   348→          checked={lastSeenVisible}
+   349→          onChange={(v) => handleToggle('lastSeenVisible', v)}
+   350→        />
+   351→        <PrivacyRow
+   352→          title="Read receipts"
+   353→          desc="Let others know when you've read their messages"
+   354→          checked={readReceipts}
+   355→          onChange={(v) => handleToggle('readReceiptsEnabled', v)}
+   356→        />
+   357→        <PrivacyRow
+   358→          title="Typing indicators"
+   359→          desc="Show others when you're typing"
+   360→          checked={typingIndicators}
+   361→          onChange={(v) => handleToggle('typingIndicatorsEnabled', v)}
+   362→        />
+   363→      </div>
+   364→    </GlassSurface>
+   365→  )
+   366→}
+   367→
+   368→function PrivacyRow({ title, desc, checked, onChange }: { title: string; desc: string; checked: boolean; onChange: (v: boolean) => void }) {
+   369→  return (
+   370→    <div className="flex items-center justify-between p-5 hover:bg-white/[0.02] transition-colors">
+   371→      <div className="flex-1 min-w-0 pr-6">
+   372→        <div className="font-semibold text-[15px]">{title}</div>
+   373→        <div className="text-sm text-muted-foreground mt-0.5">{desc}</div>
+   374→      </div>
+   375→      <Switch checked={checked} onCheckedChange={onChange} className="data-[state=checked]:bg-primary" />
+   376→    </div>
+   377→  )
+   378→}
+   379→
+   380→// ─── Bots ─────────────────────────────────────────────────────────────────
+   381→
+   382→function BotsSection() {
+   383→  return (
+   384→    <div className="space-y-4">
+   385→      <BotsList onEditBot={(bot) => {
+   386→        // Open the bot builder in a new standalone tab — gives the canvas
+   387→        // full screen space and makes it usable on mobile.
+   388→        window.open(`/bot-builder/${bot.id}`, '_blank')
+   389→      }} />
+   390→      <BotModules />
+   391→    </div>
+   392→  )
+   393→}
+   394→
+   395→function BotsList({ onEditBot }: { onEditBot: (bot: any) => void }) {
+   396→  const { bots, isLoading, create, update, remove } = useBots()
+   397→  const confirm = useConfirm()
+   398→  const [createOpen, setCreateOpen] = useState(false)
+   399→  const [name, setName] = useState('')
+   400→  const [username, setUsername] = useState('')
+   401→  const [description, setDescription] = useState('')
+   402→
+   403→  const handleCreate = async () => {
+   404→    try {
+   405→      await create({ name, username, description, module: 'visual' })
+   406→      toast.success('Bot created! Edit it to design your flow.')
+   407→      setCreateOpen(false)
+   408→      setName('')
+   409→      setUsername('')
+   410→      setDescription('')
+   411→    } catch (e: any) {
+   412→      toast.error(e.message)
+   413→    }
+   414→  }
+   415→
+   416→  return (
+   417→    <Card className="p-4">
+   418→      <div className="flex items-center justify-between mb-3">
+   419→        <h2 className="font-semibold text-sm">My Bots ({bots.length})</h2>
+   420→        <Button size="sm" onClick={() => setCreateOpen(!createOpen)}>
+   421→          <Plus className="w-4 h-4 mr-1" /> New Bot
+   422→        </Button>
+   423→      </div>
+   424→
+   425→      {createOpen && (
+   426→        <div className="space-y-3 mb-4 p-3 rounded-xl border bg-muted/30">
+   427→          <div className="space-y-2">
+   428→            <Label>Bot name</Label>
+   429→            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Poll Bot" />
+   430→          </div>
+   431→          <div className="space-y-2">
+   432→            <Label>Username (lowercase, no spaces)</Label>
+   433→            <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="pollbot" />
+   434→          </div>
+   435→          <div className="space-y-2">
+   436→            <Label>Description</Label>
+   437→            <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="Runs polls in any channel" />
+   438→          </div>
+   439→          <p className="text-xs text-muted-foreground">
+   440→            Bots are created with the visual flow editor. After creating, click "Edit Flow" to design your bot's behavior.
+   441→          </p>
+   442→          <div className="flex gap-2">
+   443→            <Button size="sm" onClick={handleCreate} disabled={!name.trim() || !username.trim()}>Create</Button>
+   444→            <Button size="sm" variant="ghost" onClick={() => setCreateOpen(false)}>Cancel</Button>
+   445→          </div>
+   446→        </div>
+   447→      )}
+   448→
+   449→      {isLoading ? (
+   450→        <div className="text-center py-6 text-sm text-muted-foreground">Loading...</div>
+   451→      ) : bots.length === 0 ? (
+   452→        <div className="text-center py-10">
+   453→          <div className="w-16 h-16 mx-auto rounded-3xl bg-primary/10 flex items-center justify-center mb-3 ring-1 ring-primary/15">
+   454→            <Bot className="w-8 h-8 text-primary" strokeWidth={1.5} />
+   455→          </div>
+   456→          <p className="font-medium text-base">No bots yet</p>
+   457→          <p className="text-sm text-muted-foreground mt-1 max-w-xs mx-auto">
+   458→            Create a bot and design its behavior visually with the flow editor.
+   459→          </p>
+   460→        </div>
+   461→      ) : (
+   462→        <div className="space-y-2">
+   463→          {bots.map((bot: any) => (
+   464→            <div key={bot.id} className="p-3 rounded-lg border space-y-2">
+   465→              <div className="flex items-center gap-3">
+   466→                <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
+   467→                  <Bot className="w-4 h-4 text-primary" />
+   468→                </div>
+   469→                <div className="flex-1 min-w-0">
+   470→                  <div className="font-medium text-sm truncate">
+   471→                    {bot.name} <span className="text-xs text-muted-foreground">@{bot.username}</span>
+   472→                  </div>
+   473→                  <div className="text-xs text-muted-foreground truncate">
+   474→                    {bot.module} · {bot.enabled ? 'enabled' : 'disabled'}
+   475→                  </div>
+   476→                </div>
+   477→                <Button variant="outline" size="sm" onClick={() => onEditBot(bot)}>
+   478→                  Edit Flow
+   479→                </Button>
+   480→                <Button variant="ghost" size="sm" onClick={() => update({ id: bot.id, data: { enabled: !bot.enabled } })}>
+   481→                  {bot.enabled ? 'Disable' : 'Enable'}
+   482→                </Button>
+   483→                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-red-500"
+   484→                  onClick={async () => {
+   485→                    const ok = await confirm({ title: `Delete bot @${bot.username}?`, message: 'This will permanently delete the bot and all its conversation sessions.', confirmLabel: 'Delete', variant: 'danger' })
+   486→                    if (ok) { remove(bot.id).then(() => toast.success('Deleted')) }
+   487→                  }}>
+   488→                  <Trash2 className="w-4 h-4" />
+   489→                </Button>
+   490→              </div>
+   491→              {/* Add to channel */}
+   492→              <AddBotToChannel botId={bot.id} />
+   493→            </div>
+   494→          ))}
+   495→        </div>
+   496→      )}
+   497→    </Card>
+   498→  )
+   499→}
+   500→
+   501→function BotModules() {
+   502→  const { modules } = useBots()
+   503→  return (
+   504→    <Card className="p-4">
+   505→      <h2 className="font-semibold text-sm mb-3">Available Modules ({modules.length})</h2>
+   506→      <div className="space-y-2">
+   507→        {modules.map((m) => (
+   508→          <div key={m.name} className="border rounded-lg p-2.5">
+   509→            <div className="flex items-baseline gap-2 mb-1">
+   510→              <code className="text-sm font-mono font-medium">{m.name}</code>
+   511→              <span className="text-xs text-muted-foreground">{m.description}</span>
+   512→            </div>
+   513→            <div className="flex flex-wrap gap-1">
+   514→              {m.commands.map((c: any) => (
+   515→                <Badge key={c.name} variant="secondary" className="font-mono text-xs">
+   516→                  /{c.name}
+   517→                </Badge>
+   518→              ))}
+   519→            </div>
+   520→          </div>
+   521→        ))}
+   522→      </div>
+   523→      <div className="mt-3 text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 flex gap-2">
+   524→        <Terminal className="w-4 h-4 shrink-0 mt-0.5" />
+   525→        <div>
+   526→          <p className="font-medium mb-0.5">Want your own bot?</p>
+   527→          <p>
+   528→            Drop a file in <code>src/lib/bot/bots/</code>, export a <code>BotModule</code>, register in{' '}
+   529→            <code>src/lib/bot/index.ts</code>.
+   530→          </p>
+   531→        </div>
+   532→      </div>
+   533→    </Card>
+   534→  )
+   535→}
+   536→
+   537→// Local hook (since we removed the dedicated Bots view, we need useBots here)
+   538→import { useBots } from '@/hooks/useBots'
+   539→
+   540→// ─── Admin ────────────────────────────────────────────────────────────────
+   541→
+   542→function AdminSection() {
+   543→  const [tab, setTab] = useState<'users' | 'groups' | 'bots'>('users')
+   544→  return (
+   545→    <div className="space-y-4">
+   546→      <div className="flex gap-2 overflow-x-auto no-scrollbar">
+   547→        {(['users', 'groups', 'bots'] as const).map((t) => (
+   548→          <button
+   549→            key={t}
+   550→            onClick={() => setTab(t)}
+   551→            className={cn(
+   552→              'px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors capitalize',
+   553→              tab === t ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-accent'
+   554→            )}
+   555→          >
+   556→            {t}
+   557→          </button>
+   558→        ))}
+   559→      </div>
+   560→      {tab === 'users' && <AdminUsers />}
+   561→      {tab === 'groups' && <AdminGroups />}
+   562→      {tab === 'bots' && <AdminBots />}
+   563→    </div>
+   564→  )
+   565→}
+   566→
+   567→function AdminUsers() {
+   568→  const qc = useQueryClient()
+   569→  const { data, isLoading } = useQuery({
+   570→    queryKey: ['admin-users'],
+   571→    queryFn: async () => {
+   572→      const res = await fetch('/api/admin/users')
+   573→      if (!res.ok) throw new Error('forbidden')
+   574→      return res.json()
+   575→    },
+   576→  })
+   577→
+   578→  const updateRole = useMutation({
+   579→    mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
+   580→      const res = await fetch('/api/admin/users', {
+   581→        method: 'PATCH',
+   582→        headers: { 'Content-Type': 'application/json' },
+   583→        body: JSON.stringify({ userId, role }),
+   584→      })
+   585→      if (!res.ok) throw new Error('failed')
+   586→    },
+   587→    onSuccess: () => {
+   588→      qc.invalidateQueries({ queryKey: ['admin-users'] })
+   589→      toast.success('Role updated')
+   590→    },
+   591→    onError: () => toast.error('Failed'),
+   592→  })
+   593→
+   594→  if (isLoading) return <div className="text-center py-6 text-sm text-muted-foreground">Loading...</div>
+   595→
+   596→  return (
+   597→    <Card className="p-2">
+   598→      {data?.users?.map((u: any) => (
+   599→        <div key={u.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-accent/50">
+   600→          <Avatar className="w-9 h-9 shrink-0">
+   601→            <AvatarFallback>{u.displayName?.charAt(0) || '?'}</AvatarFallback>
+   602→          </Avatar>
+   603→          <div className="flex-1 min-w-0">
+   604→            <div className="font-medium text-sm truncate">{u.displayName} <span className="text-xs text-muted-foreground">@{u.username}</span></div>
+   605→            <div className="text-xs text-muted-foreground truncate">{u.email}</div>
+   606→          </div>
+   607→          <Select
+   608→            value={u.role}
+   609→            onValueChange={(role) => updateRole.mutate({ userId: u.id, role })}
+   610→          >
+   611→            <SelectTrigger className="w-28 h-8 text-xs"><SelectValue /></SelectTrigger>
+   612→            <SelectContent>
+   613→              <SelectItem value="member">member</SelectItem>
+   614→              <SelectItem value="admin">admin</SelectItem>
+   615→              <SelectItem value="owner">owner</SelectItem>
+   616→            </SelectContent>
+   617→          </Select>
+   618→        </div>
+   619→      ))}
+   620→    </Card>
+   621→  )
+   622→}
+   623→
+   624→function AdminGroups() {
+   625→  const qc = useQueryClient()
+   626→  const { data, isLoading } = useQuery({
+   627→    queryKey: ['admin-groups'],
+   628→    queryFn: async () => {
+   629→      const res = await fetch('/api/admin/groups')
+   630→      if (!res.ok) throw new Error('forbidden')
+   631→      return res.json()
+   632→    },
+   633→  })
+   634→
+   635→  const [newChannel, setNewChannel] = useState<{ groupId: string; name: string } | null>(null)
+   636→
+   637→  const createChannel = useMutation({
+   638→    mutationFn: async ({ groupId, name }: { groupId: string; name: string }) => {
+   639→      const res = await fetch('/api/admin/groups', {
+   640→        method: 'POST',
+   641→        headers: { 'Content-Type': 'application/json' },
+   642→        body: JSON.stringify({ groupId, name }),
+   643→      })
+   644→      if (!res.ok) throw new Error('failed')
+   645→      return res.json()
+   646→    },
+   647→    onSuccess: () => {
+   648→      qc.invalidateQueries({ queryKey: ['admin-groups'] })
+   649→      qc.invalidateQueries({ queryKey: ['channels'] })
+   650→      toast.success('Channel created')
+   651→      setNewChannel(null)
+   652→    },
+   653→    onError: () => toast.error('Failed'),
+   654→  })
+   655→
+   656→  if (isLoading) return <div className="text-center py-6 text-sm text-muted-foreground">Loading...</div>
+   657→
+   658→  return (
+   659→    <div className="space-y-3">
+   660→      {data?.groups?.map((g: any) => (
+   661→        <Card key={g.id} className="p-4">
+   662→          <div className="flex items-center justify-between mb-3">
+   663→            <div>
+   664→              <div className="font-semibold text-sm">{g.name}</div>
+   665→              <div className="text-xs text-muted-foreground">Owner: {g.owner.displayName}</div>
+   666→            </div>
+   667→            <Button size="sm" variant="outline" onClick={() => setNewChannel({ groupId: g.id, name: '' })}>
+   668→              <Plus className="w-3 h-3 mr-1" /> Channel
+   669→            </Button>
+   670→          </div>
+   671→
+   672→          {newChannel?.groupId === g.id && (
+   673→            <div className="flex gap-2 mb-3">
+   674→              <Input
+   675→                placeholder="channel-name"
+   676→                value={newChannel.name}
+   677→                onChange={(e) => setNewChannel({ ...newChannel, name: e.target.value })}
+   678→                onKeyDown={(e) => {
+   679→                  if (e.key === 'Enter' && newChannel.name.trim()) createChannel.mutate(newChannel)
+   680→                }}
+   681→              />
+   682→              <Button size="sm" onClick={() => createChannel.mutate(newChannel)} disabled={!newChannel.name.trim()}>Add</Button>
+   683→              <Button size="sm" variant="ghost" onClick={() => setNewChannel(null)}>Cancel</Button>
+   684→            </div>
+   685→          )}
+   686→
+   687→          <div className="space-y-0.5">
+   688→            {g.channels.map((ch: any) => (
+   689→              <div key={ch.id} className="flex items-center gap-2 text-sm p-2 rounded hover:bg-accent/50">
+   690→                <Badge variant="outline" className="text-[10px]">{ch.type}</Badge>
+   691→                <span className="font-medium">{ch.name}</span>
+   692→                <span className="text-xs text-muted-foreground">
+   693→                  · {ch._count.members} members · {ch._count.messages} msgs
+   694→                </span>
+   695→              </div>
+   696→            ))}
+   697→          </div>
+   698→        </Card>
+   699→      ))}
+   700→    </div>
+   701→  )
+   702→}
+   703→
+   704→function AdminBots() {
+   705→  const qc = useQueryClient()
+   706→  const { data, isLoading } = useQuery({
+   707→    queryKey: ['admin-bots'],
+   708→    queryFn: async () => {
+   709→      const res = await fetch('/api/admin/bots')
+   710→      if (!res.ok) throw new Error('forbidden')
+   711→      return res.json()
+   712→    },
+   713→  })
+   714→
+   715→  const { data: groups } = useQuery({
+   716→    queryKey: ['channels'],
+   717→    queryFn: async () => {
+   718→      const res = await fetch('/api/channels')
+   719→      return res.json()
+   720→    },
+   721→  })
+   722→  const allChannels = groups?.groups?.flatMap((g: any) =>
+   723→    g.channels.map((c: any) => ({ ...c, groupName: g.name }))
+   724→  ) || []
+   725→
+   726→  const assignBot = useMutation({
+   727→    mutationFn: async ({ botId, channelId }: { botId: string; channelId: string }) => {
+   728→      const res = await fetch('/api/admin/bots', {
+   729→        method: 'POST',
+   730→        headers: { 'Content-Type': 'application/json' },
+   731→        body: JSON.stringify({ botId, channelId }),
+   732→      })
+   733→      if (!res.ok) throw new Error('failed')
+   734→    },
+   735→    onSuccess: () => toast.success('Bot added to channel'),
+   736→    onError: () => toast.error('Failed'),
+   737→  })
+   738→
+   739→  if (isLoading) return <div className="text-center py-6 text-sm text-muted-foreground">Loading...</div>
+   740→
+   741→  return (
+   742→    <Card className="p-2">
+   743→      {data?.bots?.map((b: any) => (
+   744→        <div key={b.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-accent/50">
+   745→          <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
+   746→            <Bot className="w-4 h-4 text-primary" />
+   747→          </div>
+   748→          <div className="flex-1 min-w-0">
+   749→            <div className="font-medium text-sm truncate">
+   750→              {b.name} <span className="text-xs text-muted-foreground">@{b.username}</span>
+   751→            </div>
+   752→            <div className="text-xs text-muted-foreground truncate">
+   753→              {b.module} · Owner: {b.owner?.displayName || 'unknown'}
+   754→            </div>
+   755→          </div>
+   756→          <Select
+   757→            value=""
+   758→            onValueChange={(channelId) => assignBot.mutate({ botId: b.id, channelId })}
+   759→          >
+   760→            <SelectTrigger className="w-36 h-8 text-xs">
+   761→              <SelectValue placeholder="Add to channel..." />
+   762→            </SelectTrigger>
+   763→            <SelectContent>
+   764→              {allChannels
+   765→                .filter((c: any) => c.type === 'text')
+   766→                .map((c: any) => (
+   767→                  <SelectItem key={c.id} value={c.id}>
+   768→                    {c.groupName} / {c.name}
+   769→                  </SelectItem>
+   770→                ))}
+   771→            </SelectContent>
+   772→          </Select>
+   773→        </div>
+   774→      ))}
+   775→    </Card>
+   776→  )
+   777→}
+   778→
+   779→// ─── System ───────────────────────────────────────────────────────────────
+   780→
+   781→function SystemSection() {
+   782→  const { data, isLoading } = useQuery({
+   783→    queryKey: ['ice-servers'],
+   784→    queryFn: async () => {
+   785→      const res = await fetch('/api/calls/ice-servers')
+   786→      return res.json()
+   787→    },
+   788→  })
+   789→
+   790→  return (
+   791→    <div className="space-y-4">
+   792→      <Card className="p-4">
+   793→        <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+   794→          <Server className="w-4 h-4" /> Architecture
+   795→        </h3>
+   796→        <div className="text-xs text-muted-foreground space-y-2">
+   797→          <p>
+   798→            <strong>Single-port server:</strong> Next.js + Socket.io share port 3090
+   799→            via a custom <code>server.ts</code>. Socket.io is mounted at <code>/api/socket</code>.
+   800→          </p>
+   801→          <p>
+   802→            <strong>Realtime:</strong> In-process Socket.io relay for chat, presence,
+   803→            and WebRTC signaling. Auth reads the NextAuth JWT cookie directly.
+   804→          </p>
+   805→          <p>
+   806→            <strong>Database:</strong> SQLite (file-based). Swap <code>DATABASE_URL</code> to
+   807→            PostgreSQL for larger groups.
+   808→          </p>
+   809→          <p>
+   810→            <strong>Bot framework:</strong> Each bot is a module in <code>src/lib/bot/bots/</code>.
+   811→            Add a file, register, done.
+   812→          </p>
+   813→          <p>
+   814→            <strong>Voice calls:</strong> WebRTC mesh (P2P). SFU-ready for &gt;6 participants.
+   815→          </p>
+   816→        </div>
+   817→      </Card>
+   818→
+   819→      <Card className="p-4">
+   820→        <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+   821→          <Hash className="w-4 h-4" /> WebRTC ICE Providers
+   822→        </h3>
+   823→        {isLoading ? (
+   824→          <div className="text-sm text-muted-foreground">Loading...</div>
+   825→        ) : (
+   826→          <div className="space-y-2.5 text-sm">
+   827→            <div className="flex justify-between">
+   828→              <span className="text-muted-foreground">STUN:</span>
+   829→              <code className="text-xs">{data?.stun}</code>
+   830→            </div>
+   831→            <div className="border-t pt-2.5 mt-2.5">
+   832→              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+   833→                Active TURN providers
+   834→              </div>
+   835→              <div className="space-y-1.5">
+   836→                {data?.providers?.map((p: any) => (
+   837→                  <div key={p.name} className="flex items-center justify-between">
+   838→                    <span className="font-mono text-xs">{p.name}</span>
+   839→                    <div className="flex items-center gap-2">
+   840→                      {p.note && <span className="text-xs text-muted-foreground">{p.note}</span>}
+   841→                      {p.enabled ? (
+   842→                        <Badge className="bg-status-online text-[10px]">ON</Badge>
+   843→                      ) : (
+   844→                        <Badge variant="secondary" className="text-[10px]">OFF</Badge>
+   845→                      )}
+   846→                    </div>
+   847→                  </div>
+   848→                ))}
+   849→              </div>
+   850→            </div>
+   851→            {!data?.providers?.find((p: any) => p.name === 'cloudflare-turn')?.enabled && (
+   852→              <div className="mt-3 p-3 bg-muted/50 rounded text-xs">
+   853→                <p className="font-medium mb-1">Add Cloudflare TURN (optional, 1 TB free):</p>
+   854→                <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+   855→                  <li>Cloudflare Dashboard → Realtime / Calls → Create TURN App</li>
+   856→                  <li>Copy Key ID and Secret to <code>.env</code></li>
+   857→                  <li>Restart server — creds auto-signed per call.</li>
+   858→                </ol>
+   859→              </div>
+   860→            )}
+   861→            <div className="mt-2 p-3 bg-primary/5 border border-primary/20 rounded text-xs">
+   862→              <p className="font-medium mb-1 text-primary">Metered OpenRelay is on by default</p>
+   863→              <p className="text-muted-foreground">
+   864→                Free TURN (20 GB/month) — works for most home/mobile networks.
+   865→                For heavy use, add Cloudflare TURN (1 TB free) or self-host coturn.
+   866→              </p>
+   867→            </div>
+   868→          </div>
+   869→        )}
+   870→      </Card>
+   871→    </div>
+   872→  )
+   873→}
+   874→
+   875→/**
+   876→ * Avatar picker — shows generated DiceBear avatars + upload option.
+   877→ * Users can pick from 56 generated avatars (14 styles × 4 seeds) or upload
+   878→ * their own. The gallery is grouped by style with a scrollable container so
+   879→ * the long list doesn't dominate the settings panel.
+   880→ */
+   881→function AvatarPicker({
+   882→  currentAvatarUrl,
+   883→  userId,
+   884→  onPick,
+   885→  onUpload,
+   886→  uploading,
+   887→}: {
+   888→  currentAvatarUrl: string
+   889→  userId: string
+   890→  onPick: (url: string) => void
+   891→  onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void
+   892→  uploading: boolean
+   893→}) {
+   894→  const [showPicker, setShowPicker] = useState(false)
+   895→  const candidates = useMemo(() => generateAvatarCandidates(userId), [userId])
+   896→
+   897→  return (
+   898→    <div className="space-y-4 w-full">
+   899→      <div className="flex items-center gap-6">
+   900→        <Avatar className="w-24 h-24 shadow-2xl ring-4 ring-white/5 hover:ring-primary/50 transition-all cursor-pointer">
+   901→          <AvatarImage src={currentAvatarUrl || undefined} />
+   902→          <AvatarFallback className="text-3xl font-light">?</AvatarFallback>
+   903→        </Avatar>
+   904→        <div className="flex flex-col gap-3">
+   905→          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Profile Picture</Label>
+   906→          <div className="flex flex-wrap items-center gap-2">
+   907→            <Button size="sm" variant="secondary" onClick={() => setShowPicker(!showPicker)} className="rounded-xl h-9 px-4 font-medium hover:bg-white/10 transition-colors">
+   908→              <Sparkles className="w-4 h-4 mr-2 text-primary" />
+   909→              {showPicker ? 'Hide Gallery' : 'Pick Avatar'}
+   910→            </Button>
+   911→            <label className="cursor-pointer">
+   912→              <span className="inline-flex items-center justify-center bg-primary/10 text-primary border border-primary/20 h-9 px-4 rounded-xl text-sm font-medium hover:bg-primary/20 transition-all shadow-glow">
+   913→                {uploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+   914→                {uploading ? 'Uploading...' : 'Upload Image'}
+   915→              </span>
+   916→              <input type="file" className="hidden" accept="image/*" onChange={onUpload} disabled={uploading} />
+   917→            </label>
+   918→          </div>
+   919→        </div>
+   920→      </div>
+   921→
+   922→      {showPicker && (
+   923→        <div className="max-h-96 overflow-y-auto pr-1 -mr-1 space-y-3 pt-2">
+   924→          {AVATAR_STYLES.map((style) => {
+   925→            const styleCandidates = candidates.filter((c) => c.style === style.key)
+   926→            if (styleCandidates.length === 0) return null
+   927→            return (
+   928→              <div key={style.key} className="space-y-1.5">
+   929→                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-1">
+   930→                  {style.label}
+   931→                </div>
+   932→                <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+   933→                  {styleCandidates.map((c, i) => (
+   934→                    <button
+   935→                      key={`${style.key}-${i}`}
+   936→                      onClick={() => onPick(c.url)}
+   937→                      title={style.label}
+   938→                      className={cn(
+   939→                        'rounded-xl overflow-hidden border-2 transition-all hover:scale-105 bg-muted/30',
+   940→                        currentAvatarUrl === c.url
+   941→                          ? 'border-primary ring-2 ring-primary/30'
+   942→                          : 'border-transparent'
+   943→                      )}
+   944→                    >
+   945→                      <img src={c.url} alt={`${style.label} avatar`} className="w-full aspect-square" />
+   946→                    </button>
+   947→                  ))}
+   948→                </div>
+   949→              </div>
+   950→            )
+   951→          })}
+   952→        </div>
+   953→      )}
+   954→    </div>
+   955→  )
+   956→}
+   957→
+   958→/**
+   959→ * AddBotToChannel — dropdown to add a bot to any text channel the user is a member of.
+   960→ */
+   961→function AddBotToChannel({ botId }: { botId: string }) {
+   962→  const { data: groups } = useQuery({
+   963→    queryKey: ['channels'],
+   964→    queryFn: async () => {
+   965→      const res = await fetch('/api/channels')
+   966→      const data = await res.json()
+   967→      return data.groups as any[]
+   968→    },
+   969→  })
+   970→  const allTextChannels = groups?.flatMap((g: any) =>
+   971→    g.channels.filter((c: any) => c.type === 'text').map((c: any) => ({ ...c, groupName: g.name }))
+   972→  ) || []
+   973→
+   974→  const handleAdd = async (channelId: string) => {
+   975→    try {
+   976→      const res = await fetch('/api/admin/bots', {
+   977→        method: 'POST',
+   978→        headers: { 'Content-Type': 'application/json' },
+   979→        body: JSON.stringify({ botId, channelId }),
+   980→      })
+   981→      if (res.ok) toast.success('Bot added to channel')
+   982→      else toast.error('Failed to add bot')
+   983→    } catch {
+   984→      toast.error('Failed to add bot')
+   985→    }
+   986→  }
+   987→
+   988→  if (allTextChannels.length === 0) return null
+   989→
+   990→  return (
+   991→    <div className="flex items-center gap-2 pl-12">
+   992→      <Select onValueChange={handleAdd}>
+   993→        <SelectTrigger className="h-7 text-xs w-48">
+   994→          <SelectValue placeholder="+ Add to channel..." />
+   995→        </SelectTrigger>
+   996→        <SelectContent>
+   997→          {allTextChannels.map((ch: any) => (
+   998→            <SelectItem key={ch.id} value={ch.id}>
+   999→              {ch.groupName} / {ch.name}
+  1000→            </SelectItem>
+  1001→          ))}
+  1002→        </SelectContent>
+  1003→      </Select>
+  1004→    </div>
+  1005→  )
+  1006→}
+  1007→

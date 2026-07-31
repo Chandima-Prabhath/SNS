@@ -8,10 +8,17 @@ import { canPostInChannel } from '@/lib/chat-utils'
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const userId = (session.user as any).id
   const { id: channelId } = await params
   const url = new URL(req.url)
   const before = url.searchParams.get('before') // message id for cursor
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 100)
+
+  // Verify channel membership
+  const membership = await db.channelMember.findUnique({
+    where: { channelId_userId: { channelId, userId } },
+  })
+  if (!membership) return NextResponse.json({ error: 'not a member' }, { status: 403 })
 
   const messages = await db.message.findMany({
     where: {

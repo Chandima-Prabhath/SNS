@@ -123,6 +123,12 @@ export function SettingsView() {
             onClick={async () => {
               // Clear the cached session so offline mode doesn't let them back in
               try { localStorage.removeItem('adoo-session-cache') } catch {}
+              // H1 fix: clear ALL service worker caches to prevent data leakage
+              // between users on shared devices
+              try {
+                const cacheNames = await caches.keys()
+                await Promise.all(cacheNames.map((name) => caches.delete(name)))
+              } catch {}
               await signOut({ callbackUrl: '/', redirect: false })
               window.location.replace('/')
             }}

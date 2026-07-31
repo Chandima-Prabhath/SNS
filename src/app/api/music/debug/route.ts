@@ -18,6 +18,11 @@ const execFileAsync = promisify(execFile)
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // H4 fix: gate behind admin/owner only — leaks server config, paths, cookies
+  const userRole = (session.user as any).role
+  if (userRole !== 'admin' && userRole !== 'owner') {
+    return NextResponse.json({ error: 'admin only' }, { status: 403 })
+  }
 
   const results: any = {
     timestamp: new Date().toISOString(),
