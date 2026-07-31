@@ -75,17 +75,7 @@ export function MusicView() {
 
   // Listen for hash changes — the player's expand button sets #music-queue
   // to signal that the user wants to see the full queue page
-  useEffect(() => {
-    const checkHash = () => {
-      if (window.location.hash === '#music-queue') {
-        setTab('queue')
-        window.location.hash = '' // clear the hash so it doesn't re-trigger
-      }
-    }
-    checkHash()
-    window.addEventListener('hashchange', checkHash)
-    return () => window.removeEventListener('hashchange', checkHash)
-  }, [])
+  // (moved below queue/upNextTracks declarations)
 
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Track[]>([])
@@ -101,6 +91,7 @@ export function MusicView() {
   const [showCreateRoom, setShowCreateRoom] = useState(false)
   const [newRoomName, setNewRoomName] = useState('')
   const [inviteTarget, setInviteTarget] = useState<{ type: 'call' | 'music'; roomId?: string; roomName?: string } | null>(null)
+  const [queueTab, setQueueTab] = useState<'queue' | 'upnext'>('queue')
 
   // ── DB-backed liked songs (react-query) ──────────────────────────────
   const { data: likedData } = useQuery({
@@ -146,6 +137,24 @@ export function MusicView() {
   // ── Up Next: read from the music store's radio queue (prefetched by the player) ─
   const radioQueue = useMusicStore((s) => s.radioQueue)
   const upNextTracks: Track[] = radioQueue.slice(0, 5)
+
+  // Listen for hash changes — the player's expand button sets #music-queue
+  useEffect(() => {
+    const checkHash = () => {
+      if (window.location.hash === '#music-queue') {
+        setTab('queue')
+        if (queue.length === 0 && upNextTracks.length > 0) {
+          setQueueTab('upnext')
+        } else {
+          setQueueTab('queue')
+        }
+        window.location.hash = ''
+      }
+    }
+    checkHash()
+    window.addEventListener('hashchange', checkHash)
+    return () => window.removeEventListener('hashchange', checkHash)
+  }, [queue.length, upNextTracks.length])
   const activeRoomId = useMusicStore((s) => s.activeRoomId)
   const setActiveRoomId = useMusicStore((s) => s.setActiveRoomId)
   const setShuffle = useMusicStore((s) => s.setShuffle)
@@ -739,138 +748,174 @@ export function MusicView() {
                   </div>
                 )}
 
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Headphones className="w-4 h-4 text-primary" />
-                    <h2 className="text-sm font-bold uppercase tracking-wider">
-                      <ShinyText shimmerDuration={4} className="text-sm">
-                        Play Queue
-                      </ShinyText>
-                    </h2>
-                  </div>
-                  {queue.length > 0 && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={clearQueue}
-                      className="text-red-400 hover:text-red-300"
-                    >
-                      <Trash2 className="w-4 h-4 mr-1" />
-                      Clear
-                    </Button>
-                  )}
+                {/* Sub-tabs: Play Queue / Up Next */}
+                <div className="flex gap-1 p-1 bg-muted/50 rounded-lg w-fit">
+                  <button
+                    onClick={() => setQueueTab('queue')}
+                    className={cn(
+                      'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
+                      queueTab === 'queue' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    <Headphones className="w-3.5 h-3.5" />
+                    Queue
+                    {queue.length > 0 && (
+                      <span className="text-[10px] bg-primary/20 text-primary px-1.5 rounded-full">{queue.length}</span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setQueueTab('upnext')}
+                    className={cn(
+                      'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
+                      queueTab === 'upnext' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Up Next
+                    {upNextTracks.length > 0 && (
+                      <span className="text-[10px] bg-primary/20 text-primary px-1.5 rounded-full">{upNextTracks.length}</span>
+                    )}
+                  </button>
                 </div>
 
-                {/* Queue list */}
-                {queue.length === 0 ? (
-                  <Card className="p-8 text-center border-dashed">
-                    <ListMusic
-                      className="w-10 h-10 mx-auto text-muted-foreground mb-2"
-                      strokeWidth={1.5}
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      Queue is empty. Add songs from Browse or search.
-                    </p>
-                  </Card>
-                ) : (
-                    <div className="space-y-1.5">
-                      {queue.map((track, i) => (
-                        <div
-                          key={`${track.videoId}-${i}`}
-                          className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/[0.06] transition-all group border border-transparent hover:border-white/5">
-                          <span className="text-xs text-muted-foreground w-6 text-center font-medium">
-                            {i + 1}
-                          </span>
-                        {track.thumbnail ? (
-                          <img
-                            src={track.thumbnail}
-                            alt=""
-                            className="w-10 h-10 rounded object-cover"
-                          />
-                        ) : (
-                          <div className="w-10 h-10 rounded bg-muted flex items-center justify-center">
-                            <ListMusic className="w-4 h-4 text-muted-foreground" />
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium truncate">
-                            {track.title}
-                          </div>
-                          <div className="text-xs text-muted-foreground truncate">
-                            {track.artist}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => playTrack(track)}
-                          className="p-1.5 rounded-lg text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-primary transition-opacity"
-                          title="Play this track now"
-                          aria-label="Play this track now"
+                {/* Queue tab content */}
+                {queueTab === 'queue' && (
+                  <>
+                    {queue.length > 0 && (
+                      <div className="flex justify-end -mt-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={clearQueue}
+                          className="text-red-400 hover:text-red-300 h-7 text-xs"
                         >
-                          <Play className="w-3.5 h-3.5" />
-                        </button>
-                          <button
-                            onClick={() => removeFromQueue(i)}
-                            className="p-1.5 rounded-lg text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="Remove from queue"
-                            aria-label="Remove from queue"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
+                          <Trash2 className="w-3 h-3 mr-1" />
+                          Clear
+                        </Button>
+                      </div>
+                    )}
+                    {queue.length === 0 ? (
+                      <Card className="p-8 text-center border-dashed">
+                        <ListMusic
+                          className="w-10 h-10 mx-auto text-muted-foreground mb-2"
+                          strokeWidth={1.5}
+                        />
+                        <p className="text-sm text-muted-foreground">
+                          Queue is empty. Add songs from Browse or search.
+                        </p>
+                        {upNextTracks.length > 0 && (
+                          <Button variant="ghost" size="sm" className="mt-3 text-xs" onClick={() => setQueueTab('upnext')}>
+                            <Sparkles className="w-3 h-3 mr-1" />
+                            View Up Next
+                          </Button>
+                        )}
+                      </Card>
+                    ) : (
+                        <div className="space-y-1.5">
+                          {queue.map((track, i) => (
+                            <div
+                              key={`${track.videoId}-${i}`}
+                              className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/[0.06] transition-all group border border-transparent hover:border-white/5">
+                              <span className="text-xs text-muted-foreground w-6 text-center font-medium">
+                                {i + 1}
+                              </span>
+                            {track.thumbnail ? (
+                              <img
+                                src={track.thumbnail}
+                                alt=""
+                                className="w-10 h-10 rounded object-cover"
+                              />
+                            ) : (
+                              <div className="w-10 h-10 rounded bg-muted flex items-center justify-center">
+                                <ListMusic className="w-4 h-4 text-muted-foreground" />
+                              </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-medium truncate">
+                                {track.title}
+                              </div>
+                              <div className="text-xs text-muted-foreground truncate">
+                                {track.artist}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => playTrack(track)}
+                              className="p-1.5 rounded-lg text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-primary transition-opacity"
+                              title="Play this track now"
+                              aria-label="Play this track now"
+                            >
+                              <Play className="w-3.5 h-3.5" />
+                            </button>
+                              <button
+                                onClick={() => removeFromQueue(i)}
+                                className="p-1.5 rounded-lg text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Remove from queue"
+                                aria-label="Remove from queue"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
+                    )}
+                  </>
                 )}
 
-                {/* Up Next (Autoplay) — shows what will play when the queue is empty */}
-                {queue.length === 0 && currentTrack && autoplay && upNextTracks.length > 0 && (
-                  <div className="mt-4">
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      Up Next (Autoplay)
-                    </h3>
-                    <div className="space-y-1 opacity-80">
-                      {upNextTracks.map((track, i) => (
-                        <div
-                          key={`${track.videoId}-${i}`}
-                          className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/[0.06] transition-all group cursor-pointer"
-                          onClick={() => playTrack(track)}
-                        >
-                          <span className="text-xs text-muted-foreground w-6 text-center font-medium">
-                            {i + 1}
-                          </span>
-                          {track.thumbnail ? (
-                            <img
-                              src={track.thumbnail}
-                              alt=""
-                              className="w-9 h-9 rounded object-cover"
-                            />
-                          ) : (
-                            <div className="w-9 h-9 rounded bg-muted flex items-center justify-center">
-                              <ListMusic className="w-3.5 h-3.5 text-muted-foreground" />
+                {/* Up Next tab content */}
+                {queueTab === 'upnext' && (
+                  <>
+                    {upNextTracks.length === 0 ? (
+                      <Card className="p-8 text-center border-dashed">
+                        <Sparkles className="w-10 h-10 mx-auto text-muted-foreground mb-2" strokeWidth={1.5} />
+                        <p className="text-sm text-muted-foreground">
+                          No autoplay tracks yet. Play a song to see what's coming next.
+                        </p>
+                      </Card>
+                    ) : (
+                      <div className="space-y-1 opacity-90">
+                        {upNextTracks.map((track, i) => (
+                          <div
+                            key={`${track.videoId}-${i}`}
+                            className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/[0.06] transition-all group cursor-pointer"
+                            onClick={() => playTrack(track)}
+                          >
+                            <span className="text-xs text-muted-foreground w-6 text-center font-medium">
+                              {i + 1}
+                            </span>
+                            {track.thumbnail ? (
+                              <img
+                                src={track.thumbnail}
+                                alt=""
+                                className="w-9 h-9 rounded object-cover"
+                              />
+                            ) : (
+                              <div className="w-9 h-9 rounded bg-muted flex items-center justify-center">
+                                <ListMusic className="w-3.5 h-3.5 text-muted-foreground" />
+                              </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-medium truncate">{track.title}</div>
+                              <div className="text-[11px] text-muted-foreground truncate">{track.artist}</div>
                             </div>
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <div className="text-xs font-medium truncate">{track.title}</div>
-                            <div className="text-[11px] text-muted-foreground truncate">{track.artist}</div>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); playTrack(track) }}
+                              className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
+                              title="Play now"
+                            >
+                              <Play className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); playTrack(track, true) }}
+                              className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
+                              title="Add to queue"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                            </button>
                           </div>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); playTrack(track) }}
-                            className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
-                            title="Play now"
-                          >
-                            <Play className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); playTrack(track, true) }}
-                            className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
-                            title="Add to queue"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {/* Quick action: skip to next */}
