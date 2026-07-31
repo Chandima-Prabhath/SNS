@@ -96,38 +96,79 @@ def _import_moonshine():
         )
 
 
-def _do_transcribe(audio_input, moonshine_onnx_module):
+def _normalize_transcript(result):
+    """
+    Normalize the return value of moonshine_onnx.transcribe() to a string.
+
+    The function's return type varies across package versions:
+      - fastrtc-moonshine-onnx: returns List[str] (list of token strings)
+        e.g. ['Hello', ' world', '!']
+      - useful-moonshine-onnx:  returns str directly
+      - some versions:           returns List[List[str]] (batched)
+
+    We handle all cases: join lists with empty string (tokens already include
+    spaces where needed), and strip whitespace from the final result.
+    """
+    if result is None:
+        return ''
+    if isinstance(result, str):
+        return result.strip()
+    if isinstance(result, list):
+        # Could be List[str] (tokens) or List[List[str]] (batched tokens)
+        if result and isinstance(result[0], list):
+            # Batched — flatten
+            flat = []
+            for batch in result:
+                if isinstance(batch, list):
+                    flat.extend(str(x) for x in batch)
+                else:
+                    flat.append(str(batch))
+            return ''.join(flat).strip()
+        # List[str] — join with empty string (Moonshine tokens include
+        # leading spaces where needed, e.g. ' world' not 'world')
+        return ''.join(str(x) for x in result).strip()
+    # Fallback: stringify
+    return str(result).strip()
+
+
+def _do_transcribe(audio_input, moonshine_onnx_module) -> str:
     """
     Call moonshine_onnx.transcribe() with the right arguments for the
-    installed package version.
+    installed package version, and normalize the result to a string.
 
     The function signature has shifted across releases:
       - fastrtc-moonshine-onnx:  transcribe(audio, model_name)
       - useful-moonshine-onnx:   transcribe(audio, model="moonshine/tiny", precision="quantized")
       - older versions:          transcribe(audio)  (uses default model)
 
-    We try them in order and cache the working signature.
+    We try them in order, then normalize the (possibly list-typed) result.
     """
+    raw = None
+
     # Try the fastrtc signature first (what the user has installed)
     try:
-        return moonshine_onnx_module.transcribe(audio_input, _MODEL_NAME)
+        raw = moonshine_onnx_module.transcribe(audio_input, _MODEL_NAME)
     except TypeError:
-        pass
+        raw = None
     except Exception:
         raise  # non-signature errors propagate
 
-    # Try the useful-moonshine-onnx signature
-    try:
-        return moonshine_onnx_module.transcribe(
-            audio_input,
-            model=_MODEL_NAME,
-            precision=_MODEL_PRECISION,
-        )
-    except TypeError:
-        pass
+    if raw is None:
+        # Try the useful-moonshine-onnx signature
+        try:
+            raw = moonshine_onnx_module.transcribe(
+                audio_input,
+                model=_MODEL_NAME,
+                precision=_MODEL_PRECISION,
+            )
+        except TypeError:
+            raw = None
 
-    # Last resort: default model
-    return moonshine_onnx_module.transcribe(audio_input)
+    if raw is None:
+        # Last resort: default model
+        raw = moonshine_onnx_module.transcribe(audio_input)
+
+    return _normalize_transcript(raw)
 
 
 def get_model_status() -> bool:
@@ -195,7 +236,9 @@ def transcribe_long(audio_path: str, moonshine_onnx_module) -> tuple[str, float]
     # Short file — single call (pass the file path; moonshine_onnx loads it)
     if duration <= 60:
         text = _do_transcribe(audio_path, moonshine_onnx_module)
-        return text.strip(), duration
+        # _do_transcribe already normalizes + strips, but call strip() again
+        # for safety in case the return type changes in a future version
+        return (text or '').strip(), duration
 
     # Long file — chunked
     log.info(f'Long file ({duration:.1f}s) — chunking into 60s segments')
@@ -214,7 +257,7 @@ def transcribe_long(audio_path: str, moonshine_onnx_module) -> tuple[str, float]
             sf.write(tmp.name, chunk, sr, format='WAV', subtype='PCM_16')
             try:
                 chunk_text = _do_transcribe(tmp.name, moonshine_onnx_module)
-                chunks.append(chunk_text.strip())
+                chunks.append((chunk_text or '').strip())
             except Exception as e:
                 log.warning(f'Chunk {chunk_idx} failed: {e}')
                 chunks.append('')
