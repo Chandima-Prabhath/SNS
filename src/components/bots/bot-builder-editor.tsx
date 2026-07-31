@@ -39,6 +39,7 @@ import {
   Image as ImageIcon, Split, Hash, Braces, Terminal,
   Bug, CheckCircle2, Play, ChevronRight, Activity,
   Download, Upload, FileText, AudioLines,
+  Mic, Video, FileBox, MessageSquare, Sticker, Tag,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -59,7 +60,31 @@ const ICONS: Record<string, typeof Zap> = {
   Image: ImageIcon,
   Split, Hash, Braces, Terminal,
   AudioLines,
+  Mic, Video, FileBox, MessageSquare, Sticker, Tag,
 }
+
+/**
+ * Branches for the message_type node — one output handle per message type.
+ * The `id` is the sourceHandle that edges will reference.
+ * The `detect` function checks whether the incoming message matches this type.
+ *
+ * Order matters: more specific checks first (audio before file, because
+ * audio files are also files). The engine stops at the first match.
+ */
+const MESSAGE_TYPE_BRANCHES: {
+  id: string
+  label: string
+  icon: typeof Mic
+  color: string
+}[] = [
+  { id: 'text',   label: 'Text message',   icon: MessageSquare, color: '#60A5FA' },
+  { id: 'voice',  label: 'Voice message',  icon: Mic,           color: '#22D3EE' },
+  { id: 'audio',  label: 'Audio file',     icon: AudioLines,    color: '#A78BFA' },
+  { id: 'image',  label: 'Image',          icon: ImageIcon,     color: '#F472B6' },
+  { id: 'video',  label: 'Video',          icon: Video,         color: '#FB7185' },
+  { id: 'file',   label: 'Document/File',  icon: FileBox,       color: '#FBBF24' },
+  { id: 'other',  label: 'Other',          icon: Tag,           color: '#64748B' },
+]
 
 // ─── Custom Node Component ───────────────────────────────────────────────────
 /**
@@ -77,6 +102,7 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
   const isCondition = nodeType === 'condition'
   const isRandom = nodeType === 'random'
   const isSwitch = nodeType === 'switch_case'
+  const isMessageType = nodeType === 'message_type'
 
   // ── Build preview content per node type ──────────────────────────────
   let preview: { label: string; value: string } | null = null
@@ -143,6 +169,9 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
       break
     case 'asr_transcribe':
       preview = { label: 'Transcribes', value: data.asrAudioUrl ? (data.asrAudioUrl.length > 40 ? data.asrAudioUrl.slice(0, 40) + '…' : data.asrAudioUrl) : '{{mediaUrl}}' }
+      break
+    case 'message_type':
+      preview = { label: 'Routes by', value: 'message type (text/voice/image/...)' }
       break
   }
 
@@ -218,7 +247,7 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
               position={Position.Bottom}
               id="true"
               className="adoo-handle"
-              style={{ background: '#34D399', width: 16, height: 16, border: '3px solid #1e1f22', borderRadius: '50%' }}
+              style={{ background: '#34D399', width: 16, height: 16, border: '3px solid #1e1f22', borderRadius: '50%', position: 'relative' }}
             />
           </div>
           <div className="flex flex-col items-center">
@@ -228,9 +257,26 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
               position={Position.Bottom}
               id="false"
               className="adoo-handle"
-              style={{ background: '#F87171', width: 16, height: 16, border: '3px solid #1e1f22', borderRadius: '50%' }}
+              style={{ background: '#F87171', width: 16, height: 16, border: '3px solid #1e1f22', borderRadius: '50%', position: 'relative' }}
             />
           </div>
+        </div>
+      ) : isMessageType ? (
+        /* Message Type node — one handle per type, laid out vertically like switch_case */
+        <div className="px-3 pb-2 pt-1 space-y-1.5">
+          {MESSAGE_TYPE_BRANCHES.map((branch) => (
+            <div key={branch.id} className="flex items-center gap-2">
+              <branch.icon className="w-3.5 h-3.5 shrink-0" style={{ color: branch.color }} />
+              <span className="text-[10px] text-white/70 truncate flex-1 px-1.5 py-0.5 rounded bg-white/5">{branch.label}</span>
+              <Handle
+                type="source"
+                position={Position.Right}
+                id={branch.id}
+                className="adoo-handle"
+                style={{ background: branch.color, width: 16, height: 16, border: '3px solid #1e1f22', borderRadius: '50%', position: 'relative' }}
+              />
+            </div>
+          ))}
         </div>
       ) : isSwitch ? (
         <div className="px-3 pb-2 pt-1 space-y-1.5">
@@ -877,14 +923,34 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
         <div className="flex-1 relative">
           <ReactFlow
             nodes={nodes}
-            edges={edges.map((e) => ({
-              ...e,
-              selected: e.id === selectedEdgeId,
-              style: {
-                stroke: e.id === selectedEdgeId ? '#EF4444' : '#5865F2',
-                strokeWidth: e.id === selectedEdgeId ? 3 : 2,
-              },
-            }))}
+            edges={edges.map((e) => {
+              // Color-code edges based on their sourceHandle so multi-branch
+              // nodes (condition, switch_case, message_type) are readable.
+              // Green = true, Red = false, Pink = case_N, Gray = default,
+              // Blue = single/normal edges.
+              const edgeColor = (() => {
+                if (e.id === selectedEdgeId) return '#EF4444' // selected = red
+                const h = e.sourceHandle
+                if (h === 'true') return '#34D399'    // green
+                if (h === 'false') return '#F87171'   // red
+                if (h === 'default') return '#64748B' // gray
+                if (h === 'other') return '#64748B'   // gray (message_type fallback)
+                if (h?.startsWith('case_')) return '#FB7185' // pink
+                // Message type branches use their own colors
+                const mtBranch = MESSAGE_TYPE_BRANCHES.find((b) => b.id === h)
+                if (mtBranch) return mtBranch.color
+                return '#5865F2' // blue (default)
+              })()
+              return {
+                ...e,
+                selected: e.id === selectedEdgeId,
+                style: {
+                  stroke: edgeColor,
+                  strokeWidth: e.id === selectedEdgeId ? 3 : 2,
+                },
+                markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor },
+              }
+            })}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
@@ -1992,6 +2058,55 @@ function NodeInspectorBody({
             <li>This Transcribe Audio node</li>
             <li>Message: &quot;You said: {'{{transcript}}'}&quot;</li>
           </ol>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Message Type (helper node) ──────────────────────────────────────
+  if (nodeType === 'message_type') {
+    return (
+      <div className="space-y-4">
+        <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-white/60">
+          <p className="font-semibold text-blue-400 mb-1.5 flex items-center gap-1.5">
+            <Split className="w-3.5 h-3.5" /> Message Type Router
+          </p>
+          <p className="mb-2">
+            This node checks the type of the incoming message and routes the flow to
+            the matching output. Connect the colored dots on the node to the branches
+            you want to handle each type.
+          </p>
+          <div className="space-y-1 mt-2">
+            {MESSAGE_TYPE_BRANCHES.map((b) => (
+              <div key={b.id} className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full shrink-0" style={{ background: b.color }} />
+                <b.icon className="w-3 h-3" style={{ color: b.color }} />
+                <span className="text-white/70"><b>{b.label}</b></span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white/[0.03] border border-white/5 rounded-lg p-3 text-xs text-white/50">
+          <p className="font-semibold text-white/70 mb-1.5 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5" /> Voice Bot Recipe
+          </p>
+          <p className="mb-2">To build a voice-message → ASR → LLM → TTS bot:</p>
+          <ol className="list-decimal list-inside space-y-0.5">
+            <li>Trigger: any message</li>
+            <li>This Message Type node</li>
+            <li>Connect the <span className="text-cyan-400 font-semibold">Voice</span> output →</li>
+            <li>Transcribe Audio node (stores {'{{transcript}}'})</li>
+            <li>AI Generate node (prompt: &quot;Reply to: {'{{transcript}}'}&quot;)</li>
+            <li>Voice Message node (text: {'{{aiResponse}}'})</li>
+          </ol>
+          <p className="mt-2 text-white/40">
+            Tip: you can also use a Condition node with <code className="px-1 py-0.5 rounded bg-white/5">{'{{mediaType}}'}</code> contains <code className="px-1 py-0.5 rounded bg-white/5">audio</code> instead of this node.
+          </p>
+        </div>
+
+        <div className="text-xs text-white/40">
+          The detected type is also available as <code className="px-1 py-0.5 rounded bg-white/5 text-blue-300">{'{{messageType}}'}</code> in downstream nodes.
         </div>
       </div>
     )

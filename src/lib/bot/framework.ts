@@ -87,6 +87,11 @@ export interface BotContext {
    *  transcript text or null if transcription failed. Server-only. */
   transcribeAudio?: (mediaUrl: string, language?: string) => Promise<string | null>
 
+  /** Show a "Bot is typing..." indicator in the channel for `seconds`.
+   *  Used by long-running nodes (TTS, ASR, LLM, API) to give the user
+   *  visual feedback that the bot is working on their request. */
+  setTyping?: (seconds: number) => Promise<void>
+
   setState: (state: any) => Promise<void>
   getState: () => Promise<any>
 }
@@ -287,6 +292,50 @@ export async function dispatchBotUpdate(params: {
     }
   }
 
+  // Helper: emit a "Bot is typing..." indicator to the channel via socket.
+  // Re-emits every 4 seconds (Telegram-style) until the timeout expires,
+  // because the chat UI auto-clears typing after ~5s of no refresh.
+  const typingTimers = new Map<string, ReturnType<typeof setInterval>>()
+  const setTyping = async (seconds: number) => {
+    try {
+      const { getIO } = await import('@/lib/realtime-server')
+      const io = getIO()
+      if (!io) return
+
+      const room = `channel:${params.channelId}`
+      const typingPayload = {
+        userId: bot.id,
+        username: bot.username,
+        channelId: params.channelId,
+        isTyping: true,
+      }
+
+      // Clear any existing typing timer for this bot
+      const existing = typingTimers.get(bot.id)
+      if (existing) clearInterval(existing)
+
+      // Emit immediately
+      io.to(room).emit('channel:typing', typingPayload)
+
+      // Re-emit every 4s until the timeout expires
+      const intervalMs = 4000
+      const endTime = Date.now() + Math.min(seconds, 30) * 1000 // cap at 30s
+      const interval = setInterval(() => {
+        if (Date.now() >= endTime) {
+          clearInterval(interval)
+          typingTimers.delete(bot.id)
+          io.to(room).emit('channel:typing', { ...typingPayload, isTyping: false })
+          return
+        }
+        io.to(room).emit('channel:typing', typingPayload)
+      }, intervalMs)
+      typingTimers.set(bot.id, interval)
+    } catch (e: any) {
+      // Best-effort — don't let typing indicator failures break the bot
+      console.warn('[bot:typing] failed:', e?.message || e)
+    }
+  }
+
   // Helper: state management
   const stateKey = { botId: bot.id, userId: params.senderId }
   const getState = async () => {
@@ -345,6 +394,7 @@ export async function dispatchBotUpdate(params: {
     editMessage,
     generateTTS,
     transcribeAudio,
+    setTyping,
     getState,
     setState,
   }
@@ -512,6 +562,32 @@ export async function dispatchBotCallback(params: {
     }
   }
 
+  // Helper: emit typing indicator (duplicate of dispatchBotUpdate version)
+  const setTyping = async (seconds: number) => {
+    try {
+      const { getIO } = await import('@/lib/realtime-server')
+      const io = getIO()
+      if (!io) return
+      const room = `channel:${params.channelId}`
+      const typingPayload = {
+        userId: bot.id,
+        username: bot.username,
+        channelId: params.channelId,
+        isTyping: true,
+      }
+      io.to(room).emit('channel:typing', typingPayload)
+      // Auto-clear after the requested duration (capped at 30s)
+      const ms = Math.min(seconds, 30) * 1000
+      setTimeout(() => {
+        try {
+          io.to(room).emit('channel:typing', { ...typingPayload, isTyping: false })
+        } catch {}
+      }, ms)
+    } catch (e: any) {
+      console.warn('[bot:typing callback] failed:', e?.message || e)
+    }
+  }
+
   const stateKey = { botId: bot.id, userId: params.senderId }
   const getState = async () => {
     const session = await db.conversationSession.findUnique({ where: { botId_userId: stateKey } })
@@ -554,6 +630,7 @@ export async function dispatchBotCallback(params: {
     editMessage,
     generateTTS,
     transcribeAudio,
+    setTyping,
     getState,
     setState,
   }

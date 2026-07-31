@@ -134,6 +134,7 @@ export const visualBot: BotModule = {
           editMessage: ctx.editMessage,
           generateTTS: ctx.generateTTS,
           transcribeAudio: ctx.transcribeAudio,
+          setTyping: ctx.setTyping,
         }, resume)
 
         await persistSession(ctx, result)
@@ -163,6 +164,7 @@ export const visualBot: BotModule = {
         editMessage: ctx.editMessage,
         generateTTS: ctx.generateTTS,
         transcribeAudio: ctx.transcribeAudio,
+        setTyping: ctx.setTyping,
       }, resume)
 
       await persistSession(ctx, result)
@@ -195,6 +197,7 @@ async function runFromTrigger(flow: BotFlow, ctx: BotContext) {
     editMessage: ctx.editMessage,
     generateTTS: ctx.generateTTS,
     transcribeAudio: ctx.transcribeAudio,
+    setTyping: ctx.setTyping,
   })
 
   await persistSession(ctx, result)

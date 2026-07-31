@@ -43,6 +43,7 @@ export type NodeType =
   | 'log'
   | 'tts'
   | 'asr_transcribe'
+  | 'message_type'
 
 export type NodeCategory = 'trigger' | 'output' | 'input' | 'logic' | 'advanced'
 
@@ -315,7 +316,13 @@ function interpolate(text: string, ctx: BotExecutionContext): string {
   // but the explicit fallbacks here make them work even in debug mode.
   out = out.replace(/\{\{mediaUrl\}\}/g, ctx.variables.__mediaUrl || '')
   out = out.replace(/\{\{mediaType\}\}/g, ctx.variables.__mediaType || '')
-  out = out.replace(/\{\{transcript\}\}/g, ctx.variables.__transcript || ctx.variables.transcript || '')
+  // IMPORTANT: prefer the user-set 'transcript' variable (from an explicit
+  // asr_transcribe node) over the auto-set '__transcript' (from the incoming
+  // message's auto-transcription). The auto-transcript may be stale or empty,
+  // and the user's explicit ASR node should take precedence.
+  out = out.replace(/\{\{transcript\}\}/g, ctx.variables.transcript || ctx.variables.__transcript || '')
+  // Also expose the detected message type (set by the message_type node)
+  out = out.replace(/\{\{messageType\}\}/g, ctx.variables.__messageType || '')
   return out
 }
 
@@ -416,11 +423,12 @@ export async function executeBotFlow(
       nodeLabel,
     })
 
-    switch (currentNode.type) {
-      // ── TRIGGER ────────────────────────────────────────────────────────
-      case 'trigger':
-        currentNode = followEdge(currentNode.id, null)
-        break
+    try {
+      switch (currentNode.type) {
+        // ── TRIGGER ────────────────────────────────────────────────────────
+        case 'trigger':
+          currentNode = followEdge(currentNode.id, null)
+          break
 
       // ── OUTPUT: message ────────────────────────────────────────────────
       case 'message': {
@@ -531,7 +539,9 @@ export async function executeBotFlow(
         const varName = currentNode.data.variable || ''
         const varValue = ctx.variables[varName] || ''
         const op = currentNode.data.operator || 'exists'
-        const cmp = currentNode.data.value || ''
+        // Interpolate the comparison value so {{sender}}, {{body}}, {{mediaType}},
+        // {{transcript}} etc. work in condition comparisons.
+        const cmp = interpolate(currentNode.data.value || '', ctx)
 
         let met = false
         switch (op) {
@@ -573,11 +583,74 @@ export async function executeBotFlow(
         break
       }
 
+      // ── LOGIC: message_type (route by message type) ──────────────────
+      case 'message_type': {
+        // Determine the message type from mediaType + mediaUrl + body
+        const mediaType = ctx.variables.__mediaType || ''
+        const mediaUrl = ctx.variables.__mediaUrl || ''
+        const body = ctx.body || ''
+
+        let detectedType: string
+        if (mediaType.startsWith('audio')) {
+          // Distinguish voice recordings from audio file uploads:
+          // - voice recordings: mediaType is 'audio/webm', 'audio/ogg', 'audio/mp4' (from MediaRecorder)
+          // - audio files: mediaType is 'audio' (TTS-generated) or 'audio/mpeg', 'audio/flac' (uploaded)
+          // Heuristic: 'audio/webm', 'audio/ogg', 'audio/mp4' → voice; 'audio' or 'audio/mpeg' → audio
+          if (mediaType === 'audio/webm' || mediaType === 'audio/ogg' || mediaType === 'audio/mp4' || mediaType === 'audio/m4a') {
+            detectedType = 'voice'
+          } else {
+            detectedType = 'audio'
+          }
+        } else if (mediaType.startsWith('image')) {
+          detectedType = 'image'
+        } else if (mediaType.startsWith('video')) {
+          detectedType = 'video'
+        } else if (mediaUrl && !body) {
+          // Has a media URL but no text body and not audio/image/video → treat as file
+          detectedType = 'file'
+        } else if (body && !mediaUrl) {
+          detectedType = 'text'
+        } else if (mediaUrl && body) {
+          // Text + media → treat as text (the body is the caption)
+          detectedType = 'text'
+        } else {
+          detectedType = 'other'
+        }
+
+        // Expose the detected type as a variable for downstream nodes
+        ctx.variables.__messageType = detectedType
+
+        trace.push({
+          type: 'branch_taken',
+          timestamp: now(),
+          nodeId: currentNode.id,
+          handle: detectedType,
+          targetNodeId: followEdge(currentNode.id, detectedType)?.id || '',
+        })
+
+        const next = followEdge(currentNode.id, detectedType)
+        if (next) {
+          currentNode = next
+        } else {
+          // No edge for this type — fall through to 'other' or null
+          const fallback = followEdge(currentNode.id, 'other') || followEdge(currentNode.id, null)
+          if (fallback) {
+            trace.push({ type: 'branch_taken', timestamp: now(), nodeId: currentNode.id, handle: 'fallback', targetNodeId: fallback.id })
+            currentNode = fallback
+          } else {
+            trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+            currentNode = undefined
+          }
+        }
+        break
+      }
+
       // ── LOGIC: switch_case (multi-branch) ─────────────────────────────
       case 'switch_case': {
         const varName = currentNode.data.switchVariable || ''
         const varValue = ctx.variables[varName] || ''
-        const cases = currentNode.data.cases || []
+        // Interpolate each case value so {{var}} placeholders work
+        const cases = (currentNode.data.cases || []).map((c) => interpolate(c, ctx))
 
         const matchIdx = cases.findIndex((c) => c === varValue)
         const handle = matchIdx >= 0 ? `case_${matchIdx}` : 'default'
@@ -677,6 +750,9 @@ export async function executeBotFlow(
         const text = interpolate(ttsNode.data.ttsText || '', ctx)
         const voice = ttsNode.data.ttsVoice || 'alba'
 
+        // Show typing indicator while TTS generates (can take 2-10s)
+        if (ctx.setTyping) await ctx.setTyping(10)
+
         if (!text.trim()) {
           trace.push({ type: 'error', timestamp: now(), nodeId: ttsNode.id, message: 'TTS node has empty text' })
           currentNode = followEdge(ttsNode.id, null)
@@ -725,6 +801,9 @@ export async function executeBotFlow(
         const language = asrNode.data.asrLanguage || 'en'
         const shouldReply = asrNode.data.asrReply !== false // default true
         const vname = asrNode.data.variableName || 'transcript'
+
+        // Show typing indicator while ASR transcribes (can take 1-15s)
+        if (ctx.setTyping) await ctx.setTyping(15)
 
         if (!audioUrl || !audioUrl.trim()) {
           trace.push({ type: 'error', timestamp: now(), nodeId: asrNode.id, message: 'ASR node has no audio URL (set asrAudioUrl or send a voice message)' })
@@ -779,6 +858,8 @@ export async function executeBotFlow(
       // ── ADVANCED: api_call ────────────────────────────────────────────
       case 'api_call': {
         const callStart = now()
+        // Show typing indicator while the API call runs (can take 1-30s)
+        if (ctx.setTyping) await ctx.setTyping(15)
         try {
           const url = interpolate(currentNode.data.url || '', ctx)
           const method = currentNode.data.method || 'GET'
@@ -822,6 +903,8 @@ export async function executeBotFlow(
       case 'ai_generate': {
         const vname = currentNode.data.variableName || 'aiResponse'
         const callStart = now()
+        // Show typing indicator while the LLM generates (can take 5-30s)
+        if (ctx.setTyping) await ctx.setTyping(30)
         try {
           const model = currentNode.data.aiModel || 'gemma3:270m'
           const prompt = interpolate(currentNode.data.aiPrompt || '', ctx)
@@ -867,6 +950,22 @@ export async function executeBotFlow(
       default:
         trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: `unknown node type: ${currentNode.type}` })
         return { sentCount, paused: false, variables: ctx.variables, trace, error: `unknown node type: ${currentNode.type}` }
+      }
+    } catch (e: any) {
+      // Top-level catch — any node throwing would otherwise abort the entire
+      // flow silently. Log the error, try to reply to the user so they know
+      // something went wrong, and stop the flow gracefully.
+      const errMsg = e?.message || String(e)
+      const errNodeId = currentNode?.id || ''
+      trace.push({ type: 'error', timestamp: now(), nodeId: errNodeId, message: `Node "${nodeLabel}" threw: ${errMsg}` })
+      try {
+        await ctx.reply(`⚠️ Bot error in "${nodeLabel}": ${errMsg.slice(0, 200)}`)
+        sentCount++
+      } catch {
+        // reply also failed — nothing more we can do
+      }
+      trace.push({ type: 'flow_end', timestamp: now(), reason: 'error', sentCount })
+      return { sentCount, paused: false, variables: ctx.variables, trace, error: `Node ${errNodeId} threw: ${errMsg}` }
     }
 
     // Record node exit
@@ -1026,6 +1125,12 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
     icon: 'AudioLines', color: '#22D3EE', bg: '#22D3EE1A',
     handles: 'single',
   },
+  message_type: {
+    type: 'message_type', label: 'Message Type', category: 'logic',
+    description: 'Routes the flow based on the type of incoming message (text, voice, image, etc.)',
+    icon: 'Split', color: '#60A5FA', bg: '#60A5FA1A',
+    handles: 'multi',
+  },
 }
 
 export const CATEGORY_ORDER: NodeCategory[] = ['trigger', 'output', 'input', 'logic', 'advanced']
@@ -1096,6 +1201,10 @@ export function defaultNodeData(type: NodeType): FlowNodeData {
         asrLanguage: 'en',
         asrReply: true,
         variableName: 'transcript',
+      }
+    case 'message_type':
+      return {
+        label: 'Message Type',
       }
   }
 }
