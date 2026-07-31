@@ -896,43 +896,43 @@ function PlayerBar({
               </div>
             </div>
 
-            {/* Desktop layout */}
-            <div className="hidden lg:flex px-5 py-3.5 items-center gap-4">
-              {/* Track info */}
-              <div className="flex items-center gap-3 min-w-0 w-48 shrink-0">
+            {/* Desktop layout — Spotify-style 3-column */}
+            <div className="hidden lg:grid lg:grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 py-3">
+              {/* Left: Track info */}
+              <div className="flex items-center gap-3 min-w-0 justify-self-start">
                 {currentTrack.thumbnail ? (
-                  <img src={currentTrack.thumbnail} alt="" className="w-11 h-11 rounded-xl object-cover shrink-0 ring-1 ring-white/10 shadow-md" />
+                  <img src={currentTrack.thumbnail} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
                 ) : (
-                  <div className="w-11 h-11 rounded-xl gradient-primary flex items-center justify-center shrink-0 shadow-md">
+                  <div className="w-12 h-12 rounded-lg gradient-primary flex items-center justify-center shrink-0">
                     <MusicIcon className="w-5 h-5 text-primary-foreground" />
                   </div>
                 )}
-                <div className="min-w-0">
+                <div className="min-w-0 max-w-[180px]">
                   <div className="text-sm font-semibold truncate">{currentTrack.title}</div>
                   <div className="text-xs text-muted-foreground truncate">{currentTrack.artist}</div>
                 </div>
               </div>
 
-              {/* Controls + seek bar */}
-              <div className="flex-1 flex flex-col items-center gap-1.5 min-w-0">
-                <div className="flex items-center gap-2.5">
-                  <button onClick={onShuffleToggle} className={cn('p-1.5 rounded-lg transition-all', shuffle ? 'text-primary bg-primary/15 shadow-glow' : 'text-muted-foreground hover:text-foreground hover:bg-white/5')} aria-label="Shuffle">
+              {/* Center: Controls + seek bar */}
+              <div className="flex flex-col items-center gap-1.5 justify-self-center w-[320px]">
+                <div className="flex items-center gap-4">
+                  <button onClick={onShuffleToggle} className={cn('transition-colors', shuffle ? 'text-primary' : 'text-muted-foreground hover:text-foreground')} aria-label="Shuffle">
                     <Shuffle className="w-4 h-4" />
                   </button>
-                  <button onClick={onNext} className="p-1.5 rounded-lg text-foreground hover:bg-white/10 transition-colors" aria-label="Next">
-                    <SkipForward className="w-4 h-4" />
+                  <button onClick={onNext} className="text-foreground hover:scale-110 transition-transform" aria-label="Next">
+                    <SkipForward className="w-5 h-5" />
                   </button>
-                  <button onClick={onTogglePlay} className="w-9 h-9 rounded-full gradient-primary flex items-center justify-center hover:scale-110 active:scale-95 transition-transform shadow-glow" aria-label={isPlaying ? 'Pause' : 'Play'}>
-                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                  <button onClick={onTogglePlay} className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform" aria-label={isPlaying ? 'Pause' : 'Play'}>
+                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
                   </button>
-                  <button onClick={onStop} className="p-1.5 rounded-lg text-foreground hover:bg-white/10 transition-colors" aria-label="Stop">
-                    <X className="w-4 h-4" />
+                  <button onClick={onStop} className="text-foreground hover:scale-110 transition-transform" aria-label="Stop">
+                    <X className="w-5 h-5" />
                   </button>
-                  <button onClick={onRepeatToggle} className={cn('p-1.5 rounded-lg transition-all', repeat ? 'text-primary bg-primary/15 shadow-glow' : 'text-muted-foreground hover:text-foreground hover:bg-white/5')} aria-label="Repeat">
+                  <button onClick={onRepeatToggle} className={cn('transition-colors', repeat ? 'text-primary' : 'text-muted-foreground hover:text-foreground')} aria-label="Repeat">
                     <Repeat className="w-4 h-4" />
                   </button>
                 </div>
-                <div className="flex items-center gap-2 w-full max-w-sm">
+                <div className="flex items-center gap-2 w-full">
                   <span className="text-[10px] text-muted-foreground tabular-nums w-9 text-right">{formatTime(position)}</span>
                   <input
                     type="range"
@@ -946,8 +946,8 @@ function PlayerBar({
                 </div>
               </div>
 
-              {/* Volume + expand + collapse */}
-              <div className="flex items-center gap-1.5 shrink-0">
+              {/* Right: Volume + expand/collapse */}
+              <div className="flex items-center gap-2 justify-self-end">
                 <Volume2 className="w-4 h-4 text-muted-foreground shrink-0" />
                 <input
                   type="range"
@@ -956,12 +956,13 @@ function PlayerBar({
                   step={0.01}
                   value={volume}
                   onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
-                  className="w-16 volume-slider"
+                  className="w-24 volume-slider"
                 />
-                <button onClick={() => { setExpanded(false); useAppStore.getState().setView('music'); window.location.hash = 'music-queue' }} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors" aria-label="Open full music page">
+                <div className="w-px h-6 bg-white/10 mx-1" />
+                <button onClick={() => { setExpanded(false); useAppStore.getState().setView('music'); window.location.hash = 'music-queue' }} className="text-muted-foreground hover:text-foreground transition-colors p-1" aria-label="Open full music page">
                   <ChevronUp className="w-4 h-4" />
                 </button>
-                <button onClick={() => setExpanded(false)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors" aria-label="Collapse player">
+                <button onClick={() => setExpanded(false)} className="text-muted-foreground hover:text-foreground transition-colors p-1" aria-label="Collapse player">
                   <ChevronDown className="w-4 h-4" />
                 </button>
               </div>
