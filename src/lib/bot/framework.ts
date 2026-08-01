@@ -155,10 +155,213 @@ export function listBotModules(): BotModule[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Dispatcher
+// Shared context builder — used by both dispatchBotUpdate and dispatchBotCallback
 // ─────────────────────────────────────────────────────────────────────────────
 
 const COMMAND_REGEX = /^\/(\w+)(@\w+)?\s*(.*)$/
+
+// Module-level typing timers — keyed by botId, so they survive across
+// dispatches and can be cleared when a new dispatch starts.
+const typingTimers = new Map<string, ReturnType<typeof setInterval>>()
+
+interface DispatchParams {
+  channelId: string
+  senderId: string
+  senderName: string
+  messageId: string
+  replyToId?: string | null
+}
+
+/**
+ * Build a BotContext with all shared helpers (reply, editMessage, replyWithMedia,
+ * generateTTS, transcribeAudio, setTyping, controlMusic, getState, setState).
+ *
+ * Both dispatchBotUpdate and dispatchBotCallback call this — eliminates ~250
+ * lines of duplicated code and prevents the helpers from silently diverging
+ * (which previously caused the music bot controlMusic bug).
+ */
+function buildBotContext(bot: any, params: DispatchParams): BotContext {
+  // Helper: post a message as the bot
+  const reply = async (text: string, keyboard?: BotKeyboard): Promise<string> => {
+    const msg = await db.message.create({
+      data: {
+        channelId: params.channelId,
+        senderType: 'bot',
+        senderId: bot.id,
+        body: text,
+        replyToId: params.messageId,
+        keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
+      },
+    })
+    return msg.id
+  }
+
+  // Helper: edit an existing bot message's body + keyboard in-place
+  const editMessage = async (messageId: string, text: string, keyboard?: BotKeyboard) => {
+    await db.message.update({
+      where: { id: messageId },
+      data: {
+        body: text,
+        keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
+      },
+    })
+    trackEditedMessage(messageId)
+  }
+
+  // Helper: reply with media (image/video/audio)
+  const replyWithMedia = async (mediaUrl: string, mediaType: string, caption?: string): Promise<string> => {
+    const msg = await db.message.create({
+      data: {
+        channelId: params.channelId,
+        senderType: 'bot',
+        senderId: bot.id,
+        body: caption || (mediaType === 'audio' ? 'Voice message' : 'Media'),
+        replyToId: params.messageId,
+        mediaUrl,
+        mediaType,
+      },
+    })
+    return msg.id
+  }
+
+  // Helper: generate TTS audio via Pocket TTS, save to disk, return URL
+  const generateTTS = async (text: string, voice: string): Promise<string | null> => {
+    try {
+      const ttsUrl = process.env.TTS_URL || 'http://localhost:8000'
+      const formData = new FormData()
+      formData.append('text', text.slice(0, 500))
+      formData.append('voice_url', voice)
+
+      const ttsController = new AbortController()
+      const ttsTimeout = setTimeout(() => ttsController.abort(), 30_000)
+      const ttsRes = await fetch(`${ttsUrl}/tts`, {
+        method: 'POST',
+        body: formData,
+        signal: ttsController.signal,
+      })
+      clearTimeout(ttsTimeout)
+
+      if (!ttsRes.ok) return null
+      const audioBuffer = Buffer.from(await ttsRes.arrayBuffer())
+      if (audioBuffer.length === 0) return null
+
+      const uploadDir = path.join(process.cwd(), 'public', 'uploads')
+      if (!existsSync(uploadDir)) await mkdir(uploadDir, { recursive: true })
+      const filename = `tts-bot-${crypto.randomUUID()}.wav`
+      await writeFile(path.join(uploadDir, filename), audioBuffer)
+      return `/api/uploads/${filename}`
+    } catch (e: any) {
+      console.error('[bot:tts] failed:', e?.message || e)
+      return null
+    }
+  }
+
+  // Helper: transcribe audio via Moonshine ASR
+  const transcribeAudio = async (mediaUrl: string, language?: string): Promise<string | null> => {
+    try {
+      const { transcribeMediaUrl } = require('@/lib/asr')
+      return await transcribeMediaUrl(mediaUrl, language || 'en')
+    } catch (e: any) {
+      console.error('[bot:asr] failed:', e?.message || e)
+      return null
+    }
+  }
+
+  // Helper: show typing indicator (re-emits every 4s until timeout)
+  const setTyping = async (seconds: number) => {
+    try {
+      const io = getIO()
+      if (!io) return
+      const room = `channel:${params.channelId}`
+      const typingPayload = {
+        userId: bot.id,
+        username: bot.username,
+        channelId: params.channelId,
+        isTyping: true,
+      }
+      // Clear any existing timer for this bot
+      const existing = typingTimers.get(bot.id)
+      if (existing) clearInterval(existing)
+      // Emit immediately
+      io.to(room).emit('channel:typing', typingPayload)
+      // Re-emit every 4s until the timeout expires
+      const endTime = Date.now() + Math.min(seconds, 30) * 1000
+      const interval = setInterval(() => {
+        if (Date.now() >= endTime) {
+          clearInterval(interval)
+          typingTimers.delete(bot.id)
+          io.to(room).emit('channel:typing', { ...typingPayload, isTyping: false })
+          return
+        }
+        io.to(room).emit('channel:typing', typingPayload)
+      }, 4000)
+      typingTimers.set(bot.id, interval)
+    } catch (e: any) {
+      console.warn('[bot:typing] failed:', e?.message || e)
+    }
+  }
+
+  // Helper: control music player via socket
+  const controlMusic = async (targetUserId: string, command: {
+    action: 'play' | 'pause' | 'skip' | 'queue' | 'stop'
+    query?: string
+  }) => {
+    try {
+      sendMusicCommand(targetUserId, command)
+    } catch (e: any) {
+      console.warn('[bot:music] failed:', e?.message || e)
+    }
+  }
+
+  // Helper: state management
+  const stateKey = { botId: bot.id, userId: params.senderId }
+  const getState = async () => {
+    const session = await db.conversationSession.findUnique({ where: { botId_userId: stateKey } })
+    if (!session) return {}
+    try { return JSON.parse(session.state || '{}') } catch { return {} }
+  }
+  const setState = async (state: any) => {
+    await db.conversationSession.upsert({
+      where: { botId_userId: stateKey },
+      create: { ...stateKey, state: JSON.stringify(state) },
+      update: { state: JSON.stringify(state) },
+    })
+  }
+
+  return {
+    bot: {
+      id: bot.id,
+      name: bot.name,
+      username: bot.username,
+      module: bot.module,
+      config: bot.config ? (typeof bot.config === 'string' ? JSON.parse(bot.config) : bot.config) : {},
+    },
+    channelId: params.channelId,
+    senderId: params.senderId,
+    senderName: params.senderName,
+    message: {
+      id: params.messageId,
+      body: '', // set by caller
+      replyToId: params.replyToId,
+    },
+    args: [],
+    command: undefined,
+    isMention: false,
+    reply,
+    replyWithMedia,
+    editMessage,
+    generateTTS,
+    transcribeAudio,
+    setTyping,
+    controlMusic,
+    getState,
+    setState,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dispatcher
+// ─────────────────────────────────────────────────────────────────────────────
 
 export async function dispatchBotUpdate(params: {
   botId: string
@@ -185,208 +388,9 @@ export async function dispatchBotUpdate(params: {
     return
   }
 
-  let config: any = {}
-  try {
-    config = JSON.parse(bot.config || '{}')
-  } catch {
-    config = {}
-  }
-
-  // Pass the flow to visual bots
-  if (bot.module === 'visual' && bot.flow) {
-    config._flow = bot.flow
-  }
-
-  // Helper: post a message as the bot
-  // If keyboard is provided, it's persisted as JSON on the message row and
-  // rendered as tappable Telegram-style inline buttons by the client.
-  // Returns the new message ID (used by visual bot to track the active
-  // keyboard message for edit-in-place on re-pause).
-  const reply = async (text: string, keyboard?: BotKeyboard): Promise<string> => {
-    const msg = await db.message.create({
-      data: {
-        channelId: params.channelId,
-        senderType: 'bot',
-        senderId: bot.id,
-        body: text,
-        replyToId: params.messageId,
-        keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
-      },
-    })
-    return msg.id
-  }
-
-  // Helper: edit an existing bot message's body + keyboard in-place.
-  // Used for Telegram-style keyboard updates — when a wait_choice loops
-  // back, we edit the existing keyboard message instead of sending a new
-  // one. Also broadcasts a socket event so all clients update in real-time.
-  const editMessage = async (messageId: string, text: string, keyboard?: BotKeyboard) => {
-    await db.message.update({
-      where: { id: messageId },
-      data: {
-        body: text,
-        keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
-      },
-    })
-    trackEditedMessage(messageId)
-  }
-
-  // Helper: reply with media (image/video/audio). Used by the TTS node
-  // to send voice messages. Returns the new message ID.
-  const replyWithMedia = async (mediaUrl: string, mediaType: string, caption?: string): Promise<string> => {
-    const msg = await db.message.create({
-      data: {
-        channelId: params.channelId,
-        senderType: 'bot',
-        senderId: bot.id,
-        body: caption || (mediaType === 'audio' ? 'Voice message' : 'Media'),
-        replyToId: params.messageId,
-        mediaUrl,
-        mediaType,
-      },
-    })
-    return msg.id
-  }
-
-  // Helper: generate TTS audio via Pocket TTS, save to disk, return URL.
-  // Server-only — uses fs/path to write the WAV file to public/uploads/.
-  const generateTTS = async (text: string, voice: string): Promise<string | null> => {
-    try {
-      const ttsUrl = process.env.TTS_URL || 'http://localhost:8000'
-      const formData = new FormData()
-      formData.append('text', text.slice(0, 500))
-      formData.append('voice_url', voice)
-
-      // 30s timeout — Pocket TTS should respond in <5s. If it hangs, abort
-      // and return null so the bot falls back to a text message.
-      const ttsController = new AbortController()
-      const ttsTimeout = setTimeout(() => ttsController.abort(), 30_000)
-      const ttsRes = await fetch(`${ttsUrl}/tts`, {
-        method: 'POST',
-        body: formData,
-        signal: ttsController.signal,
-      })
-      clearTimeout(ttsTimeout)
-
-      if (!ttsRes.ok) {
-        console.error(`[bot:tts] TTS server error ${ttsRes.status}`)
-        return null
-      }
-
-      const audioBuffer = Buffer.from(await ttsRes.arrayBuffer())
-      if (audioBuffer.length === 0) {
-        console.error('[bot:tts] TTS returned empty audio')
-        return null
-      }
-
-      const uploadDir = path.join(process.cwd(), 'public', 'uploads')
-      if (!existsSync(uploadDir)) {
-        await mkdir(uploadDir, { recursive: true })
-      }
-      const filename = `tts-bot-${crypto.randomUUID()}.wav`
-      await writeFile(path.join(uploadDir, filename), audioBuffer)
-
-      return `/api/uploads/${filename}`
-    } catch (e: any) {
-      console.error('[bot:tts] failed:', e?.message || e)
-      return null
-    }
-  }
-
-  // Helper: transcribe audio via Moonshine ASR Python sidecar.
-  // Returns the transcript text or null on failure. Server-only.
-  const transcribeAudio = async (mediaUrl: string, language?: string): Promise<string | null> => {
-    try {
-      const { transcribeMediaUrl } = await import('@/lib/asr')
-      return await transcribeMediaUrl(mediaUrl, language || 'en')
-    } catch (e: any) {
-      console.error('[bot:asr] failed:', e?.message || e)
-      return null
-    }
-  }
-
-  // Helper: emit a "Bot is typing..." indicator to the channel via socket.
-  // Re-emits every 4 seconds (Telegram-style) until the timeout expires,
-  // because the chat UI auto-clears typing after ~5s of no refresh.
-  const typingTimers = new Map<string, ReturnType<typeof setInterval>>()
-  const setTyping = async (seconds: number) => {
-    try {
-      const io = getIO()
-      if (!io) return
-
-      const room = `channel:${params.channelId}`
-      const typingPayload = {
-        userId: bot.id,
-        username: bot.username,
-        channelId: params.channelId,
-        isTyping: true,
-      }
-
-      // Clear any existing typing timer for this bot
-      const existing = typingTimers.get(bot.id)
-      if (existing) clearInterval(existing)
-
-      // Emit immediately
-      io.to(room).emit('channel:typing', typingPayload)
-
-      // Re-emit every 4s until the timeout expires
-      const intervalMs = 4000
-      const endTime = Date.now() + Math.min(seconds, 30) * 1000 // cap at 30s
-      const interval = setInterval(() => {
-        if (Date.now() >= endTime) {
-          clearInterval(interval)
-          typingTimers.delete(bot.id)
-          io.to(room).emit('channel:typing', { ...typingPayload, isTyping: false })
-          return
-        }
-        io.to(room).emit('channel:typing', typingPayload)
-      }, intervalMs)
-      typingTimers.set(bot.id, interval)
-    } catch (e: any) {
-      // Best-effort — don't let typing indicator failures break the bot
-      console.warn('[bot:typing] failed:', e?.message || e)
-    }
-  }
-
-  // Helper: control the user's music player via socket event
-  const controlMusic = async (targetUserId: string, command: {
-    action: 'play' | 'pause' | 'skip' | 'queue' | 'stop'
-    query?: string
-  }) => {
-    try {
-      // Use sendMusicCommand which looks up the target user's sockets via
-      // the presence map and emits the correct payload shape ({ action, query })
-      // directly to those sockets. The old io.emit approach broadcast to ALL
-      // sockets with the wrong payload shape ({ targetUserId, command }).
-      sendMusicCommand(targetUserId, command)
-    } catch (e: any) {
-      console.warn('[bot:music] failed:', e?.message || e)
-    }
-  }
-
-  // Helper: state management
-  const stateKey = { botId: bot.id, userId: params.senderId }
-  const getState = async () => {
-    const session = await db.conversationSession.findUnique({ where: { botId_userId: stateKey } })
-    if (!session) return {}
-    try {
-      return JSON.parse(session.state || '{}')
-    } catch {
-      return {}
-    }
-  }
-  const setState = async (state: any) => {
-    await db.conversationSession.upsert({
-      where: { botId_userId: stateKey },
-      create: { ...stateKey, state: JSON.stringify(state) },
-      update: { state: JSON.stringify(state) },
-    })
-  }
-
   // Parse command
   const match = params.body.match(COMMAND_REGEX)
   const isCommand = !!match
-
   let command: string | undefined
   let args: string[] = []
   if (match) {
@@ -395,37 +399,27 @@ export async function dispatchBotUpdate(params: {
     args = argsStr ? argsStr.split(/\s+/) : []
   }
 
-  const ctx: BotContext = {
-    bot: {
-      id: bot.id,
-      name: bot.name,
-      username: bot.username,
-      module: bot.module,
-      config,
-    },
+  // Build shared context using the extracted helper
+  const ctx = buildBotContext(bot, {
     channelId: params.channelId,
     senderId: params.senderId,
     senderName: params.senderName,
-    message: {
-      id: params.messageId,
-      body: params.body,
-      replyToId: params.replyToId,
-      mediaUrl: params.mediaUrl,
-      mediaType: params.mediaType,
-      transcript: params.transcript,
-    },
-    args,
-    command,
-    isMention: !!params.isMention,
-    reply,
-    replyWithMedia,
-    editMessage,
-    generateTTS,
-    transcribeAudio,
-    setTyping,
-    controlMusic,
-    getState,
-    setState,
+    messageId: params.messageId,
+    replyToId: params.replyToId,
+  })
+
+  // Override message body + command-specific fields
+  ctx.message.body = params.body
+  ctx.message.mediaUrl = params.mediaUrl
+  ctx.message.mediaType = params.mediaType
+  ctx.message.transcript = params.transcript
+  ctx.args = args
+  ctx.command = command
+  ctx.isMention = !!params.isMention
+
+  // Pass the flow to visual bots via config
+  if (bot.module === 'visual' && bot.flow) {
+    ctx.bot.config._flow = bot.flow
   }
 
   // Run middleware chain
@@ -508,216 +502,38 @@ export async function dispatchBotCallback(params: {
   const bot = await db.bot.findUnique({ where: { id: params.botId } })
   if (!bot || !bot.enabled) return
 
-  let config: any = {}
-  try {
-    config = bot.config ? JSON.parse(bot.config) : {}
-  } catch {
-    config = {}
-  }
-
-  // Pass the flow to visual bots
-  if (bot.module === 'visual' && bot.flow) {
-    config._flow = bot.flow
-  }
-
-  const reply = async (text: string, keyboard?: BotKeyboard): Promise<string> => {
-    const msg = await db.message.create({
-      data: {
-        channelId: params.channelId,
-        senderType: 'bot',
-        senderId: bot.id,
-        body: text,
-        replyToId: params.messageId,
-        keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
-      },
-    })
-    return msg.id
-  }
-
-  const editMessage = async (messageId: string, text: string, keyboard?: BotKeyboard) => {
-    await db.message.update({
-      where: { id: messageId },
-      data: {
-        body: text,
-        keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
-      },
-    })
-    trackEditedMessage(messageId)
-  }
-
-  const replyWithMedia = async (mediaUrl: string, mediaType: string, caption?: string): Promise<string> => {
-    const msg = await db.message.create({
-      data: {
-        channelId: params.channelId,
-        senderType: 'bot',
-        senderId: bot.id,
-        body: caption || (mediaType === 'audio' ? 'Voice message' : 'Media'),
-        replyToId: params.messageId,
-        mediaUrl,
-        mediaType,
-      },
-    })
-    return msg.id
-  }
-
-  const generateTTS = async (text: string, voice: string): Promise<string | null> => {
-    try {
-      const ttsUrl = process.env.TTS_URL || 'http://localhost:8000'
-      const formData = new FormData()
-      formData.append('text', text.slice(0, 500))
-      formData.append('voice_url', voice)
-
-      // 30s timeout — Pocket TTS should respond in <5s. If it hangs, abort
-      // and return null so the bot falls back to a text message.
-      const ttsController = new AbortController()
-      const ttsTimeout = setTimeout(() => ttsController.abort(), 30_000)
-      const ttsRes = await fetch(`${ttsUrl}/tts`, {
-        method: 'POST',
-        body: formData,
-        signal: ttsController.signal,
-      })
-      clearTimeout(ttsTimeout)
-
-      if (!ttsRes.ok) return null
-
-      const audioBuffer = Buffer.from(await ttsRes.arrayBuffer())
-      if (audioBuffer.length === 0) return null
-
-      const uploadDir = path.join(process.cwd(), 'public', 'uploads')
-      if (!existsSync(uploadDir)) {
-        await mkdir(uploadDir, { recursive: true })
-      }
-      const filename = `tts-bot-${crypto.randomUUID()}.wav`
-      await writeFile(path.join(uploadDir, filename), audioBuffer)
-
-      return `/api/uploads/${filename}`
-    } catch (e: any) {
-      console.error('[bot:tts callback] failed:', e?.message || e)
-      return null
-    }
-  }
-
-  // Helper: transcribe audio via Moonshine ASR (duplicate of dispatchBotUpdate
-  // version — kept inline because framework.ts doesn't extract helpers yet)
-  const transcribeAudio = async (mediaUrl: string, language?: string): Promise<string | null> => {
-    try {
-      const { transcribeMediaUrl } = await import('@/lib/asr')
-      return await transcribeMediaUrl(mediaUrl, language || 'en')
-    } catch (e: any) {
-      console.error('[bot:asr callback] failed:', e?.message || e)
-      return null
-    }
-  }
-
-  // Helper: emit typing indicator (duplicate of dispatchBotUpdate version)
-  const setTyping = async (seconds: number) => {
-    try {
-      const io = getIO()
-      if (!io) return
-      const room = `channel:${params.channelId}`
-      const typingPayload = {
-        userId: bot.id,
-        username: bot.username,
-        channelId: params.channelId,
-        isTyping: true,
-      }
-      io.to(room).emit('channel:typing', typingPayload)
-      // Auto-clear after the requested duration (capped at 30s)
-      const ms = Math.min(seconds, 30) * 1000
-      setTimeout(() => {
-        try {
-          io.to(room).emit('channel:typing', { ...typingPayload, isTyping: false })
-        } catch {}
-      }, ms)
-    } catch (e: any) {
-      console.warn('[bot:typing callback] failed:', e?.message || e)
-    }
-  }
-
-  // Helper: control the user's music player via socket event (duplicate of
-  // dispatchBotUpdate version — kept inline because framework.ts duplicates helpers)
-  const controlMusic = async (targetUserId: string, command: {
-    action: 'play' | 'pause' | 'skip' | 'queue' | 'stop'
-    query?: string
-  }) => {
-    try {
-      const io = getIO()
-      if (!io) return
-      io.emit('music:bot-command', { targetUserId, command })
-    } catch (e: any) {
-      console.warn('[bot:music callback] failed:', e?.message || e)
-    }
-  }
-
-  const stateKey = { botId: bot.id, userId: params.senderId }
-  const getState = async () => {
-    const session = await db.conversationSession.findUnique({ where: { botId_userId: stateKey } })
-    if (!session) return {}
-    try {
-      return JSON.parse(session.state || '{}')
-    } catch {
-      return {}
-    }
-  }
-  const setState = async (state: any) => {
-    await db.conversationSession.upsert({
-      where: { botId_userId: stateKey },
-      create: { ...stateKey, state: JSON.stringify(state) },
-      update: { state: JSON.stringify(state) },
-    })
-  }
-
-  const ctx: BotContext = {
-    bot: {
-      id: bot.id,
-      name: bot.name,
-      username: bot.username,
-      module: bot.module,
-      config,
-    },
-    channelId: params.channelId,
-    senderId: params.senderId,
-    senderName: params.senderName,
-    message: {
-      id: params.messageId,
-      body: params.callbackData, // the callbackData acts as the "message body" for the resume path
-      replyToId: params.replyToId,
-    },
-    args: [],
-    command: undefined,
-    isMention: false,
-    reply,
-    replyWithMedia,
-    editMessage,
-    generateTTS,
-    transcribeAudio,
-    setTyping,
-    controlMusic,
-    getState,
-    setState,
-  }
-
   const mod = getBotModule(bot.module)
   if (!mod) {
     console.log(`[callback] bot module '${bot.module}' not found`)
     return
   }
 
+  // Build shared context using the extracted helper
+  const ctx = buildBotContext(bot, {
+    channelId: params.channelId,
+    senderId: params.senderId,
+    senderName: params.senderName,
+    messageId: params.messageId,
+    replyToId: params.replyToId,
+  })
+
+  // Override: callbackData acts as the message body for the resume path
+  ctx.message.body = params.callbackData
+
+  // Pass the flow to visual bots via config
+  if (bot.module === 'visual' && bot.flow) {
+    ctx.bot.config._flow = bot.flow
+  }
+
   console.log(`[callback] dispatching to module '${bot.module}', routing to onMessage...`)
 
   // For visual bots, route to onMessage — the wait_choice resume path in
   // visual.ts will match the callbackData against the options.
-  if (mod.onMessage && bot.module === 'visual') {
-    try {
-      await mod.onMessage(ctx)
-      console.log(`[callback] onMessage completed`)
-    } catch (e: any) {
-      console.error('[callback] onMessage error:', e)
-    }
-    return
+  if (mod.onMessage) {
+    await mod.onMessage(ctx)
   }
 
-  // For non-visual bots, try callback handlers
+  // Also check explicit callback handlers (non-visual bots)
   if (mod.callbacks) {
     for (const cb of mod.callbacks) {
       const pattern = typeof cb.pattern === 'string' ? new RegExp(`^${cb.pattern}$`) : cb.pattern
