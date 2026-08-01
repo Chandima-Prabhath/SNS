@@ -82,9 +82,12 @@ export function validateFlow(flow: BotFlow): ValidationIssue[] {
   }
 
   // ── 2. Reachability — all nodes must be reachable from the trigger ──
+  // Exception: 'comment' nodes are visual notes — they don't need to be
+  // connected to the flow. Users place them anywhere on the canvas for
+  // documentation purposes.
   const reachable = computeReachable(flow)
   for (const node of nodes) {
-    if (!reachable.has(node.id) && node.type !== 'trigger') {
+    if (!reachable.has(node.id) && node.type !== 'trigger' && node.type !== 'comment') {
       issues.push({
         nodeId: node.id,
         severity: 'warning',

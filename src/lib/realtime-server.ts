@@ -305,6 +305,23 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       }
     })
 
+    // ─── Music bot control ─────────────────────────────────────────────
+    // Bots emit this to control a user's music player. The server forwards
+    // the command to the target user's sockets via the presence map.
+    socket.on('music:bot-command', (payload: {
+      targetUserId: string
+      command: {
+        action: 'play' | 'pause' | 'skip' | 'queue' | 'stop'
+        query?: string
+      }
+    }) => {
+      const target = presence.get(payload.targetUserId)
+      if (!target) return
+      for (const sid of target.socketIds) {
+        io.to(sid).emit('music:bot-command', payload.command)
+      }
+    })
+
     // ─── Status / Stories ────────────────────────────────────────────────
     socket.on('story:posted', (payload: { story: any }) => {
       socket.broadcast.emit('story:posted', payload.story)

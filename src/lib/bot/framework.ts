@@ -93,6 +93,12 @@ export interface BotContext {
    *  visual feedback that the bot is working on their request. */
   setTyping?: (seconds: number) => Promise<void>
 
+  /** Control the user's music player via server→client socket event. */
+  controlMusic?: (targetUserId: string, command: {
+    action: 'play' | 'pause' | 'skip' | 'queue' | 'stop'
+    query?: string
+  }) => Promise<void>
+
   setState: (state: any) => Promise<void>
   getState: () => Promise<any>
 }
@@ -342,6 +348,21 @@ export async function dispatchBotUpdate(params: {
     }
   }
 
+  // Helper: control the user's music player via socket event
+  const controlMusic = async (targetUserId: string, command: {
+    action: 'play' | 'pause' | 'skip' | 'queue' | 'stop'
+    query?: string
+  }) => {
+    try {
+      const io = getIO()
+      if (!io) return
+      // Emit to the target user's sockets via the presence map
+      io.emit('music:bot-command', { targetUserId, command })
+    } catch (e: any) {
+      console.warn('[bot:music] failed:', e?.message || e)
+    }
+  }
+
   // Helper: state management
   const stateKey = { botId: bot.id, userId: params.senderId }
   const getState = async () => {
@@ -401,6 +422,7 @@ export async function dispatchBotUpdate(params: {
     generateTTS,
     transcribeAudio,
     setTyping,
+    controlMusic,
     getState,
     setState,
   }
@@ -599,6 +621,21 @@ export async function dispatchBotCallback(params: {
     }
   }
 
+  // Helper: control the user's music player via socket event (duplicate of
+  // dispatchBotUpdate version — kept inline because framework.ts duplicates helpers)
+  const controlMusic = async (targetUserId: string, command: {
+    action: 'play' | 'pause' | 'skip' | 'queue' | 'stop'
+    query?: string
+  }) => {
+    try {
+      const io = getIO()
+      if (!io) return
+      io.emit('music:bot-command', { targetUserId, command })
+    } catch (e: any) {
+      console.warn('[bot:music callback] failed:', e?.message || e)
+    }
+  }
+
   const stateKey = { botId: bot.id, userId: params.senderId }
   const getState = async () => {
     const session = await db.conversationSession.findUnique({ where: { botId_userId: stateKey } })
@@ -642,6 +679,7 @@ export async function dispatchBotCallback(params: {
     generateTTS,
     transcribeAudio,
     setTyping,
+    controlMusic,
     getState,
     setState,
   }

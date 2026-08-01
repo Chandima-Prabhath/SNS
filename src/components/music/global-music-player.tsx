@@ -608,6 +608,81 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     setQueue,
   ])
 
+  // ─── Bot music control listener ───────────────────────────────────────
+  // Listens for 'music:bot-command' socket events emitted by the server when
+  // a bot's music_play / music_pause / music_skip / music_queue_add / music_stop
+  // node fires. The server forwards the command to the target user's sockets.
+  useEffect(() => {
+    if (!socket) return
+
+    const onBotCommand = async (cmd: {
+      action: 'play' | 'pause' | 'skip' | 'queue' | 'stop'
+      query?: string
+    }) => {
+      const state = useMusicStore.getState()
+
+      try {
+        switch (cmd.action) {
+          case 'play': {
+            if (!cmd.query) return
+            // Search for the track via the music search API
+            const res = await fetch(`/api/music/search?q=${encodeURIComponent(cmd.query)}`)
+            if (!res.ok) return
+            const data = await res.json()
+            const track = data.tracks?.[0]
+            if (track) {
+              await playTrack(track)
+              toast.success(`🎵 Playing: ${track.title}`)
+            } else {
+              toast.error(`No results for "${cmd.query}"`)
+            }
+            break
+          }
+          case 'pause': {
+            state.setIsPlaying(false)
+            toast.info('⏸️ Music paused')
+            break
+          }
+          case 'skip': {
+            const next = state.popNextFromQueue()
+            if (next) {
+              await playTrack(next)
+              toast.success('⏭️ Skipped to next song')
+            } else {
+              state.stop()
+              toast.info('⏭️ Queue is empty')
+            }
+            break
+          }
+          case 'queue': {
+            if (!cmd.query) return
+            const res = await fetch(`/api/music/search?q=${encodeURIComponent(cmd.query)}`)
+            if (!res.ok) return
+            const data = await res.json()
+            const track = data.tracks?.[0]
+            if (track) {
+              state.addToQueue(track)
+              toast.success(`📋 Added to queue: ${track.title}`)
+            }
+            break
+          }
+          case 'stop': {
+            state.stop()
+            toast.info('⏹️ Music stopped')
+            break
+          }
+        }
+      } catch (e) {
+        console.error('[music:bot-command] failed:', e)
+      }
+    }
+
+    socket.on('music:bot-command', onBotCommand)
+    return () => {
+      socket.off('music:bot-command', onBotCommand)
+    }
+  }, [socket, playTrack])
+
   // ─── Memoized context value ───────────────────────────────────────────
   const contextValue = useMemo<MusicPlayerContextValue>(
     () => ({

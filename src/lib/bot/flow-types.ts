@@ -39,6 +39,7 @@ export type NodeType =
   | 'api_call'
   | 'random'
   | 'ai_generate'
+  | 'ai_route'
   | 'send_media'
   | 'log'
   | 'tts'
@@ -47,6 +48,11 @@ export type NodeType =
   | 'regex_extract'
   | 'json_parse'
   | 'comment'
+  | 'music_play'
+  | 'music_pause'
+  | 'music_skip'
+  | 'music_queue_add'
+  | 'music_stop'
 
 export type NodeCategory = 'trigger' | 'output' | 'input' | 'logic' | 'advanced'
 
@@ -197,6 +203,25 @@ export interface FlowNodeData {
   /** Comment color (for visual categorization). */
   commentColor?: 'yellow' | 'green' | 'blue' | 'pink' | 'gray'
 
+  // ── ai_route (LLM intent routing) ──
+  /** The prompt describing what the user might want. The LLM picks one of the
+   *  `aiRouteIntents` and the flow branches to the matching output handle. */
+  aiRoutePrompt?: string
+  /** Optional system prompt to set the LLM's persona. */
+  aiRouteSystemPrompt?: string
+  /** Ollama model name for routing. Defaults to gemma3:270m (works with
+   *  structured JSON output even on small models). */
+  aiRouteModel?: string
+  /** List of intent labels the LLM can choose from. Each gets its own output
+   *  handle (intent_0, intent_1, ...) plus a 'default' fallback handle. */
+  aiRouteIntents?: string[]
+
+  // ── music control nodes ──
+  /** For music_play: search query (e.g. "Bohemian Rhapsody") or video ID. */
+  musicQuery?: string
+  /** For music_queue_add: same as musicQuery — the song to add to the queue. */
+  // (reuses musicQuery)
+
   // ── UI metadata (not used by engine) ──
   /** Node type — stored in data so the editor's CustomNode can read it.
    *  Duplicates FlowNode.type but is required because ReactFlow sets
@@ -263,6 +288,13 @@ export interface BotExecutionContext {
 
   /** Show typing indicator — best-effort, no-op if unsupported. */
   setTyping?: (seconds: number) => Promise<void>
+
+  /** Control the user's music player via server→client socket event.
+   *  targetUserId is typically ctx.senderId (the person who triggered the bot). */
+  controlMusic?: (targetUserId: string, command: {
+    action: 'play' | 'pause' | 'skip' | 'queue' | 'stop'
+    query?: string
+  }) => Promise<void>
 }
 
 export interface BotExecutionResult {
@@ -1109,6 +1141,147 @@ export async function executeBotFlow(
         break
       }
 
+      // ── ADVANCED: ai_route (LLM intent routing via structured JSON) ──
+      case 'ai_route': {
+        const routeStart = now()
+        const routeNode = currentNode
+        const intents = routeNode.data.aiRouteIntents || []
+        const prompt = interpolate(routeNode.data.aiRoutePrompt || 'What does the user want?', ctx)
+        const systemPrompt = routeNode.data.aiRouteSystemPrompt || 'You are a routing assistant. Pick the best intent.'
+        const model = routeNode.data.aiRouteModel || 'gemma3:270m'
+
+        if (intents.length === 0) {
+          trace.push({ type: 'error', timestamp: now(), nodeId: routeNode.id, message: 'AI Route node has no intents defined' })
+          currentNode = followEdge(routeNode.id, 'default') || followEdge(routeNode.id, null)
+          break
+        }
+
+        if (ctx.setTyping) await ctx.setTyping(15)
+
+        // Use Ollama structured output (format: json schema) so even small
+        // models like gemma3:270m can reliably return a structured intent.
+        // The LLM picks one of the intent labels and we route to the matching
+        // output handle (intent_0, intent_1, ...).
+        const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434'
+        const routeController = new AbortController()
+        const routeTimeout = setTimeout(() => routeController.abort(), 15_000)
+
+        try {
+          const intentList = intents.map((i, idx) => `${idx}: ${i}`).join('\n')
+          const fullPrompt = `${prompt}\n\nUser message: "${ctx.body}"\n\nAvailable intents:\n${intentList}\n\nRespond with JSON: {"intent": "the label you pick"}`
+
+          const res = await fetch(`${ollamaUrl}/api/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model,
+              prompt: fullPrompt,
+              system: systemPrompt,
+              stream: false,
+              format: { type: 'object', properties: { intent: { type: 'string' } }, required: ['intent'] },
+              options: { temperature: 0.3, num_predict: 50 },
+            }),
+            signal: routeController.signal,
+          })
+          clearTimeout(routeTimeout)
+
+          if (!res.ok) {
+            throw new Error(`Ollama error ${res.status}`)
+          }
+
+          const data = await res.json()
+          let pickedIntent = ''
+          try {
+            const parsed = JSON.parse(data.response)
+            pickedIntent = (parsed.intent || '').trim()
+          } catch {
+            // If JSON parse fails, try to find the intent in the raw text
+            pickedIntent = intents.find((i) => data.response?.includes(i)) || ''
+          }
+
+          // Find the matching intent index (fuzzy: case-insensitive, partial match)
+          const matchIdx = intents.findIndex((i) =>
+            i.toLowerCase() === pickedIntent.toLowerCase() ||
+            i.toLowerCase().includes(pickedIntent.toLowerCase()) ||
+            pickedIntent.toLowerCase().includes(i.toLowerCase())
+          )
+
+          const handle = matchIdx >= 0 ? `intent_${matchIdx}` : 'default'
+          trace.push({ type: 'ai_call', timestamp: now(), nodeId: routeNode.id, model, prompt: prompt.slice(0, 100), responseLength: pickedIntent.length, durationMs: now() - routeStart })
+          trace.push({ type: 'branch_taken', timestamp: now(), nodeId: routeNode.id, handle, targetNodeId: followEdge(routeNode.id, handle)?.id || '' })
+
+          const next = followEdge(routeNode.id, handle) || followEdge(routeNode.id, null)
+          if (next) {
+            currentNode = next
+          } else {
+            trace.push({ type: 'flow_end', timestamp: now(), reason: 'no_edge', sentCount })
+            currentNode = undefined
+          }
+        } catch (e: any) {
+          clearTimeout(routeTimeout)
+          trace.push({ type: 'error', timestamp: now(), nodeId: routeNode.id, message: `AI route failed: ${e?.message || e}` })
+          // Fall back to default handle on error
+          const fallback = followEdge(routeNode.id, 'default') || followEdge(routeNode.id, null)
+          if (fallback) {
+            currentNode = fallback
+          } else {
+            currentNode = undefined
+          }
+        }
+        break
+      }
+
+      // ── MUSIC CONTROL NODES ───────────────────────────────────────────
+
+      case 'music_play': {
+        const query = interpolate(currentNode.data.musicQuery || '{{body}}', ctx)
+        if (ctx.controlMusic && query) {
+          await ctx.controlMusic(ctx.senderId, { action: 'play', query })
+          trace.push({ type: 'log', timestamp: now(), nodeId: currentNode.id, level: 'info', message: `Music: playing "${query}"` })
+        } else if (!ctx.controlMusic) {
+          trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: 'Music control not available' })
+        }
+        currentNode = followEdge(currentNode.id, null)
+        break
+      }
+
+      case 'music_pause': {
+        if (ctx.controlMusic) {
+          await ctx.controlMusic(ctx.senderId, { action: 'pause' })
+          trace.push({ type: 'log', timestamp: now(), nodeId: currentNode.id, level: 'info', message: 'Music: paused' })
+        }
+        currentNode = followEdge(currentNode.id, null)
+        break
+      }
+
+      case 'music_skip': {
+        if (ctx.controlMusic) {
+          await ctx.controlMusic(ctx.senderId, { action: 'skip' })
+          trace.push({ type: 'log', timestamp: now(), nodeId: currentNode.id, level: 'info', message: 'Music: skipped' })
+        }
+        currentNode = followEdge(currentNode.id, null)
+        break
+      }
+
+      case 'music_queue_add': {
+        const query = interpolate(currentNode.data.musicQuery || '{{body}}', ctx)
+        if (ctx.controlMusic && query) {
+          await ctx.controlMusic(ctx.senderId, { action: 'queue', query })
+          trace.push({ type: 'log', timestamp: now(), nodeId: currentNode.id, level: 'info', message: `Music: queued "${query}"` })
+        }
+        currentNode = followEdge(currentNode.id, null)
+        break
+      }
+
+      case 'music_stop': {
+        if (ctx.controlMusic) {
+          await ctx.controlMusic(ctx.senderId, { action: 'stop' })
+          trace.push({ type: 'log', timestamp: now(), nodeId: currentNode.id, level: 'info', message: 'Music: stopped' })
+        }
+        currentNode = followEdge(currentNode.id, null)
+        break
+      }
+
       default:
         trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: `unknown node type: ${currentNode.type}` })
         return { sentCount, paused: false, variables: ctx.variables, trace, error: `unknown node type: ${currentNode.type}` }
@@ -1311,6 +1484,42 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
     icon: 'Terminal', color: '#FBBF24', bg: '#FBBF241A',
     handles: 'single',
   },
+  ai_route: {
+    type: 'ai_route', label: 'AI Route', category: 'advanced',
+    description: 'LLM picks an intent and routes the flow — works with small models via structured JSON output',
+    icon: 'GitBranch', color: '#A78BFA', bg: '#A78BFA1A',
+    handles: 'multi',
+  },
+  music_play: {
+    type: 'music_play', label: 'Play Music', category: 'output',
+    description: 'Plays a song on the user\'s music player by search query or video ID',
+    icon: 'AudioLines', color: '#22D3EE', bg: '#22D3EE1A',
+    handles: 'single',
+  },
+  music_pause: {
+    type: 'music_pause', label: 'Pause Music', category: 'output',
+    description: 'Pauses the user\'s music player',
+    icon: 'AudioLines', color: '#FBBF24', bg: '#FBBF241A',
+    handles: 'single',
+  },
+  music_skip: {
+    type: 'music_skip', label: 'Skip Song', category: 'output',
+    description: 'Skips to the next song in the queue',
+    icon: 'AudioLines', color: '#34D399', bg: '#34D3991A',
+    handles: 'single',
+  },
+  music_queue_add: {
+    type: 'music_queue_add', label: 'Add to Queue', category: 'output',
+    description: 'Adds a song to the music queue without playing it immediately',
+    icon: 'AudioLines', color: '#F472B6', bg: '#F472B61A',
+    handles: 'single',
+  },
+  music_stop: {
+    type: 'music_stop', label: 'Stop Music', category: 'output',
+    description: 'Stops music playback and clears the queue',
+    icon: 'AudioLines', color: '#F87171', bg: '#F871711A',
+    handles: 'single',
+  },
 }
 
 export const CATEGORY_ORDER: NodeCategory[] = ['trigger', 'output', 'input', 'logic', 'advanced']
@@ -1407,5 +1616,29 @@ export function defaultNodeData(type: NodeType): FlowNodeData {
         commentText: 'This is a note. It does nothing when the flow runs.',
         commentColor: 'yellow',
       }
+    case 'ai_route':
+      return {
+        label: 'AI Route',
+        aiRoutePrompt: 'What does the user want to do?',
+        aiRouteSystemPrompt: 'You are a routing assistant. Pick the best intent based on the user\'s message.',
+        aiRouteModel: 'gemma3:270m',
+        aiRouteIntents: ['play_music', 'tell_joke', 'ask_question'],
+      }
+    case 'music_play':
+      return {
+        label: 'Play Music',
+        musicQuery: '{{body}}',
+      }
+    case 'music_pause':
+      return { label: 'Pause Music' }
+    case 'music_skip':
+      return { label: 'Skip Song' }
+    case 'music_queue_add':
+      return {
+        label: 'Add to Queue',
+        musicQuery: '{{body}}',
+      }
+    case 'music_stop':
+      return { label: 'Stop Music' }
   }
 }

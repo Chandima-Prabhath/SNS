@@ -103,6 +103,7 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
   const isRandom = nodeType === 'random'
   const isSwitch = nodeType === 'switch_case'
   const isMessageType = nodeType === 'message_type'
+  const isAiRoute = nodeType === 'ai_route'
 
   // ── Build preview content per node type ──────────────────────────────
   let preview: { label: string; value: string } | null = null
@@ -181,6 +182,24 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
       break
     case 'comment':
       preview = { label: 'Note', value: data.commentText ? (data.commentText.length > 40 ? data.commentText.slice(0, 40) + '…' : data.commentText) : '(empty)' }
+      break
+    case 'ai_route':
+      preview = { label: 'Routes', value: data.aiRouteIntents?.length ? `${data.aiRouteIntents.length} intents` : '(no intents)' }
+      break
+    case 'music_play':
+      preview = { label: 'Plays', value: data.musicQuery ? (data.musicQuery.length > 40 ? data.musicQuery.slice(0, 40) + '…' : data.musicQuery) : '{{body}}' }
+      break
+    case 'music_pause':
+      preview = { label: 'Action', value: 'Pause music' }
+      break
+    case 'music_skip':
+      preview = { label: 'Action', value: 'Skip song' }
+      break
+    case 'music_queue_add':
+      preview = { label: 'Queues', value: data.musicQuery ? (data.musicQuery.length > 40 ? data.musicQuery.slice(0, 40) + '…' : data.musicQuery) : '{{body}}' }
+      break
+    case 'music_stop':
+      preview = { label: 'Action', value: 'Stop music' }
       break
   }
 
@@ -286,6 +305,35 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
               />
             </div>
           ))}
+        </div>
+      ) : isAiRoute ? (
+        /* AI Route node — one handle per intent + a default fallback.
+           Like switch_case but the labels are intent names. */
+        <div className="px-3 pb-2 pt-1 space-y-1.5">
+          {((data.aiRouteIntents as string[]) || []).map((intent, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="text-[10px] font-mono text-white/40 shrink-0 w-12">intent_{i}</span>
+              <span className="text-[10px] text-white/70 truncate flex-1 px-1.5 py-0.5 rounded bg-white/5">{intent || '(empty)'}</span>
+              <Handle
+                type="source"
+                position={Position.Right}
+                id={`intent_${i}`}
+                className="adoo-handle"
+                style={{ background: '#A78BFA', width: 16, height: 16, border: '3px solid #1e1f22', borderRadius: '50%', position: 'relative' }}
+              />
+            </div>
+          ))}
+          <div className="flex items-center gap-2 pt-1.5 border-t border-white/10">
+            <span className="text-[10px] font-mono text-white/40 shrink-0 w-12">default</span>
+            <span className="text-[10px] text-white/40 italic flex-1 px-1.5 py-0.5 rounded bg-white/5">fallback</span>
+            <Handle
+              type="source"
+              position={Position.Right}
+              id="default"
+              className="adoo-handle"
+              style={{ background: '#64748B', width: 16, height: 16, border: '3px solid #1e1f22', borderRadius: '50%', position: 'relative' }}
+            />
+          </div>
         </div>
       ) : isSwitch ? (
         <div className="px-3 pb-2 pt-1 space-y-1.5">
@@ -955,7 +1003,8 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
                 if (h === 'false') return '#F87171'   // red
                 if (h === 'default') return '#64748B' // gray
                 if (h === 'other') return '#64748B'   // gray (message_type fallback)
-                if (h?.startsWith('case_')) return '#FB7185' // pink
+                if (h?.startsWith('case_')) return '#FB7185' // pink (switch_case)
+                if (h?.startsWith('intent_')) return '#A78BFA' // purple (ai_route)
                 // Message type branches use their own colors
                 const mtBranch = MESSAGE_TYPE_BRANCHES.find((b) => b.id === h)
                 if (mtBranch) return mtBranch.color
@@ -2308,6 +2357,128 @@ function NodeInspectorBody({
             <li>Leave notes for collaborators</li>
             <li>Mark TODOs or sections to revisit</li>
           </ul>
+        </div>
+      </div>
+    )
+  }
+
+  // ── AI Route (LLM intent routing) ──────────────────────────────────
+  if (nodeType === 'ai_route') {
+    const intents = (data.aiRouteIntents as string[]) || []
+    const addIntent = () => onUpdate({ aiRouteIntents: [...intents, `intent_${intents.length}`] })
+    const removeIntent = (i: number) => onUpdate({ aiRouteIntents: intents.filter((_, idx) => idx !== i) })
+    const updateIntent = (i: number, val: string) => onUpdate({ aiRouteIntents: intents.map((intent, idx) => idx === i ? val : intent) })
+
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Routing prompt</Label>
+          <Textarea
+            value={data.aiRoutePrompt || ''}
+            onChange={(e) => onUpdate({ aiRoutePrompt: e.target.value })}
+            placeholder="What does the user want to do?"
+            rows={2}
+            className={cn(inputCls, 'resize-none')}
+          />
+          <VariableHelp />
+          <p className="text-xs text-white/40">The LLM uses this prompt + the user&apos;s message to pick an intent.</p>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">System prompt (optional)</Label>
+          <Input
+            value={data.aiRouteSystemPrompt || ''}
+            onChange={(e) => onUpdate({ aiRouteSystemPrompt: e.target.value })}
+            placeholder="You are a routing assistant."
+            className={inputCls}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">Model</Label>
+          <Input
+            value={data.aiRouteModel || ''}
+            onChange={(e) => onUpdate({ aiRouteModel: e.target.value })}
+            placeholder="gemma3:270m"
+            className={cn(inputCls, 'font-mono')}
+          />
+          <p className="text-xs text-white/40">Uses Ollama structured JSON output — works even with small models.</p>
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label className="text-white/60 text-xs">Intents ({intents.length})</Label>
+            <Button onClick={addIntent} variant="ghost" size="sm" className="h-7 text-xs">
+              <Plus className="w-3 h-3 mr-1" /> Add
+            </Button>
+          </div>
+          <div className="space-y-2">
+            {intents.map((intent, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-[10px] font-mono text-white/40 shrink-0 w-12">intent_{i}</span>
+                <Input
+                  value={intent}
+                  onChange={(e) => updateIntent(i, e.target.value)}
+                  className={inputCls}
+                />
+                <button onClick={() => removeIntent(i)} className="p-1.5 hover:bg-red-500/20 rounded text-red-400 shrink-0">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+            {intents.length === 0 && (
+              <p className="text-xs text-white/40 italic">No intents yet. Add some to define routing paths.</p>
+            )}
+          </div>
+          <p className="text-xs text-white/40">Each intent gets an output handle. Connect them to the matching branches. A <code className="px-1 py-0.5 rounded bg-white/5">default</code> handle is available for fallback.</p>
+        </div>
+        <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3 text-xs text-white/60">
+          <p className="font-semibold text-purple-400 mb-1 flex items-center gap-1.5">
+            <GitBranch className="w-3.5 h-3.5" /> AI Route
+          </p>
+          <p>The LLM picks one of the intents based on the user&apos;s message. Works with gemma3:270m via Ollama&apos;s structured JSON output (format parameter). For better routing, use <code className="px-1 py-0.5 rounded bg-white/5">llama3.1:8b</code> or <code className="px-1 py-0.5 rounded bg-white/5">functiongemma</code>.</p>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Music nodes (shared inspector for play/queue) ──────────────────
+  if (nodeType === 'music_play' || nodeType === 'music_queue_add') {
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label className="text-white/60 text-xs">{nodeType === 'music_play' ? 'Song to play' : 'Song to queue'}</Label>
+          <Input
+            value={data.musicQuery || ''}
+            onChange={(e) => onUpdate({ musicQuery: e.target.value })}
+            placeholder="{{body}} or song name"
+            className={inputCls}
+          />
+          <VariableHelp />
+          <p className="text-xs text-white/40">
+            Search query or YouTube video ID. Defaults to <code className="px-1 py-0.5 rounded bg-white/5">{'{{body}}'}</code> (the user&apos;s message).
+            The bot will search YouTube Music and {nodeType === 'music_play' ? 'play' : 'queue'} the first result.
+          </p>
+        </div>
+        <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-3 text-xs text-white/60">
+          <p className="font-semibold text-cyan-400 mb-1 flex items-center gap-1.5">
+            <AudioLines className="w-3.5 h-3.5" /> Music Control
+          </p>
+          <p>Controls the user&apos;s music player via a server→client socket event. The user must have the app open for the command to take effect.</p>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Music pause/skip/stop (no config needed) ──────────────────────
+  if (nodeType === 'music_pause' || nodeType === 'music_skip' || nodeType === 'music_stop') {
+    const labels: Record<string, string> = {
+      music_pause: 'Pause the user\'s music player',
+      music_skip: 'Skip to the next song in the queue',
+      music_stop: 'Stop music and clear the queue',
+    }
+    return (
+      <div className="space-y-4">
+        <div className="bg-white/[0.03] border border-white/5 rounded-lg p-3 text-xs text-white/50">
+          <p className="font-semibold text-white/70 mb-1">{labels[nodeType]}</p>
+          <p>No configuration needed. This node sends a {nodeType.replace('music_', '')} command to the user&apos;s music player.</p>
         </div>
       </div>
     )
