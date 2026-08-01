@@ -288,7 +288,7 @@ function RailButton({
         onClick={onClick}
         title={label}
         className={cn(
-          'relative w-12 h-12 lg:w-[52px] lg:h-[52px] rounded-2xl flex items-center justify-center transition-all duration-300 overflow-hidden',
+          'relative w-12 h-12 lg:w-[52px] lg:h-[52px] rounded-2xl flex items-center justify-center transition-all duration-300',
           'hover:rounded-xl active:scale-95',
           active
             ? 'bg-primary/20 text-primary ring-1 ring-primary/50 shadow-glow backdrop-blur-md'

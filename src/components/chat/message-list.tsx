@@ -205,7 +205,9 @@ export function MessageList({ channelId }: MessageListProps) {
     const raf = requestAnimationFrame(() => {
       const e = scrollRef.current
       if (e) {
-        e.scrollTo({ top: e.scrollHeight, behavior: 'smooth' })
+        // Use 'auto' for own messages (instant snap) and 'smooth' for
+        // received messages (gentle slide-in).
+        e.scrollTo({ top: e.scrollHeight, behavior: isMine ? 'auto' : 'smooth' })
       }
     })
     // We scrolled to the bottom — clear the unread-below counter.

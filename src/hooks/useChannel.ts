@@ -218,12 +218,18 @@ export function useChannel(channelId: string | null) {
     refetchOnMount: true,
   })
 
-  // Flatten pages into a single array (reversed to oldest-first for rendering)
-  // Pages come in newest-first order; we reverse so oldest is at index 0.
+  // Flatten pages into a single array (oldest-first for rendering).
+  // Each page's messages come in descending order (newest first) from the API.
+  // We reverse each page individually, then concatenate in page order:
+  //   page 0 (newest 50) reversed → oldest-of-page-0 ... newest-of-page-0
+  //   page 1 (older 50) reversed → oldest-of-page-1 ... newest-of-page-1
+  //   But page 1 is OLDER than page 0, so we need page 1 BEFORE page 0.
+  //   Solution: reverse the page order too.
   const messages: ChannelMessage[] = useMemo(() => {
     if (!infiniteData?.pages) return []
-    const all = infiniteData.pages.flatMap((p) => p.messages)
-    return all.reverse()
+    // Reverse each page's messages (newest-first → oldest-first),
+    // then reverse the page order (page 0 is newest, so it goes last)
+    return [...infiniteData.pages].reverse().flatMap((p) => [...p.messages].reverse())
   }, [infiniteData])
 
   // Send message
