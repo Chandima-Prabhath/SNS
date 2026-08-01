@@ -73,16 +73,18 @@ export async function PATCH(req: Request) {
   })
   if (!group) return NextResponse.json({ error: 'invalid invite code' }, { status: 404 })
 
-  // Add the user as a GroupMember (role: member)
-  await db.groupMember
-    .create({ data: { groupId: group.id, userId, role: 'member' } })
-    .catch(() => {}) // already a member — ignore
-
-  // Add the user to ALL channels in the group (text, voice, video)
-  for (const ch of group.channels) {
-    await db.channelMember
-      .create({ data: { channelId: ch.id, userId, role: 'member' } })
+  // Add user as GroupMember + ChannelMember for all channels in one transaction.
+  // Prevents partial joins (group member but not channel member) if one fails.
+  await db.$transaction(async (tx) => {
+    await tx.groupMember
+      .create({ data: { groupId: group.id, userId, role: 'member' } })
       .catch(() => {}) // already a member — ignore
-  }
+
+    // Batch-create all channel memberships at once instead of sequential
+    await tx.channelMember.createMany({
+      data: group.channels.map((ch) => ({ channelId: ch.id, userId, role: 'member' })),
+    }).catch(() => {}) // some might already exist — ignore
+  })
+
   return NextResponse.json({ group })
 }

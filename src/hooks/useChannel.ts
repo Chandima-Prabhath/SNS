@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query'
 import { useSocket } from './useSocket'
 import { useAppStore } from '@/stores/useAppStore'
 
@@ -186,20 +186,45 @@ export function useChannel(channelId: string | null) {
     }
   }, [socket, channelId, qc])
 
-  // Fetch messages — short staleTime so new messages appear when switching chats
-  const { data, isLoading, error } = useQuery({
+  // Fetch messages with infinite scroll — loads 50 at a time, older messages
+  // are fetched on demand when the user scrolls to the top.
+  const {
+    data: infiniteData,
+    isLoading,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: ['messages', channelId],
-    queryFn: async () => {
-      if (!channelId) return []
-      const res = await fetch(`/api/channels/${channelId}/messages?limit=50`)
+    queryFn: async ({ pageParam }: { pageParam?: string }) => {
+      if (!channelId) return { messages: [] as ChannelMessage[], nextCursor: undefined }
+      const url = new URL(`/api/channels/${channelId}/messages`, window.location.origin)
+      url.searchParams.set('limit', '50')
+      if (pageParam) url.searchParams.set('before', pageParam)
+      const res = await fetch(url.toString())
       if (!res.ok) throw new Error('failed to load messages')
       const data = await res.json()
-      return data.messages as ChannelMessage[]
+      const messages = data.messages as ChannelMessage[]
+      // The API returns messages in descending order (newest first).
+      // The next cursor is the OLDEST message's ID (last in the array).
+      const nextCursor = messages.length === 50 ? messages[messages.length - 1].id : undefined
+      return { messages, nextCursor }
     },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
     enabled: !!channelId,
-    staleTime: 10 * 1000, // 10 sec — refetch when switching chats
+    staleTime: 10 * 1000,
     refetchOnMount: true,
   })
+
+  // Flatten pages into a single array (reversed to oldest-first for rendering)
+  // Pages come in newest-first order; we reverse so oldest is at index 0.
+  const messages: ChannelMessage[] = useMemo(() => {
+    if (!infiniteData?.pages) return []
+    const all = infiniteData.pages.flatMap((p) => p.messages)
+    return all.reverse()
+  }, [infiniteData])
 
   // Send message
   const sendMutation = useMutation({
@@ -417,9 +442,12 @@ export function useChannel(channelId: string | null) {
   )
 
   return {
-    messages: data || [],
+    messages,
     isLoading,
     error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
     send: sendMutation.mutateAsync,
     sendCallback,
     edit: editMutation.mutateAsync,

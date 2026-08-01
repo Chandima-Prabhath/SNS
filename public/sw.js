@@ -14,8 +14,8 @@
  *   requests (sending messages, etc.) will fail gracefully.
  */
 
-const CACHE_NAME = 'adoo-v12'
-const API_CACHE = 'adoo-api-v12'
+const CACHE_NAME = 'adoo-v13'
+const API_CACHE = 'adoo-api-v13'
 const APP_SHELL = ['/', '/manifest.json', '/icon.svg']
 
 self.addEventListener('install', (event) => {
@@ -135,7 +135,14 @@ self.addEventListener('fetch', (event) => {
   // The previous stale-while-revalidate approach served stale cache first
   // and updated in the background, causing delays where mutations weren't
   // visible until a manual refresh.
-  if (url.pathname.startsWith('/api/') && !url.pathname.includes('/api/tts') && !url.pathname.includes('/api/music/stream') && !url.pathname.includes('/api/upload') && !url.pathname.includes('/api/music/debug') && !url.pathname.includes('/api/version') && !url.pathname.includes('/api/music/search') && !url.pathname.includes('/api/music/related') && !url.pathname.includes('/api/music/predownload') && !url.pathname.includes('/api/uploads/') && !url.pathname.includes('/api/asr')) {
+  if (url.pathname.startsWith('/api/') && !url.pathname.includes('/api/tts') && !url.pathname.includes('/api/music/stream') && !url.pathname.includes('/api/upload') && !url.pathname.includes('/api/music/debug') && !url.pathname.includes('/api/version') && !url.pathname.includes('/api/music/search') && !url.pathname.includes('/api/music/related') && !url.pathname.includes('/api/music/predownload') && !url.pathname.includes('/api/uploads/') && !url.pathname.includes('/api/asr')
+    // Exclude frequently-polled routes from caching — their data changes
+    // too fast and stale cache causes UX bugs (wrong unread counts, old
+    // channel lists, stale presence).
+    && !url.pathname.includes('/api/unread')
+    && !url.pathname.includes('/api/channels')
+    && !url.pathname.includes('/api/calls/pending')
+  ) {
     event.respondWith(
       caches.open(API_CACHE).then(async (cache) => {
         try {
@@ -145,6 +152,16 @@ self.addEventListener('fetch', (event) => {
           if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
             const copy = res.clone()
             cache.put(req, copy)
+            // ── LRU eviction: keep cache under MAX_ENTRIES ──
+            // Prevents the cache from growing unbounded and hitting
+            // browser storage quota after extended use.
+            const MAX_ENTRIES = 200
+            const keys = await cache.keys()
+            if (keys.length > MAX_ENTRIES) {
+              // Delete oldest entries (first-in-first-out)
+              const toDelete = keys.slice(0, keys.length - MAX_ENTRIES)
+              await Promise.all(toDelete.map((key) => cache.delete(key)))
+            }
           }
           return res
         } catch {

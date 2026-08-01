@@ -44,28 +44,34 @@ export async function POST(req: Request) {
   const existing = await db.bot.findUnique({ where: { username: lowerUsername } })
   if (existing) return NextResponse.json({ error: 'bot username taken' }, { status: 409 })
 
-  const bot = await db.bot.create({
-    data: {
-      ownerId: userId,
-      name: name.trim(),
-      username: lowerUsername,
-      description: description?.trim() || null,
-      module: module || 'echo',
-      avatarUrl: avatarUrl || null,
-    },
-  })
+  // Use a transaction — if user creation fails, the bot row is rolled back
+  // (prevents orphan Bot rows pointing at non-existent Users)
+  const bot = await db.$transaction(async (tx) => {
+    const bot = await tx.bot.create({
+      data: {
+        ownerId: userId,
+        name: name.trim(),
+        username: lowerUsername,
+        description: description?.trim() || null,
+        module: module || 'echo',
+        avatarUrl: avatarUrl || null,
+      },
+    })
 
-  // Create a User row for the bot too (so it can be a channel member)
-  await db.user.create({
-    data: {
-      id: bot.id,
-      email: `bot+${lowerUsername}@sns.local`,
-      username: `bot_${lowerUsername}`,
-      displayName: name.trim(),
-      passwordHash: 'bot-no-login',
-      role: 'member',
-    },
-  }).catch(() => {})
+    // Create a User row for the bot too (so it can be a channel member)
+    await tx.user.create({
+      data: {
+        id: bot.id,
+        email: `bot+${lowerUsername}@sns.local`,
+        username: `bot_${lowerUsername}`,
+        displayName: name.trim(),
+        passwordHash: 'bot-no-login',
+        role: 'member',
+      },
+    })
+
+    return bot
+  })
 
   return NextResponse.json({ bot })
 }

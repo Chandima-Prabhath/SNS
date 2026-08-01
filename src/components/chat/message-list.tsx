@@ -38,13 +38,15 @@ interface MessageListProps {
 }
 
 export function MessageList({ channelId }: MessageListProps) {
-  const { messages, isLoading, send, edit, remove, sendCallback, typing, markRead, replyTo, setReplyTo } =
+  const { messages, isLoading, send, edit, remove, sendCallback, typing, markRead, replyTo, setReplyTo, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useChannel(channelId)
   const { data: session } = useSession()
   const myId = (session?.user as any)?.id
   const scrollRef = useRef<HTMLDivElement>(null)
   const lastMessageIdRef = useRef<string | null>(null)
   const isAtBottomRef = useRef(true)
+  const topSentinelRef = useRef<HTMLDivElement>(null)
+  const prevScrollHeightRef = useRef(0)
 
   // Scroll-to-bottom button state.
   //   - showScrollButton: visible when the user has scrolled >200px from the
@@ -64,6 +66,41 @@ export function MessageList({ channelId }: MessageListProps) {
     lastMessageIdRef.current = null
     isAtBottomRef.current = true
   }, [channelId])
+
+  // Infinite scroll — observe the top sentinel and fetch older messages
+  // when it scrolls into view. Preserves scroll position by adjusting
+  // scrollTop after new content is prepended.
+  useEffect(() => {
+    const sentinel = topSentinelRef.current
+    const container = scrollRef.current
+    if (!sentinel || !container) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && hasNextPage && !isFetchingNextPage) {
+          // Save scroll height before fetch so we can restore position
+          prevScrollHeightRef.current = container.scrollHeight
+          fetchNextPage()
+        }
+      },
+      { root: container, threshold: 0.1 }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage, channelId])
+
+  // After fetching older messages, restore scroll position so the user
+  // doesn't get jumped to a different spot in the conversation.
+  useEffect(() => {
+    const container = scrollRef.current
+    if (!container || !isFetchingNextPage) return
+    // After the new messages are rendered, adjust scrollTop
+    const newScrollHeight = container.scrollHeight
+    const diff = newScrollHeight - prevScrollHeightRef.current
+    if (diff > 0) {
+      container.scrollTop += diff
+    }
+  }, [isFetchingNextPage, messages.length])
 
   // Reset the scroll-button React state when the channel changes. We use the
   // "derived state" pattern (calling setState during render in a conditional)
@@ -205,6 +242,15 @@ export function MessageList({ channelId }: MessageListProps) {
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(var(--primary),0.05),transparent)] pointer-events-none" />
       <div ref={scrollRef as any} className="flex-1 min-h-0 overflow-y-auto relative z-10 scroll-smooth">
         <div className="px-3 md:px-6 py-4 space-y-3 max-w-4xl mx-auto">
+          {/* Infinite scroll sentinel — triggers fetchNextPage when visible */}
+          {hasNextPage && (
+            <div ref={topSentinelRef} className="h-4 flex items-center justify-center">
+              {isFetchingNextPage && (
+                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+              )}
+            </div>
+          )}
+
           {isLoading && <LoadingState />}
 
           {!isLoading && messages.length === 0 && (
