@@ -401,6 +401,7 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
+  const { fitView } = useReactFlow()
 
   const onConnect = useCallback(
     (params: Connection) =>
@@ -727,7 +728,7 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
 
   // ── Load example flow ───────────────────────────────────────────────
   const handleLoadExample = async () => {
-    const ok = await confirm({ title: 'Load the example "Smart Assistant" bot?', message: 'It will replace the current canvas. You still need to Save to persist.', confirmLabel: 'Load Example' })
+    const ok = await confirm({ title: 'Load the example "AI Assistant" bot?', message: 'It will replace the current canvas. You still need to Save to persist.', confirmLabel: 'Load Example' })
     if (!ok) return
     const flow = EXAMPLE_BOT_FLOW
     setNodes(flow.nodes.map((n) => ({
@@ -748,6 +749,13 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
     })))
     setSelectedNodeId(null)
     toast.success('Loaded example bot — Save to persist it')
+    // Fit the view to show all the new nodes. Use setTimeout(0) so ReactFlow
+    // has a chance to render the nodes before we ask it to fit them.
+    // Without this, the canvas stays at the old viewport and it looks like
+    // 'nothing happened' — the new nodes are off-screen.
+    setTimeout(() => {
+      fitView({ padding: 0.2, duration: 600 })
+    }, 50)
   }
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null
