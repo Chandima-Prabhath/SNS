@@ -30,13 +30,18 @@ interface AuthenticatedSocket {
 }
 
 // in-memory presence map (userId → { status, socketIds[], username })
-const presence = new Map<string, { status: string; socketIds: Set<string>; username: string }>()
+// Use globalThis to share across Next.js module contexts — same fix as ioRef.
+// Without this, API routes (which load a different module instance) see an
+// empty presence map, so sendMusicCommand() can't find the target user's
+// sockets and silently drops the command.
+const globalForPresence = globalThis as unknown as {
+  __adoo_presence?: Map<string, { status: string; socketIds: Set<string>; username: string }>
+}
+const presence: Map<string, { status: string; socketIds: Set<string>; username: string }> =
+  globalForPresence.__adoo_presence || new Map()
+globalForPresence.__adoo_presence = presence
 
 // Use globalThis to share the io instance across Next.js module contexts.
-// In dev mode, Next.js API routes can load a DIFFERENT copy of this module
-// than the one server.ts initialized — so a module-level `let ioRef` would
-// be null in the API route context. globalThis is shared across all module
-// instances in the same Node.js process.
 const globalForIo = globalThis as unknown as { __adoo_io?: IOServer | null }
 
 export function getIO(): IOServer | null {
