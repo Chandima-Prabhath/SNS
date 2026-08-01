@@ -123,20 +123,11 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
   // position and prevents echoing sync events back to the room.
   const applyingRemoteRef = useRef(false)
 
-  // ─── Helper: broadcast a sync event to the active room ────────────────
-  const broadcastSync = useCallback(
-    (payload: {
-      state: string
-      position: number
-      videoId?: string
-      trackInfo?: Partial<Track>
-      queue?: Track[]
-    }) => {
+  // ─── Helper: send command to server (server-authoritative) ───────────
+  const sendRoomCommand = useCallback(
+    (event: string, payload?: any) => {
       if (!activeRoomId || !socket) return
-      socket.emit('music:sync', {
-        roomId: activeRoomId,
-        ...payload,
-      })
+      socket.emit(event, payload || activeRoomId)
     },
     [activeRoomId, socket],
   )
@@ -149,12 +140,8 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       if (addToQueue && state.currentTrack) {
         state.addToQueue(track)
         toast.success(`Added to queue: ${track.title}`)
-        // Broadcast the updated queue so members see it
-        broadcastSync({
-          state: state.isPlaying ? 'playing' : 'paused',
-          position: audioRef.current?.currentTime || 0,
-          queue: useMusicStore.getState().queue,
-        })
+        // Notify server of queue change
+        sendRoomCommand('music:queue:add', { roomId: activeRoomId, track })
         return
       }
 
@@ -164,19 +151,19 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       setPosition(0)
       useMusicStore.getState().setIsLoading(true)
 
-      // Broadcast to room (include the full queue so members sync)
-      broadcastSync({
-        state: 'playing',
-        position: 0,
-        videoId: track.videoId,
-        trackInfo: {
-          title: track.title,
-          artist: track.artist,
-          thumbnail: track.thumbnail,
-          durationSeconds: track.durationSeconds,
-        },
-        queue: useMusicStore.getState().queue,
-      })
+      // Notify server (server-authoritative — server will broadcast to all members)
+      if (activeRoomId) {
+        sendRoomCommand('music:play', {
+          roomId: activeRoomId,
+          videoId: track.videoId,
+          trackInfo: {
+            title: track.title,
+            artist: track.artist,
+            thumbnail: track.thumbnail,
+            durationSeconds: track.durationSeconds,
+          },
+        })
+      }
 
       // Load + play the audio
       if (audioRef.current) {
@@ -224,7 +211,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
         }
       }
     },
-    [broadcastSync, setCurrentTrack, setIsPlaying, setPosition],
+    [sendRoomCommand, setCurrentTrack, setIsPlaying, setPosition],
   )
 
   // ─── Action: play next track ──────────────────────────────────────────
@@ -276,21 +263,13 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     if (state.isPlaying) {
       audio.pause()
       setIsPlaying(false)
-      broadcastSync({
-        state: 'paused',
-        position: audio.currentTime,
-        queue: state.queue,
-      })
+      sendRoomCommand('music:pause')
     } else {
       audio.play().catch(() => {})
       setIsPlaying(true)
-      broadcastSync({
-        state: 'playing',
-        position: audio.currentTime,
-        queue: state.queue,
-      })
+      sendRoomCommand('music:play', { roomId: activeRoomId })
     }
-  }, [broadcastSync, setIsPlaying])
+  }, [sendRoomCommand, setIsPlaying, activeRoomId])
 
   // ─── Action: seek ─────────────────────────────────────────────────────
   const handleSeek = useCallback(
@@ -300,13 +279,9 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       if (!audio) return
       audio.currentTime = pos
       setPosition(pos)
-      broadcastSync({
-        state: state.isPlaying ? 'playing' : 'paused',
-        position: pos,
-        queue: state.queue,
-      })
+      sendRoomCommand('music:seek', { roomId: activeRoomId, position: pos })
     },
-    [broadcastSync, setPosition],
+    [sendRoomCommand, setPosition, activeRoomId],
   )
 
   // ─── Action: stop playback entirely ───────────────────────────────────
@@ -321,44 +296,31 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     loadedVideoIdRef.current = null
   }, [setCurrentTrack, setIsPlaying, setPosition])
 
-  // ─── Action: add to queue (broadcasts) ────────────────────────────────
+  // ─── Action: add to queue ────────────────────────────────────────────
   const addToQueue = useCallback(
     (track: Track) => {
-      const state = useMusicStore.getState()
       storeAddToQueue(track)
-      broadcastSync({
-        state: state.isPlaying ? 'playing' : 'paused',
-        position: audioRef.current?.currentTime || 0,
-        queue: useMusicStore.getState().queue,
-      })
+      sendRoomCommand('music:queue:add', { roomId: activeRoomId, track })
     },
-    [broadcastSync, storeAddToQueue],
+    [sendRoomCommand, storeAddToQueue, activeRoomId],
   )
 
-  // ─── Action: remove from queue (broadcasts) ───────────────────────────
+  // ─── Action: remove from queue ───────────────────────────────────────
   const removeFromQueue = useCallback(
     (index: number) => {
-      const state = useMusicStore.getState()
       storeRemoveFromQueue(index)
-      broadcastSync({
-        state: state.isPlaying ? 'playing' : 'paused',
-        position: audioRef.current?.currentTime || 0,
-        queue: useMusicStore.getState().queue,
-      })
+      const state = useMusicStore.getState()
+      if (state.queue[index]) {
+        sendRoomCommand('music:queue:remove', { roomId: activeRoomId, videoId: state.queue[index].videoId })
+      }
     },
-    [broadcastSync, storeRemoveFromQueue],
+    [sendRoomCommand, storeRemoveFromQueue, activeRoomId],
   )
 
-  // ─── Action: clear queue (broadcasts) ─────────────────────────────────
+  // ─── Action: clear queue ─────────────────────────────────────────────
   const clearQueue = useCallback(() => {
-    const state = useMusicStore.getState()
     storeClearQueue()
-    broadcastSync({
-      state: state.isPlaying ? 'playing' : 'paused',
-      position: audioRef.current?.currentTime || 0,
-      queue: [],
-    })
-  }, [broadcastSync, storeClearQueue])
+  }, [storeClearQueue])
 
   // ─── Effect: keep <audio> volume in sync with the store ───────────────
   useEffect(() => {
@@ -476,96 +438,80 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       .catch((e) => console.error('[radio] fetch failed:', e))
   }, [currentTrack, queue.length])
 
-  // ─── Effect: Socket.io room sync ──────────────────────────────────────
-  // Joins the music room's socket channel, requests the host's current
-  // state, and listens for incoming sync events. Re-subscribes whenever
-  // the active room changes.
+  // ─── Effect: Socket.io room sync (server-authoritative) ──────────────
+  // Joins the music room's socket channel and listens for server-authoritative
+  // state updates. The server holds canonical state and broadcasts changes.
   useEffect(() => {
     if (!socket || !activeRoomId) return
 
     socket.emit('music:join', activeRoomId)
 
-    // Ask the host for the current state shortly after joining. The small
-    // delay gives the join room propagation time to complete.
-    const requestTimer = setTimeout(() => {
-      socket.emit('music:request-sync', activeRoomId)
-    }, 500)
-
-    // ── Incoming sync from the host (or another member's broadcast) ──
-    const onSync = (data: {
+    // ── Incoming state from the server ──
+    const onState = (data: {
       roomId: string
-      state: string
-      position: number
-      videoId?: string
-      trackInfo?: Track
-      queue?: Track[]
-      serverTimestamp: number
+      hostUserId: string
+      state: 'playing' | 'paused' | 'stopped'
+      currentVideoId: string | null
+      currentTrackInfo: any
+      positionSec: number
+      positionAnchor: number
+      queue: any[]
+      members: string[]
     }) => {
       if (data.roomId !== activeRoomId) return
 
       applyingRemoteRef.current = true
-
-      const networkDelay = (Date.now() - data.serverTimestamp) / 1000
-      const adjustedPosition =
-        data.position + (data.state === 'playing' ? networkDelay : 0)
-
-      const state = useMusicStore.getState()
+      const store = useMusicStore.getState()
       const audio = audioRef.current
 
-      // Track changed → load the new stream and seek to host's position
+      // Track changed → load the new stream
       if (
-        data.videoId &&
-        (!state.currentTrack || state.currentTrack.videoId !== data.videoId)
+        data.currentVideoId &&
+        (!store.currentTrack || store.currentTrack.videoId !== data.currentVideoId)
       ) {
-        const track: Track = data.trackInfo || {
-          videoId: data.videoId,
-          title: 'Now Playing',
-          artist: '',
-          thumbnail: null,
-          durationSeconds: null,
+        const track: Track = {
+          videoId: data.currentVideoId,
+          title: data.currentTrackInfo?.title || 'Now Playing',
+          artist: data.currentTrackInfo?.artist || '',
+          thumbnail: data.currentTrackInfo?.thumbnail || null,
+          durationSeconds: data.currentTrackInfo?.durationSeconds || null,
         }
-        pendingSeekRef.current = adjustedPosition
+        pendingSeekRef.current = data.positionSec
         setCurrentTrack(track)
         setIsPlaying(data.state === 'playing')
-        setPosition(adjustedPosition)
+        setPosition(data.positionSec)
 
         if (audio) {
-          audio.src = `/api/music/stream/${data.videoId}`
-          audio.volume = state.volume
-          loadedVideoIdRef.current = data.videoId
-          // Wait a tick for the new src to be accepted before seeking
+          audio.src = `/api/music/stream/${data.currentVideoId}`
+          audio.volume = store.volume
+          loadedVideoIdRef.current = data.currentVideoId
           setTimeout(() => {
             if (audioRef.current) {
-              try {
-                audioRef.current.currentTime = adjustedPosition
-              } catch {
-                // Stream not seekable yet — ignore
-              }
-              if (data.state === 'playing') {
-                audioRef.current.play().catch(() => {})
-              }
+              try { audioRef.current.currentTime = data.positionSec } catch {}
+              if (data.state === 'playing') audioRef.current.play().catch(() => {})
             }
             applyingRemoteRef.current = false
           }, 200)
         } else {
           applyingRemoteRef.current = false
         }
-      } else if (audio && state.currentTrack) {
+      } else if (audio && store.currentTrack) {
         // Same track — sync position + play/pause state only
-        const drift = Math.abs(audio.currentTime - adjustedPosition)
+        const drift = Math.abs(audio.currentTime - data.positionSec)
         if (drift > 1.5) {
-          try {
-            audio.currentTime = adjustedPosition
-          } catch {
-            // ignore
-          }
-          setPosition(adjustedPosition)
+          try { audio.currentTime = data.positionSec } catch {}
+          setPosition(data.positionSec)
         }
-        if (data.state === 'playing' && !state.isPlaying) {
+        if (data.state === 'playing' && !store.isPlaying) {
           audio.play().catch(() => {})
           setIsPlaying(true)
-        } else if (data.state === 'paused' && state.isPlaying) {
+        } else if (data.state === 'paused' && store.isPlaying) {
           audio.pause()
+          setIsPlaying(false)
+        } else if (data.state === 'stopped') {
+          audio.pause()
+          audio.src = ''
+          setCurrentTrack(null)
           setIsPlaying(false)
         }
         applyingRemoteRef.current = false
@@ -573,44 +519,42 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
         applyingRemoteRef.current = false
       }
 
-      // Apply queue update from remote (broadcast by host)
+      // Apply queue update
       if (Array.isArray(data.queue)) {
         setQueue(data.queue)
       }
     }
 
-    // ── A member just joined and is requesting our current state ──
-    // Only the host (or anyone with a current track) responds.
-    const onRequestSync = (data: {
-      roomId: string
-      fromUserId: string
-    }) => {
+    const onQueueUpdate = (data: { roomId: string; queue: any[] }) => {
       if (data.roomId !== activeRoomId) return
-      const state = useMusicStore.getState()
-      if (!state.currentTrack || !socket) return
-
-      socket.emit('music:sync', {
-        roomId: activeRoomId,
-        state: state.isPlaying ? 'playing' : 'paused',
-        position: audioRef.current?.currentTime || 0,
-        videoId: state.currentTrack.videoId,
-        trackInfo: {
-          title: state.currentTrack.title,
-          artist: state.currentTrack.artist,
-          thumbnail: state.currentTrack.thumbnail,
-          durationSeconds: state.currentTrack.durationSeconds,
-        },
-        queue: state.queue,
-      })
+      setQueue(data.queue)
     }
 
-    socket.on('music:sync', onSync)
-    socket.on('music:request-sync', onRequestSync)
+    const onHostChanged = (data: { roomId: string; newHostUserId: string }) => {
+      if (data.roomId !== activeRoomId) return
+      // Could show a toast: "X is now the host"
+    }
+
+    socket.on('music:state', onState)
+    socket.on('music:queue:update', onQueueUpdate)
+    socket.on('music:host-changed', onHostChanged)
+
+    // Position report for drift correction (every 10s while playing)
+    const positionReportInterval = setInterval(() => {
+      const store = useMusicStore.getState()
+      if (store.isPlaying && store.currentTrack && audioRef.current) {
+        socket.emit('music:position-report', {
+          roomId: activeRoomId,
+          position: audioRef.current.currentTime,
+        })
+      }
+    }, 10_000)
 
     return () => {
-      clearTimeout(requestTimer)
-      socket.off('music:sync', onSync)
-      socket.off('music:request-sync', onRequestSync)
+      clearInterval(positionReportInterval)
+      socket.off('music:state', onState)
+      socket.off('music:queue:update', onQueueUpdate)
+      socket.off('music:host-changed', onHostChanged)
       socket.emit('music:leave', activeRoomId)
       applyingRemoteRef.current = false
     }
