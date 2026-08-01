@@ -1,0 +1,252 @@
+/home/z/my-project/src/app/globals.css:532:  /* ── Custom Range Sliders — for music player progress & volume ── */
+/home/z/my-project/src/app/globals.css:656:/* ─── Music player: animated playing border (reactbits.dev inspired) ─────── */
+/home/z/my-project/src/app/api/invites/route.ts:15: *   type: 'call' | 'music',
+/home/z/my-project/src/app/api/invites/route.ts:16: *   targetId: string,        // callId (for calls) or roomId (for music)
+/home/z/my-project/src/app/api/invites/route.ts:20: *   roomName?: string,       // for music: the room name (for display)
+/home/z/my-project/src/app/api/invites/route.ts:25: * 'invite-music'. The message body is JSON with the invite metadata.
+/home/z/my-project/src/app/api/invites/route.ts:42:  if (type !== 'call' && type !== 'music') {
+/home/z/my-project/src/app/api/invites/route.ts:43:    return NextResponse.json({ error: 'type must be "call" or "music"' }, { status: 400 })
+/home/z/my-project/src/app/api/invites/route.ts:80:      mediaType: type === 'call' ? 'invite-call' : 'invite-music',
+/home/z/my-project/src/lib/ytdlp-download.ts:5: *   - /api/music/stream/[videoId] (serves the audio to the client)
+/home/z/my-project/src/lib/ytdlp-download.ts:6: *   - /api/music/predownload/[videoId] (pre-fetches audio for queue items)
+/home/z/my-project/src/lib/ytdlp-download.ts:21:export const CACHE_DIR = path.join(process.cwd(), 'public', 'cache', 'music')
+/home/z/my-project/src/lib/realtime-server.ts:539:    // ─── Music room sync ────────────────────────────────────────────────
+/home/z/my-project/src/lib/realtime-server.ts:542:    socket.on('music:join', (roomId: string) => {
+/home/z/my-project/src/lib/realtime-server.ts:543:      socket.join(`music:${roomId}`)
+/home/z/my-project/src/lib/realtime-server.ts:546:      socket.to(`music:${roomId}`).emit('music:member-joined', {
+/home/z/my-project/src/lib/realtime-server.ts:553:    socket.on('music:leave', (roomId: string) => {
+/home/z/my-project/src/lib/realtime-server.ts:554:      socket.leave(`music:${roomId}`)
+/home/z/my-project/src/lib/realtime-server.ts:560:    socket.on('music:sync', (payload: {
+/home/z/my-project/src/lib/realtime-server.ts:567:      io.to(`music:${payload.roomId}`).emit('music:sync', {
+/home/z/my-project/src/lib/realtime-server.ts:574:    // state. The host should respond with a music:sync broadcast.
+/home/z/my-project/src/lib/realtime-server.ts:575:    socket.on('music:request-sync', (roomId: string) => {
+/home/z/my-project/src/lib/realtime-server.ts:576:      socket.to(`music:${roomId}`).emit('music:request-sync', {
+/home/z/my-project/src/lib/youtube.ts:4: * Cached YouTube Music client.
+/home/z/my-project/src/lib/youtube.ts:43: *   - FEmusic (music browse ID)
+/home/z/my-project/src/lib/youtube.ts:57:  // Filter out IDs that start with 'FEmusic' (YouTube Music browse IDs)
+/home/z/my-project/src/lib/youtube.ts:58:  if (id.startsWith('FEmusic')) return false
+/home/z/my-project/src/stores/useAppStore.ts:5:export type ViewKey = 'chats' | 'status' | 'voice' | 'settings' | 'music' | 'cinema' | 'entertainment'
+/home/z/my-project/src/stores/useAppStore.ts:12:  // Music + Cinema shortcuts). Opened by tapping the Entertainment nav item.
+/home/z/my-project/src/stores/useMusicStore.ts:14:interface MusicState {
+/home/z/my-project/src/stores/useMusicStore.ts:61:export const useMusicStore = create<MusicState>((set, get) => ({
+/home/z/my-project/src/app/api/channels/route.ts:88:      if (latest.mediaType === 'invite-call' || latest.mediaType === 'invite-music') {
+/home/z/my-project/src/app/api/channels/route.ts:93:            : `🎵 Music room invitation`
+/home/z/my-project/src/components/ui/invite-dialog.tsx:30:  inviteType: 'call' | 'music'
+/home/z/my-project/src/components/ui/invite-dialog.tsx:128:            {isCall ? '📞' : '🎵'} Invite to {isCall ? 'Call' : 'Music Room'}
+/home/z/my-project/src/components/layout/navigation.tsx:17:// 5 nav items (down from 6) — Music & Cinema merged into Entertainment.
+/home/z/my-project/src/components/layout/navigation.tsx:28:// It's "active" when the user is currently inside Music or Cinema (which are
+/home/z/my-project/src/components/layout/navigation.tsx:31:  return view === 'music' || view === 'cinema' || view === 'entertainment'
+/home/z/my-project/src/components/layout/entertainment-drawer.tsx:4:import { Music, Clapperboard, X, Sparkles, Film } from 'lucide-react'
+/home/z/my-project/src/components/layout/entertainment-drawer.tsx:13: *   - Music   → useAppStore.setView('music')
+/home/z/my-project/src/components/layout/entertainment-drawer.tsx:23:  const handleSelect = (view: 'music' | 'cinema') => {
+/home/z/my-project/src/components/layout/entertainment-drawer.tsx:85:                    title="Music"
+/home/z/my-project/src/components/layout/entertainment-drawer.tsx:87:                    icon={<Music className="w-7 h-7" />}
+/home/z/my-project/src/components/layout/entertainment-drawer.tsx:90:                    onClick={() => handleSelect('music')}
+/home/z/my-project/src/components/layout/app-shell.tsx:11:import { MusicView } from '@/components/music/music-view'
+/home/z/my-project/src/components/layout/app-shell.tsx:13:import { GlobalMusicPlayer } from '@/components/music/global-music-player'
+/home/z/my-project/src/components/layout/app-shell.tsx:68:      <GlobalMusicPlayer>
+/home/z/my-project/src/components/layout/app-shell.tsx:83:                {view === 'music' && <MusicView />}
+/home/z/my-project/src/components/layout/app-shell.tsx:94:      </GlobalMusicPlayer>
+/home/z/my-project/src/components/chat/server-rail.tsx:31:// Music + Cinema are merged into the Entertainment item, which opens a drawer
+/home/z/my-project/src/components/chat/server-rail.tsx:41:  return view === 'music' || view === 'cinema' || view === 'entertainment'
+/home/z/my-project/src/components/chat/message-list.tsx:7:import { Reply, Edit2, Trash2, X, Check, CheckCheck, Image as ImageIcon, Bot, UserX, Copy, Pin, AudioLines, ChevronDown, Phone, Video, Music as MusicIcon, FileText, Loader2 } from 'lucide-react'
+/home/z/my-project/src/components/chat/message-list.tsx:16:import { useMusicStore } from '@/stores/useMusicStore'
+/home/z/my-project/src/components/chat/message-list.tsx:446:  const setActiveRoomId = useMusicStore((s) => s.setActiveRoomId)
+/home/z/my-project/src/components/chat/message-list.tsx:448:  // Handle invitation Join button — joins a call or music room
+/home/z/my-project/src/components/chat/message-list.tsx:471:      } else if (invite.type === 'music') {
+/home/z/my-project/src/components/chat/message-list.tsx:472:        // Join the music room — set active room + auto-join as member
+/home/z/my-project/src/components/chat/message-list.tsx:474:        await fetch(`/api/music/rooms/${invite.targetId}`).catch(() => {})
+/home/z/my-project/src/components/chat/message-list.tsx:475:        toast.success(`Joined music room "${invite.roomName || 'Unnamed'}"`)
+/home/z/my-project/src/components/chat/message-list.tsx:476:        // Navigate to music view
+/home/z/my-project/src/components/chat/message-list.tsx:477:        window.location.hash = 'music'
+/home/z/my-project/src/components/chat/message-list.tsx:594:        {/* Invitation cards (call / music room invites) */}
+/home/z/my-project/src/components/chat/message-list.tsx:595:        {(m.mediaType === 'invite-call' || m.mediaType === 'invite-music') && (() => {
+/home/z/my-project/src/components/chat/message-list.tsx:614:                        <MusicIcon className="w-5 h-5 text-purple-400" />
+/home/z/my-project/src/components/chat/message-list.tsx:621:                          : `${invite.fromName} invited you to music room "${invite.roomName || 'Unnamed'}"`
+/home/z/my-project/src/components/chat/message-list.tsx:737:            {m.mediaType !== 'invite-call' && m.mediaType !== 'invite-music' && !m.mediaType?.startsWith('audio') && !isAudioFile(m.mediaUrl, m.mediaType) && (
+/home/z/my-project/src/components/music/music-view.tsx:11:  Loader2, Radio, Headphones, X, ListMusic, Compass,
+/home/z/my-project/src/components/music/music-view.tsx:12:  Trash2, Repeat, Shuffle, Music as MusicIcon, Users,
+/home/z/my-project/src/components/music/music-view.tsx:17:import { useMusicStore, type Track } from '@/stores/useMusicStore'
+/home/z/my-project/src/components/music/music-view.tsx:18:import { useMusicPlayer } from '@/components/music/global-music-player'
+/home/z/my-project/src/components/music/music-view.tsx:37:const HISTORY_KEY = 'adoo-music-history'
+/home/z/my-project/src/components/music/music-view.tsx:64: * MusicView — Browse / Rooms / Queue UI for the music feature.
+/home/z/my-project/src/components/music/music-view.tsx:67: * Those live in <GlobalMusicPlayer /> (rendered at the app root) so that
+/home/z/my-project/src/components/music/music-view.tsx:68: * playback persists across all tabs (Chats, Status, Calls, Settings, Music).
+/home/z/my-project/src/components/music/music-view.tsx:70: * This view reads playback state from `useMusicStore` and triggers actions
+/home/z/my-project/src/components/music/music-view.tsx:71: * via `useMusicPlayer()`.
+/home/z/my-project/src/components/music/music-view.tsx:73:export function MusicView() {
+/home/z/my-project/src/components/music/music-view.tsx:76:  // Listen for hash changes — the player's expand button sets #music-queue
+/home/z/my-project/src/components/music/music-view.tsx:93:  const [inviteTarget, setInviteTarget] = useState<{ type: 'call' | 'music'; roomId?: string; roomName?: string } | null>(null)
+/home/z/my-project/src/components/music/music-view.tsx:98:    queryKey: ['music-liked'],
+/home/z/my-project/src/components/music/music-view.tsx:100:      const res = await fetch('/api/music/liked')
+/home/z/my-project/src/components/music/music-view.tsx:109:    queryKey: ['music-playlists'],
+/home/z/my-project/src/components/music/music-view.tsx:111:      const res = await fetch('/api/music/playlists')
+/home/z/my-project/src/components/music/music-view.tsx:130:  const currentTrack = useMusicStore((s) => s.currentTrack)
+/home/z/my-project/src/components/music/music-view.tsx:131:  const isPlaying = useMusicStore((s) => s.isPlaying)
+/home/z/my-project/src/components/music/music-view.tsx:132:  const queue = useMusicStore((s) => s.queue)
+/home/z/my-project/src/components/music/music-view.tsx:133:  const autoplay = useMusicStore((s) => s.autoplay)
+/home/z/my-project/src/components/music/music-view.tsx:134:  const shuffle = useMusicStore((s) => s.shuffle)
+/home/z/my-project/src/components/music/music-view.tsx:135:  const repeat = useMusicStore((s) => s.repeat)
+/home/z/my-project/src/components/music/music-view.tsx:137:  // ── Up Next: read from the music store's radio queue (prefetched by the player) ─
+/home/z/my-project/src/components/music/music-view.tsx:138:  const radioQueue = useMusicStore((s) => s.radioQueue)
+/home/z/my-project/src/components/music/music-view.tsx:141:  // Listen for hash changes — the player's expand button sets #music-queue
+/home/z/my-project/src/components/music/music-view.tsx:144:      if (window.location.hash === '#music-queue') {
+/home/z/my-project/src/components/music/music-view.tsx:158:  const activeRoomId = useMusicStore((s) => s.activeRoomId)
+/home/z/my-project/src/components/music/music-view.tsx:159:  const setActiveRoomId = useMusicStore((s) => s.setActiveRoomId)
+/home/z/my-project/src/components/music/music-view.tsx:160:  const setShuffle = useMusicStore((s) => s.setShuffle)
+/home/z/my-project/src/components/music/music-view.tsx:161:  const setRepeat = useMusicStore((s) => s.setRepeat)
+/home/z/my-project/src/components/music/music-view.tsx:162:  const setAutoplay = useMusicStore((s) => s.setAutoplay)
+/home/z/my-project/src/components/music/music-view.tsx:165:  const { playTrack, playNext, removeFromQueue, clearQueue } = useMusicPlayer()
+/home/z/my-project/src/components/music/music-view.tsx:176:    qc.setQueryData(['music-liked'], (old: any) => {
+/home/z/my-project/src/components/music/music-view.tsx:185:        await fetch(`/api/music/liked?videoId=${track.videoId}`, { method: 'DELETE' })
+/home/z/my-project/src/components/music/music-view.tsx:187:        await fetch('/api/music/liked', {
+/home/z/my-project/src/components/music/music-view.tsx:195:      qc.invalidateQueries({ queryKey: ['music-liked'] })
+/home/z/my-project/src/components/music/music-view.tsx:206:      const res = await fetch('/api/music/playlists', {
+/home/z/my-project/src/components/music/music-view.tsx:214:      qc.setQueryData(['music-playlists'], (old: any) => {
+/home/z/my-project/src/components/music/music-view.tsx:228:    qc.setQueryData(['music-playlists'], (old: any) => {
+/home/z/my-project/src/components/music/music-view.tsx:245:      const res = await fetch(`/api/music/playlists/${playlistId}/songs`, {
+/home/z/my-project/src/components/music/music-view.tsx:255:      qc.invalidateQueries({ queryKey: ['music-playlists'] })
+/home/z/my-project/src/components/music/music-view.tsx:262:    qc.setQueryData(['music-playlists'], (old: any) => {
+/home/z/my-project/src/components/music/music-view.tsx:270:      const res = await fetch(`/api/music/playlists/${playlistId}`, { method: 'DELETE' })
+/home/z/my-project/src/components/music/music-view.tsx:275:      qc.invalidateQueries({ queryKey: ['music-playlists'] })
+/home/z/my-project/src/components/music/music-view.tsx:294:    queryKey: ['music-trending'],
+/home/z/my-project/src/components/music/music-view.tsx:296:      const res = await fetch('/api/music/trending')
+/home/z/my-project/src/components/music/music-view.tsx:306:    queryKey: ['music-home'],
+/home/z/my-project/src/components/music/music-view.tsx:308:      const res = await fetch('/api/music/home')
+/home/z/my-project/src/components/music/music-view.tsx:316:    queryKey: ['music-rooms'],
+/home/z/my-project/src/components/music/music-view.tsx:318:      const res = await fetch('/api/music/rooms')
+/home/z/my-project/src/components/music/music-view.tsx:328:      const res = await fetch('/api/music/rooms', {
+/home/z/my-project/src/components/music/music-view.tsx:338:      qc.setQueryData(['music-rooms'], (old: any) => {
+/home/z/my-project/src/components/music/music-view.tsx:352:      const res = await fetch(`/api/music/rooms/${roomId}`, {
+/home/z/my-project/src/components/music/music-view.tsx:359:      qc.setQueryData(['music-rooms'], (old: any) => {
+/home/z/my-project/src/components/music/music-view.tsx:365:      qc.invalidateQueries({ queryKey: ['music-rooms'] })
+/home/z/my-project/src/components/music/music-view.tsx:391:        const res = await fetch(`/api/music/search?q=${encodeURIComponent(value)}`, {
+/home/z/my-project/src/components/music/music-view.tsx:422:            <MusicIcon className="w-7 h-7 text-primary" />
+/home/z/my-project/src/components/music/music-view.tsx:423:            <GradientText>Musical</GradientText>
+/home/z/my-project/src/components/music/music-view.tsx:432:                ['queue', 'Queue', ListMusic],
+/home/z/my-project/src/components/music/music-view.tsx:661:                          fetch(`/api/music/rooms/${room.id}`).catch(() => {})
+/home/z/my-project/src/components/music/music-view.tsx:663:                        onInvite={() => setInviteTarget({ type: 'music', roomId: room.id, roomName: room.name })}
+/home/z/my-project/src/components/music/music-view.tsx:698:                            <MusicIcon className="w-7 h-7 text-primary-foreground" />
+/home/z/my-project/src/components/music/music-view.tsx:799:                        <ListMusic
+/home/z/my-project/src/components/music/music-view.tsx:830:                                <ListMusic className="w-4 h-4 text-muted-foreground" />
+/home/z/my-project/src/components/music/music-view.tsx:893:                                <ListMusic className="w-3.5 h-3.5 text-muted-foreground" />
+/home/z/my-project/src/components/music/music-view.tsx:977:                    <ListMusic className="w-4 h-4" />
+/home/z/my-project/src/components/music/music-view.tsx:1127:                        <ListMusic className="w-10 h-10 mx-auto text-muted-foreground mb-2" strokeWidth={1.5} />
+/home/z/my-project/src/components/music/music-view.tsx:1129:                        <p className="text-xs text-muted-foreground/60 mt-1">Create a playlist to organize your music</p>
+/home/z/my-project/src/components/music/music-view.tsx:1191:                        <ListMusic className="w-5 h-5 text-primary" />
+/home/z/my-project/src/components/music/music-view.tsx:1272:          inviteType={inviteTarget?.type || 'music'}
+/home/z/my-project/src/components/music/music-view.tsx:1273:          inviteContext={inviteTarget?.roomName ? `music room "${inviteTarget.roomName}"` : undefined}
+/home/z/my-project/src/components/music/music-view.tsx:1342:            <ListMusic className="w-6 h-6 text-muted-foreground" />
+/home/z/my-project/src/components/music/music-view.tsx:1431:            <ListMusic className="w-6 h-6 text-primary" />
+/home/z/my-project/src/components/music/music-view.tsx:1519:            <ListMusic className="w-10 h-10 text-muted-foreground" />
+/home/z/my-project/src/components/music/music-view.tsx:1552:// who joined and left (we don't track leftAt for music rooms). Instead we
+/home/z/my-project/src/components/music/music-view.tsx:1627:        {/* Invite button — sends a music room invitation to a user's DM */}
+/home/z/my-project/src/components/music/global-music-player.tsx:15:  Play, Pause, SkipForward, X, Volume2, Music as MusicIcon,
+/home/z/my-project/src/components/music/global-music-player.tsx:16:  Shuffle, Repeat, ChevronUp, ChevronDown, Loader2, ListMusic, Sparkles,
+/home/z/my-project/src/components/music/global-music-player.tsx:21:import { useMusicStore, type Track } from '@/stores/useMusicStore'
+/home/z/my-project/src/components/music/global-music-player.tsx:25: * GlobalMusicPlayer
+/home/z/my-project/src/components/music/global-music-player.tsx:29: * switches tabs (Chats, Status, Calls, Settings, Music).
+/home/z/my-project/src/components/music/global-music-player.tsx:32: *   - The Zustand store (`useMusicStore`) is the single source of truth for
+/home/z/my-project/src/components/music/global-music-player.tsx:37: *   - The MusicView (browse / rooms / queue UI) reads state from the store
+/home/z/my-project/src/components/music/global-music-player.tsx:38: *     and calls the action functions exposed here via `useMusicPlayer()`.
+/home/z/my-project/src/components/music/global-music-player.tsx:45:interface MusicPlayerContextValue {
+/home/z/my-project/src/components/music/global-music-player.tsx:64:const MusicPlayerContext = createContext<MusicPlayerContextValue | null>(null)
+/home/z/my-project/src/components/music/global-music-player.tsx:66:const NOOP_PLAYER: MusicPlayerContextValue = {
+/home/z/my-project/src/components/music/global-music-player.tsx:78: * Access the global music player's action functions.
+/home/z/my-project/src/components/music/global-music-player.tsx:80: * Safe to call from any component rendered inside <GlobalMusicPlayer>.
+/home/z/my-project/src/components/music/global-music-player.tsx:83:export function useMusicPlayer(): MusicPlayerContextValue {
+/home/z/my-project/src/components/music/global-music-player.tsx:84:  const ctx = useContext(MusicPlayerContext)
+/home/z/my-project/src/components/music/global-music-player.tsx:88:export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
+/home/z/my-project/src/components/music/global-music-player.tsx:93:  const currentTrack = useMusicStore((s) => s.currentTrack)
+/home/z/my-project/src/components/music/global-music-player.tsx:94:  const isPlaying = useMusicStore((s) => s.isPlaying)
+/home/z/my-project/src/components/music/global-music-player.tsx:95:  const isLoading = useMusicStore((s) => s.isLoading)
+/home/z/my-project/src/components/music/global-music-player.tsx:96:  const position = useMusicStore((s) => s.position)
+/home/z/my-project/src/components/music/global-music-player.tsx:97:  const volume = useMusicStore((s) => s.volume)
+/home/z/my-project/src/components/music/global-music-player.tsx:98:  const queue = useMusicStore((s) => s.queue)
+/home/z/my-project/src/components/music/global-music-player.tsx:99:  const radioQueue = useMusicStore((s) => s.radioQueue)
+/home/z/my-project/src/components/music/global-music-player.tsx:100:  const shuffle = useMusicStore((s) => s.shuffle)
+/home/z/my-project/src/components/music/global-music-player.tsx:101:  const repeat = useMusicStore((s) => s.repeat)
+/home/z/my-project/src/components/music/global-music-player.tsx:102:  const activeRoomId = useMusicStore((s) => s.activeRoomId)
+/home/z/my-project/src/components/music/global-music-player.tsx:105:  const setCurrentTrack = useMusicStore((s) => s.setCurrentTrack)
+/home/z/my-project/src/components/music/global-music-player.tsx:106:  const setIsPlaying = useMusicStore((s) => s.setIsPlaying)
+/home/z/my-project/src/components/music/global-music-player.tsx:107:  const setPosition = useMusicStore((s) => s.setPosition)
+/home/z/my-project/src/components/music/global-music-player.tsx:108:  const setVolume = useMusicStore((s) => s.setVolume)
+/home/z/my-project/src/components/music/global-music-player.tsx:109:  const setQueue = useMusicStore((s) => s.setQueue)
+/home/z/my-project/src/components/music/global-music-player.tsx:110:  const storeAddToQueue = useMusicStore((s) => s.addToQueue)
+/home/z/my-project/src/components/music/global-music-player.tsx:111:  const storeRemoveFromQueue = useMusicStore((s) => s.removeFromQueue)
+/home/z/my-project/src/components/music/global-music-player.tsx:112:  const storeClearQueue = useMusicStore((s) => s.clearQueue)
+/home/z/my-project/src/components/music/global-music-player.tsx:136:      socket.emit('music:sync', {
+/home/z/my-project/src/components/music/global-music-player.tsx:147:      const state = useMusicStore.getState()
+/home/z/my-project/src/components/music/global-music-player.tsx:156:          queue: useMusicStore.getState().queue,
+/home/z/my-project/src/components/music/global-music-player.tsx:165:      useMusicStore.getState().setIsLoading(true)
+/home/z/my-project/src/components/music/global-music-player.tsx:178:        queue: useMusicStore.getState().queue,
+/home/z/my-project/src/components/music/global-music-player.tsx:183:        audioRef.current.src = `/api/music/stream/${track.videoId}`
+/home/z/my-project/src/components/music/global-music-player.tsx:184:        audioRef.current.volume = useMusicStore.getState().volume
+/home/z/my-project/src/components/music/global-music-player.tsx:189:          useMusicStore.getState().setIsLoading(false)
+/home/z/my-project/src/components/music/global-music-player.tsx:191:          useMusicStore.getState().setIsLoading(false)
+/home/z/my-project/src/components/music/global-music-player.tsx:194:              const res = await fetch(`/api/music/stream/${track.videoId}`, {
+/home/z/my-project/src/components/music/global-music-player.tsx:217:    const state = useMusicStore.getState()
+/home/z/my-project/src/components/music/global-music-player.tsx:229:            `/api/music/related/${state.currentTrack.videoId}`,
+/home/z/my-project/src/components/music/global-music-player.tsx:258:    const state = useMusicStore.getState()
+/home/z/my-project/src/components/music/global-music-player.tsx:284:      const state = useMusicStore.getState()
+/home/z/my-project/src/components/music/global-music-player.tsx:312:      const state = useMusicStore.getState()
+/home/z/my-project/src/components/music/global-music-player.tsx:317:        queue: useMusicStore.getState().queue,
+/home/z/my-project/src/components/music/global-music-player.tsx:326:      const state = useMusicStore.getState()
+/home/z/my-project/src/components/music/global-music-player.tsx:331:        queue: useMusicStore.getState().queue,
+/home/z/my-project/src/components/music/global-music-player.tsx:339:    const state = useMusicStore.getState()
+/home/z/my-project/src/components/music/global-music-player.tsx:355:  // change). The listeners read fresh state via `useMusicStore.getState()`
+/home/z/my-project/src/components/music/global-music-player.tsx:370:      const state = useMusicStore.getState()
+/home/z/my-project/src/components/music/global-music-player.tsx:378:      useMusicStore.getState().setIsLoading(true)
+/home/z/my-project/src/components/music/global-music-player.tsx:381:      useMusicStore.getState().setIsLoading(false)
+/home/z/my-project/src/components/music/global-music-player.tsx:384:      useMusicStore.getState().setIsLoading(false)
+/home/z/my-project/src/components/music/global-music-player.tsx:419:      fetch(`/api/music/predownload/${track.videoId}`, { method: 'POST', keepalive: true })
+/home/z/my-project/src/components/music/global-music-player.tsx:434:    const state = useMusicStore.getState()
+/home/z/my-project/src/components/music/global-music-player.tsx:441:      fetch(`/api/music/predownload/${nextRadio.videoId}`, { method: 'POST', keepalive: true })
+/home/z/my-project/src/components/music/global-music-player.tsx:448:    fetch(`/api/music/related/${currentTrack.videoId}`)
+/home/z/my-project/src/components/music/global-music-player.tsx:456:          fetch(`/api/music/predownload/${tracks[0].videoId}`, { method: 'POST', keepalive: true })
+/home/z/my-project/src/components/music/global-music-player.tsx:465:  // Joins the music room's socket channel, requests the host's current
+/home/z/my-project/src/components/music/global-music-player.tsx:471:    socket.emit('music:join', activeRoomId)
+/home/z/my-project/src/components/music/global-music-player.tsx:476:      socket.emit('music:request-sync', activeRoomId)
+/home/z/my-project/src/components/music/global-music-player.tsx:497:      const state = useMusicStore.getState()
+/home/z/my-project/src/components/music/global-music-player.tsx:518:          audio.src = `/api/music/stream/${data.videoId}`
+/home/z/my-project/src/components/music/global-music-player.tsx:574:      const state = useMusicStore.getState()
+/home/z/my-project/src/components/music/global-music-player.tsx:577:      socket.emit('music:sync', {
+/home/z/my-project/src/components/music/global-music-player.tsx:592:    socket.on('music:sync', onSync)
+/home/z/my-project/src/components/music/global-music-player.tsx:593:    socket.on('music:request-sync', onRequestSync)
+/home/z/my-project/src/components/music/global-music-player.tsx:597:      socket.off('music:sync', onSync)
+/home/z/my-project/src/components/music/global-music-player.tsx:598:      socket.off('music:request-sync', onRequestSync)
+/home/z/my-project/src/components/music/global-music-player.tsx:599:      socket.emit('music:leave', activeRoomId)
+/home/z/my-project/src/components/music/global-music-player.tsx:612:  const contextValue = useMemo<MusicPlayerContextValue>(
+/home/z/my-project/src/components/music/global-music-player.tsx:636:    <MusicPlayerContext.Provider value={contextValue}>
+/home/z/my-project/src/components/music/global-music-player.tsx:659:              useMusicStore.getState().setShuffle(!shuffle)
+/home/z/my-project/src/components/music/global-music-player.tsx:662:              useMusicStore.getState().setRepeat(!repeat)
+/home/z/my-project/src/components/music/global-music-player.tsx:668:    </MusicPlayerContext.Provider>
+/home/z/my-project/src/components/music/global-music-player.tsx:676:// Music tab, so it doesn't block content on other pages.
+/home/z/my-project/src/components/music/global-music-player.tsx:720:  // Auto-collapse when not on the Music tab
+/home/z/my-project/src/components/music/global-music-player.tsx:722:    if (view !== 'music') setExpanded(false)
+/home/z/my-project/src/components/music/global-music-player.tsx:777:                  <MusicIcon className="w-5 h-5 text-primary-foreground relative z-10" />
+/home/z/my-project/src/components/music/global-music-player.tsx:842:                    <MusicIcon className="w-5 h-5 text-primary-foreground" />
+/home/z/my-project/src/components/music/global-music-player.tsx:856:                  {/* Expand to full Music page (step 3) */}
+/home/z/my-project/src/components/music/global-music-player.tsx:857:                  <Button onClick={() => { setExpanded(false); useAppStore.getState().setView('music'); window.location.hash = 'music-queue' }} variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground">
+/home/z/my-project/src/components/music/global-music-player.tsx:907:                    <MusicIcon className="w-5 h-5 text-primary-foreground" />
+/home/z/my-project/src/components/music/global-music-player.tsx:966:                <button onClick={() => { setExpanded(false); useAppStore.getState().setView('music'); window.location.hash = 'music-queue' }} className="text-muted-foreground hover:text-foreground transition-colors p-1" aria-label="Open full music page">
+/home/z/my-project/src/app/api/music/playlists/[playlistId]/songs/route.ts:10: * POST /api/music/playlists/[playlistId]/songs
+/home/z/my-project/src/app/api/music/playlists/[playlistId]/songs/route.ts:13: * DELETE /api/music/playlists/[playlistId]/songs?videoId=xxx
+/home/z/my-project/src/app/api/music/playlists/[playlistId]/route.ts:10: * DELETE /api/music/playlists/[playlistId] — delete a playlist (and all its songs).
+/home/z/my-project/src/app/api/music/playlists/route.ts:10: * GET /api/music/playlists — list the current user's playlists (with songs).
+/home/z/my-project/src/app/api/music/playlists/route.ts:11: * POST /api/music/playlists — create a playlist. Body: { name }
+/home/z/my-project/src/app/api/music/related/[videoId]/route.ts:7: * GET /api/music/related/[videoId]
+/home/z/my-project/src/app/api/music/related/[videoId]/route.ts:9: * Fetch related/recommended tracks for a given video using YouTube Music's
+/home/z/my-project/src/app/api/music/related/[videoId]/route.ts:33:      const upNext = await youtube.music.getUpNext(videoId)
+/home/z/my-project/src/app/api/music/related/[videoId]/route.ts:52:      console.error('[music/related] getUpNext failed, trying getRelated:', e?.message || e)
+/home/z/my-project/src/app/api/music/related/[videoId]/route.ts:58:        const related = await youtube.music.getRelated(videoId)
+/home/z/my-project/src/app/api/music/related/[videoId]/route.ts:80:        console.error('[music/related] getRelated also failed:', e?.message || e)
+/home/z/my-project/src/app/api/music/related/[videoId]/route.ts:90:    console.error('[music/related] error:', e)
+/home/z/my-project/src/app/api/music/stream/[videoId]/route.ts:10: * GET /api/music/stream/[videoId]
+/home/z/my-project/src/app/api/music/stream/[videoId]/route.ts:15: * The download logic is shared with /api/music/predownload via
+/home/z/my-project/src/app/api/music/stream/[videoId]/route.ts:43:      console.error(`[music/stream] download failed for ${videoId}:`, e?.message || e)
+/home/z/my-project/src/app/api/music/predownload/[videoId]/route.ts:15: * POST /api/music/predownload/[videoId]
+/home/z/my-project/src/app/api/music/predownload/[videoId]/route.ts:78: * GET /api/music/predownload/[videoId]
+/home/z/my-project/src/app/api/music/rooms/route.ts:7: * GET /api/music/rooms — List ALL music rooms (public to all users).
+
+[Showing results with pagination = limit: 250]
