@@ -143,7 +143,7 @@ const modules = new Map<string, BotModule>()
 
 export function registerBotModule(mod: BotModule) {
   modules.set(mod.name, mod)
-  console.log(`[bot] registered module: ${mod.name} (${mod.commands.length} commands)`)
+    if (process.env.NODE_ENV === 'development') console.log(`[bot] registered module: ${mod.name} (${mod.commands.length} commands)`)
 }
 
 export function getBotModule(name: string): BotModule | undefined {
@@ -504,7 +504,7 @@ export async function dispatchBotCallback(params: {
 
   const mod = getBotModule(bot.module)
   if (!mod) {
-    console.log(`[callback] bot module '${bot.module}' not found`)
+        console.warn(`[callback] bot module '${bot.module}' not found`)
     return
   }
 
@@ -525,7 +525,7 @@ export async function dispatchBotCallback(params: {
     ctx.bot.config._flow = bot.flow
   }
 
-  console.log(`[callback] dispatching to module '${bot.module}', routing to onMessage...`)
+  
 
   // For visual bots, route to onMessage — the wait_choice resume path in
   // visual.ts will match the callbackData against the options.

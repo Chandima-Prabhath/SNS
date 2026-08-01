@@ -75,3 +75,9 @@ server.log
 # Realtime service logs (generated at runtime)
 *.realtime.log
 prisma/db/custom.db
+
+# Agent scratch files
+tool-results/
+
+# Editor paste artifacts
+upload/

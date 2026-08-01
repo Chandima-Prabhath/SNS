@@ -63,18 +63,18 @@ export function sendMusicCommand(
 ): void {
   const io = getIO()
   if (!io) {
-    console.warn('[sendMusicCommand] io is null — socket.io not initialized')
+    
     return
   }
   const target = presence.get(targetUserId)
   if (!target) {
-    console.warn(`[sendMusicCommand] target user ${targetUserId} not found in presence map (size=${presence.size})`)
+    
     // Fallback: broadcast to all sockets. Not ideal for production but
     // ensures the command reaches the user even if presence tracking is off.
     io.emit('music:bot-command', command)
     return
   }
-  console.log(`[sendMusicCommand] sending ${command.action} to ${targetUserId} (${target.socketIds.size} sockets)`)
+  
   for (const sid of target.socketIds) {
     io.to(sid).emit('music:bot-command', command)
   }
@@ -103,7 +103,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
   io.use(async (socket, next) => {
     try {
       const cookieHeader = socket.handshake.headers.cookie || ''
-      console.log('[realtime auth] cookie header present:', !!cookieHeader, 'length:', cookieHeader.length)
+      
 
       // Parse cookies into a plain object (small helper, avoids extra dep)
       const cookies: Record<string, string> = {}
@@ -145,7 +145,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
 
       ;(socket as any).userId = decoded.id
       ;(socket as any).username = decoded.username || decoded.email || 'user'
-      console.log('[realtime auth] success: userId=', decoded.id, 'username=', (socket as any).username)
+      
       next()
     } catch (e: any) {
       console.error('[realtime auth] error:', e?.message || e, e?.stack?.slice(0, 200))
@@ -207,7 +207,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
         }
       }
 
-      console.log(`[realtime] call ${callId} ended (${participantCount} participants remaining)`)
+      
     }
   }
 
@@ -217,7 +217,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
   io.on('connection', (socket) => {
     const auth = socket as unknown as AuthenticatedSocket & { userId: string; username: string }
     const { userId, username } = auth
-    console.log(`[realtime] connect ${username} (${userId})`)
+    
 
     setPresence(userId, username, 'online', socket.id)
 
@@ -498,7 +498,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
             return
           }
           sendIncoming()
-          console.log(`[call] retry ${attempts}/12 sending call:incoming to ${payload.targetUserId}`)
+          
         }
       }, 5000)
 
@@ -654,7 +654,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
 
     socket.on('disconnect', () => {
       removeSocket(userId, socket.id)
-      console.log(`[realtime] disconnect ${username} (${userId})`)
+      
     })
 
     socket.on('error', (err: any) => {
@@ -662,6 +662,6 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
     })
   })
 
-  console.log(`[realtime] attached, path=${SOCKET_PATH}`)
+  
   return io
 }

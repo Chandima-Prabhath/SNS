@@ -224,7 +224,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       // If radio queue is also empty, fetch related tracks (fallback)
       if (!nextTrack) {
         try {
-          console.log('[player] radio queue empty, fetching related tracks...')
+          if (process.env.NODE_ENV === 'development') console.log('[player] radio queue empty, fetching related tracks...')
           const res = await fetch(
             `/api/music/related/${state.currentTrack.videoId}`,
           )
@@ -412,13 +412,13 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     // Pre-download the next 2 tracks (or all if queue has fewer)
     const toPreDownload = queue.slice(0, 2)
     for (const track of toPreDownload) {
-      console.log(`[predownload] requesting ${track.videoId} (${track.title})`)
+      if (process.env.NODE_ENV === 'development') console.log(`[predownload] requesting ${track.videoId} (${track.title})`)
       // Fire-and-forget — the server returns 202 immediately and downloads
       // in the background. We use keepalive so the request survives page
       // navigation, and catch() to prevent unhandled rejection errors.
       fetch(`/api/music/predownload/${track.videoId}`, { method: 'POST', keepalive: true })
         .then((res) => {
-          console.log(`[predownload] ${track.videoId} → HTTP ${res.status} (${res.ok ? 'cached/downloading' : 'error'})`)
+          if (process.env.NODE_ENV === 'development') console.log(`[predownload] ${track.videoId} → HTTP ${res.status} (${res.ok ? 'cached/downloading' : 'error'})`)
         })
         .catch((e) => console.error(`[predownload] ${track.videoId} network error:`, e))
     }
@@ -437,24 +437,24 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     if (state.radioQueue.length > 0) {
       // Radio queue already has items — just predownload the first one
       const nextRadio = state.radioQueue[0]
-      console.log(`[radio] predownloading next: ${nextRadio.videoId} (${nextRadio.title})`)
+      if (process.env.NODE_ENV === 'development') console.log(`[radio] predownloading next: ${nextRadio.videoId} (${nextRadio.title})`)
       fetch(`/api/music/predownload/${nextRadio.videoId}`, { method: 'POST', keepalive: true })
-        .then((res) => console.log(`[radio] predownload ${nextRadio.videoId} → ${res.status}`))
+        .then((res) => { if (process.env.NODE_ENV === 'development') console.log(`[radio] predownload ${nextRadio.videoId} → ${res.status}`) })
         .catch(() => {})
       return
     }
     // Radio queue is empty — fetch related tracks
-    console.log(`[radio] fetching related for ${currentTrack.videoId}...`)
+    if (process.env.NODE_ENV === 'development') console.log(`[radio] fetching related for ${currentTrack.videoId}...`)
     fetch(`/api/music/related/${currentTrack.videoId}`)
       .then((res) => res.json())
       .then((data) => {
         if (data.tracks?.length > 0) {
           const tracks = data.tracks.slice(0, 5)
           state.setRadioQueue(tracks)
-          console.log(`[radio] got ${tracks.length} tracks, predownloading first: ${tracks[0].title}`)
+          if (process.env.NODE_ENV === 'development') console.log(`[radio] got ${tracks.length} tracks, predownloading first: ${tracks[0].title}`)
           // Predownload the first track
           fetch(`/api/music/predownload/${tracks[0].videoId}`, { method: 'POST', keepalive: true })
-            .then((res) => console.log(`[radio] predownload ${tracks[0].videoId} → ${res.status}`))
+            .then((res) => { if (process.env.NODE_ENV === 'development') console.log(`[radio] predownload ${tracks[0].videoId} → ${res.status}`) })
             .catch(() => {})
         }
       })

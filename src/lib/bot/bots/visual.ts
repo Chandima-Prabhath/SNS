@@ -54,20 +54,20 @@ export const visualBot: BotModule = {
     const state: VisualSessionState = { ...EMPTY_STATE, ...(await ctx.getState()) }
     if (!state.variables) state.variables = {}
 
-    console.log(`[visual bot] onMessage: pausedAt=${state.pausedAt || 'null'}, body="${ctx.message.body}"`)
+    if (process.env.NODE_ENV === 'development') console.log(`[visual bot] onMessage: pausedAt=${state.pausedAt || 'null'}, body="${ctx.message.body}"`)
 
     // ── Resume case: paused session ────────────────────────────────────
     if (state.pausedAt) {
       const inputNode = findNode(flow, state.pausedAt)
       if (!inputNode) {
-        console.log(`[visual bot] paused node not found, resetting`)
+        if (process.env.NODE_ENV === 'development') console.log(`[visual bot] paused node not found, resetting`)
         // Stale session — reset and run from trigger
         await ctx.setState(EMPTY_STATE)
         await runFromTrigger(flow, ctx)
         return
       }
 
-      console.log(`[visual bot] resuming at node type=${inputNode.type}`)
+      if (process.env.NODE_ENV === 'development') console.log(`[visual bot] resuming at node type=${inputNode.type}`)
 
       const variableName = inputNode.data.variableName || 'reply'
 
@@ -75,7 +75,7 @@ export const visualBot: BotModule = {
       if (inputNode.type === 'wait_choice') {
         const options = inputNode.data.options || []
         const reply = ctx.message.body.trim()
-        console.log(`[visual bot] wait_choice: reply="${reply}", options=${JSON.stringify(options)}`)
+        if (process.env.NODE_ENV === 'development') console.log(`[visual bot] wait_choice: reply="${reply}", options=${JSON.stringify(options)}`)
 
         // Allow "1", "2" indexing or direct match
         let matched: string | undefined
@@ -87,7 +87,7 @@ export const visualBot: BotModule = {
           matched = options.find((o) => o.toLowerCase() === lower)
         }
 
-        console.log(`[visual bot] matched=${matched || 'NONE'}`)
+        if (process.env.NODE_ENV === 'development') console.log(`[visual bot] matched=${matched || 'NONE'}`)
 
         if (!matched) {
           // Invalid choice — edit the existing keyboard message in-place
@@ -101,11 +101,11 @@ export const visualBot: BotModule = {
           if (keyboardMsgId && ctx.editMessage) {
             // Edit the existing keyboard message — no new message sent
             await ctx.editMessage(keyboardMsgId, hintPrompt, keyboard)
-            console.log(`[visual bot] re-prompt: edited message ${keyboardMsgId}`)
+            if (process.env.NODE_ENV === 'development') console.log(`[visual bot] re-prompt: edited message ${keyboardMsgId}`)
           } else {
             // No existing keyboard message (first time or lost state) — send new
             await ctx.reply(hintPrompt, keyboard)
-            console.log(`[visual bot] re-prompt: sent new keyboard message`)
+            if (process.env.NODE_ENV === 'development') console.log(`[visual bot] re-prompt: sent new keyboard message`)
           }
           await ctx.setState({ ...state })
           return
@@ -174,7 +174,7 @@ export const visualBot: BotModule = {
     }
 
     // ── Fresh start: run from trigger ──────────────────────────────────
-    console.log(`[visual bot] no paused session — running from trigger`)
+    if (process.env.NODE_ENV === 'development') console.log(`[visual bot] no paused session — running from trigger`)
     // Pass the already-loaded state to avoid a redundant getState() DB query
     await runFromTrigger(flow, ctx, state)
   },

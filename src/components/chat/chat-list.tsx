@@ -87,7 +87,7 @@ export function ChatList() {
 
   const [search, setSearch] = useState('')
 
-  const { data: groups } = useQuery({
+  const { data: groups, isLoading: groupsLoading } = useQuery({
     queryKey: ['channels'],
     queryFn: async () => {
       const res = await fetch('/api/channels')
@@ -361,7 +361,19 @@ export function ChatList() {
       {/* Chat list */}
       <ScrollArea className="flex-1">
         <div className="px-2 pb-4">
-          {filteredChats.length === 0 ? (
+          {groupsLoading ? (
+            <div className="space-y-1 p-1">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="flex items-center gap-3 p-2.5">
+                  <div className="w-10 h-10 rounded-full bg-muted/50 animate-pulse" />
+                  <div className="flex-1 space-y-1.5">
+                    <div className="h-3.5 rounded bg-muted/50 animate-pulse w-3/4" />
+                    <div className="h-2.5 rounded bg-muted/30 animate-pulse w-1/2" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : filteredChats.length === 0 ? (
             <EmptyChatList />
           ) : (
             <>
