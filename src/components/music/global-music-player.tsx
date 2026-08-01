@@ -640,6 +640,11 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
             break
           }
           case 'pause': {
+            // Must pause the actual audio element — store.setIsPlaying(false)
+            // only updates the UI state, the <audio> keeps playing without this.
+            if (audioRef.current) {
+              audioRef.current.pause()
+            }
             state.setIsPlaying(false)
             toast.info('⏸️ Music paused')
             break
@@ -650,6 +655,10 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
               await playTrack(next)
               toast.success('⏭️ Skipped to next song')
             } else {
+              if (audioRef.current) {
+                audioRef.current.pause()
+                audioRef.current.src = ''
+              }
               state.stop()
               toast.info('⏭️ Queue is empty')
             }
@@ -668,6 +677,12 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
             break
           }
           case 'stop': {
+            // Must pause + clear the audio element src — store.stop() only
+            // clears UI state, the <audio> keeps playing without this.
+            if (audioRef.current) {
+              audioRef.current.pause()
+              audioRef.current.src = ''
+            }
             state.stop()
             toast.info('⏹️ Music stopped')
             break

@@ -291,3 +291,15 @@
 - [ ] 5.3 Add image caching for thumbnails
 - [ ] 5.4 Fix stories query to filter in DB
 - [ ] 5.5 Clean up `.env` and `.gitignore`
+
+### Phase 6: Music System Rework (Day 6)
+- [ ] 6.1 Move play history from localStorage to DB (new `PlayHistory` model)
+- [ ] 6.2 Cross-device play state sync (Spotify Connect style) — same user on multiple devices seamlessly transfers playback. Requires server-side player state model + socket events for state transfer.
+- [ ] 6.3 Fix music player not playing next song when stuck on "server downloading or skip" — ensure the `<audio>` onended handler fires reliably, add retry logic for 202 responses, and ensure server-side preload kicks in before the song ends.
+- [ ] 6.4 Fix bot music commands not pausing/stopping the actual `<audio>` element (only Zustand state was updated) — FIXED in this commit, verify after pull.
+- [ ] 6.5 Rework the entire CDN/media pipeline for tight integration — currently uploads, music streaming, TTS, and ASR all have separate file-handling patterns. Unify into a single media service layer with consistent caching, streaming, and cleanup.
+
+### Phase 7: Voice Messages & Upload Rework (Day 7)
+- [ ] 7.1 Fix `/api/upload` route disappearing — it keeps getting deleted by git mode changes. Make it permanent (git add -f, or restructure the route path).
+- [ ] 7.2 Rework the upload pipeline to be a proper media service (shared between voice messages, images, videos, TTS audio, ASR audio) with consistent validation, storage, and serving.
+- [ ] 7.3 Add upload retry logic on the client — if the upload fails, show a retry button on the message instead of just a toast.
