@@ -61,6 +61,7 @@ model User {
   musicRoomMemberships MusicRoomMember[] @relation("MusicRoomMembers")
   settings        UserSetting[]
   userSessions    UserSession[]
+  pushSubscriptions PushSubscription[]
   likedSongs      LikedSong[]
   playHistory     PlayHistory[]
   playlists       Playlist[]
@@ -113,6 +114,22 @@ model UserSession {
   createdAt   DateTime @default(now())
   lastActiveAt DateTime @updatedAt
 
+  @@index([userId])
+}
+
+// ─── Push subscriptions (multi-device) ──────────────────────────────────────
+// Each device gets its own push subscription. Previously stored as a single
+// UserSetting key — second device overwrote the first, losing notifications.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   // unique push service URL per device
+  keys      String   // JSON: { p256dh, auth }
+  userAgent String?  // browser + OS for device identification
+  createdAt DateTime @default(now())
+
+  @@unique([userId, endpoint])
   @@index([userId])
 }
 

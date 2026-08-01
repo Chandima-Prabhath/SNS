@@ -1,5 +1,7 @@
 /**
- * Push notification utility — sends web push notifications to subscribed users.
+ * Push notification utility — sends web push notifications to ALL subscribed
+ * devices for a user. Supports multi-device: each device registers its own
+ * PushSubscription, and sendPushNotification iterates all of them.
  *
  * Uses the web-push library with VAPID authentication.
  * Requires VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY in .env.
@@ -24,8 +26,9 @@ function configure() {
 }
 
 /**
- * Send a push notification to a specific user.
- * The user must have a push subscription stored in UserSetting.
+ * Send a push notification to ALL of a user's subscribed devices.
+ * Each device has its own PushSubscription row (keyed by endpoint URL).
+ * Expired subscriptions (410/404) are automatically removed.
  */
 export async function sendPushNotification(
   userId: string,
@@ -41,27 +44,42 @@ export async function sendPushNotification(
   configure()
   if (!configured) return
 
-  // Get the user's push subscription
-  const setting = await db.userSetting.findUnique({
-    where: { userId_key: { userId, key: 'pushSubscription' } },
+  // Get ALL push subscriptions for this user (multi-device)
+  const subscriptions = await db.pushSubscription.findMany({
+    where: { userId },
   })
-  if (!setting) return
 
-  let subscription: any
-  try {
-    subscription = JSON.parse(setting.value)
-  } catch {
-    return
-  }
+  if (subscriptions.length === 0) return
 
-  try {
-    await webpush.sendNotification(subscription, JSON.stringify(payload))
-  } catch (e: any) {
-    if (e.statusCode === 410 || e.statusCode === 404) {
-      // Subscription expired — remove it
-      await db.userSetting.delete({
-        where: { userId_key: { userId, key: 'pushSubscription' } },
-      }).catch(() => {})
-    }
-  }
+  const payloadStr = JSON.stringify(payload)
+
+  // Send to all devices in parallel — one slow/expired device
+  // shouldn't block notifications to other devices
+  await Promise.allSettled(
+    subscriptions.map(async (sub) => {
+      let keys: any
+      try {
+        keys = JSON.parse(sub.keys)
+      } catch {
+        keys = {}
+      }
+
+      const pushSubscription = {
+        endpoint: sub.endpoint,
+        keys,
+      }
+
+      try {
+        await webpush.sendNotification(pushSubscription, payloadStr)
+      } catch (e: any) {
+        if (e.statusCode === 410 || e.statusCode === 404) {
+          // Subscription expired — remove it
+          await db.pushSubscription.delete({
+            where: { id: sub.id },
+          }).catch(() => {})
+        }
+        // Other errors (network, 429) — don't remove, just skip
+      }
+    })
+  )
 }
