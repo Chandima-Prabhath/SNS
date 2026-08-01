@@ -430,6 +430,18 @@ export async function dispatchBotUpdate(params: {
   // Run middleware chain
   const middlewares = mod.middlewares || []
   let chain: () => Promise<void> = async () => {
+    // Visual bots ALWAYS get onMessage — the visual flow's trigger node
+    // handles command/mention filtering. We must NOT short-circuit on
+    // commands here, otherwise /commands and @mentions never reach the
+    // visual flow engine.
+    if (bot.module === 'visual') {
+      if (mod.onMessage) {
+        await mod.onMessage(ctx)
+      }
+      return
+    }
+
+    // Non-visual bots: check for command handlers first
     if (isCommand && command) {
       const cmd = mod.commands.find((c) => c.name === command)
       if (cmd) {
@@ -445,7 +457,7 @@ export async function dispatchBotUpdate(params: {
       return
     }
 
-    // Non-command message
+    // Non-command message for non-visual bots
     // Visual bots ALWAYS get onMessage — the trigger node handles filtering
     if (mod.onMessage) {
       if (bot.module === 'visual' || !bot.privacyMode || ctx.isMention) {

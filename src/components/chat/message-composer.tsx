@@ -6,6 +6,7 @@ import { useChannel } from '@/hooks/useChannel'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { EmojiPicker } from '@/components/chat/emoji-picker'
+import { ChatAutocomplete } from '@/components/chat/chat-autocomplete'
 import {
   Reply, X, Send, Image as ImageIcon, Loader2, AudioLines, Sparkles,
   Mic, Plus, Trash2, User,
@@ -33,6 +34,8 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
   const [uploading, setUploading] = useState(false)
   const [ttsOpen, setTtsOpen] = useState(false)
   const [showActions, setShowActions] = useState(false)
+  const [cursorPosition, setCursorPosition] = useState(0)
+  const [autocompleteActive, setAutocompleteActive] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const recorder = useVoiceRecorder({
@@ -73,7 +76,27 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
     }
   }
 
+  const handleSuggestionSelect = (insertText: string, replaceFrom: number, replaceTo: number) => {
+    const newText = text.slice(0, replaceFrom) + insertText + text.slice(replaceTo)
+    setText(newText)
+    // Move cursor to end of inserted text
+    requestAnimationFrame(() => {
+      const el = textareaRef.current
+      if (el) {
+        const newPos = replaceFrom + insertText.length
+        el.setSelectionRange(newPos, newPos)
+        el.focus()
+      }
+    })
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // When autocomplete is active, Enter/Tab/Arrow keys are handled by the
+    // autocomplete component (via window capture). Don't send the message.
+    if (autocompleteActive && (e.key === 'Enter' || e.key === 'Tab' || e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      return
+    }
+
     // Enter = send, Shift+Enter = newline (default behavior — fall through)
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -102,6 +125,7 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setText(e.target.value)
+    setCursorPosition(e.target.selectionStart ?? 0)
     if (e.target.value.length > 0) sendTyping(true)
     else sendTyping(false)
   }
@@ -293,15 +317,25 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
             )}
           </div>
 
-          {/* Text input — grows up to ~4 lines */}
+          {/* Text input — grows up to ~4 lines. The relative wrapper is needed
+              for the ChatAutocomplete popup (positioned bottom-full above this). */}
           <div className="flex-1 min-w-0 bg-transparent rounded-2xl px-3 py-2 flex items-end focus-within:bg-white/5 transition-colors relative">
+            <ChatAutocomplete
+              channelId={channelId}
+              text={text}
+              cursorPosition={cursorPosition}
+              onSuggestionSelect={handleSuggestionSelect}
+              onActiveChange={setAutocompleteActive}
+            />
             <Textarea
               ref={textareaRef}
               value={text}
               onChange={handleChange}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              placeholder="Type a message..."
+              onKeyUp={(e) => setCursorPosition((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
+              onClick={(e) => setCursorPosition((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
+              placeholder="Type a message... (use / for commands, @ to mention)"
               maxLength={5000}
               className="flex-1 resize-none min-h-[24px] max-h-[160px] bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 p-0 text-[16px] leading-relaxed shadow-none placeholder:text-muted-foreground/60"
               rows={1}
