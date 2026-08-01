@@ -1,0 +1,1005 @@
+     1→'use client'
+     2→
+     3→import { useState, useEffect, useMemo, useRef } from 'react'
+     4→import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+     5→import { useAppStore } from '@/stores/useAppStore'
+     6→import { useTypingStore } from '@/stores/useTypingStore'
+     7→import { usePresence } from '@/hooks/usePresence'
+     8→import { useUnreadCounts } from '@/hooks/useUnreadCounts'
+     9→import { useSession } from 'next-auth/react'
+    10→import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+    11→import { Button } from '@/components/ui/button'
+    12→import { Input } from '@/components/ui/input'
+    13→import { ScrollArea } from '@/components/ui/scroll-area'
+    14→import {
+    15→  Dialog,
+    16→  DialogContent,
+    17→  DialogHeader,
+    18→  DialogTitle,
+    19→  DialogTrigger,
+    20→  DialogFooter,
+    21→  DialogDescription,
+    22→} from '@/components/ui/dialog'
+    23→import { Label } from '@/components/ui/label'
+    24→import { Plus, Hash, Volume2, Search, Users, Copy, Check, MessageCircle, Sparkles, LogIn, UserX, Settings, Crown, Shield, Video, Phone, Menu, Pin, Trash2, Loader2 } from 'lucide-react'
+    25→import { toast } from 'sonner'
+    26→import { cn } from '@/lib/utils'
+    27→import { format, isToday, isYesterday } from 'date-fns'
+    28→import { GroupSettingsDialog } from './channel-list'
+    29→import { useCall } from '@/hooks/useCall'
+    30→import { unlockAudio } from '@/lib/call-manager'
+    31→import { useContextMenu } from '@/components/ui/context-menu-provider'
+    32→import { useConfirm } from '@/hooks/useConfirm'
+    33→
+    34→interface ChannelInfo {
+    35→  id: string
+    36→  name: string
+    37→  topic: string | null
+    38→  type: string
+    39→  order: number
+    40→  lastMessage: {
+    41→    body: string
+    42→    mediaUrl: string | null
+    43→    mediaType: string | null
+    44→    senderName: string
+    45→    senderType: string
+    46→    senderId: string | null
+    47→    createdAt: string
+    48→  } | null
+    49→  lastMessageAt: string
+    50→  partner?: {
+    51→    id: string
+    52→    displayName: string
+    53→    username: string
+    54→    avatarUrl: string | null
+    55→    status: string
+    56→  }
+    57→  group: {
+    58→    id: string
+    59→    name: string
+    60→    iconUrl: string | null
+    61→    isDm: boolean
+    62→    inviteCode: string
+    63→    ownerId: string
+    64→  }
+    65→}
+    66→
+    67→interface ChatRow {
+    68→  channel: ChannelInfo
+    69→  isDm: boolean
+    70→  isGroup: boolean
+    71→  isBot: boolean
+    72→  partner?: ChannelInfo['partner']
+    73→  groupName: string
+    74→  groupIcon: string | null
+    75→}
+    76→
+    77→export function ChatList() {
+    78→  const activeChannelId = useAppStore((s) => s.activeChannelId)
+    79→  const setActiveChannel = useAppStore((s) => s.setActiveChannel)
+    80→  const selectedGroupId = useAppStore((s) => s.selectedGroupId)
+    81→  const filter = useAppStore((s) => s.chatFilter)
+    82→  const setFilter = useAppStore((s) => s.setChatFilter)
+    83→  const presence = usePresence()
+    84→  const { data: unreadData } = useUnreadCounts()
+    85→  const { data: session } = useSession()
+    86→  const myId = (session?.user as any)?.id
+    87→
+    88→  const [search, setSearch] = useState('')
+    89→
+    90→  const { data: groups } = useQuery({
+    91→    queryKey: ['channels'],
+    92→    queryFn: async () => {
+    93→      const res = await fetch('/api/channels')
+    94→      const data = await res.json()
+    95→      return data.groups as any[]
+    96→    },
+    97→  })
+    98→
+    99→  // The currently selected group object (or null for DMs)
+   100→  const selectedGroup = groups?.find((g) => g.id === selectedGroupId) || null
+   101→  const isViewingDms = selectedGroupId === 'dm'
+   102→  const setServerRailOpen = useAppStore((s) => s.setServerRailOpen)
+   103→  const ctxMenu = useContextMenu()
+   104→  const confirm = useConfirm()
+   105→  const qc = useQueryClient()
+   106→
+   107→  // Show a context menu for a chat row — supports right-click (desktop) and
+   108→  // long-press (mobile, via the custom touch handler).
+   109→  const showChatContextMenu = (e: React.MouseEvent | React.TouchEvent, row: ChatRow) => {
+   110→    let x: number, y: number
+   111→    if ('touches' in e) {
+   112→      const t = e.touches[0] || (e.changedTouches?.[0])
+   113→      if (!t) return
+   114→      x = t.clientX; y = t.clientY
+   115→    } else {
+   116→      x = e.clientX; y = e.clientY
+   117→    }
+   118→    if (!ctxMenu) return
+   119→    ctxMenu.show(x, y, [
+   120→      {
+   121→        label: 'Open',
+   122→        icon: <MessageCircle className="w-4 h-4" />,
+   123→        onClick: () => setActiveChannel(row.channel.id),
+   124→      },
+   125→      {
+   126→        label: 'Mark as read',
+   127→        icon: <Check className="w-4 h-4" />,
+   128→        onClick: () => {
+   129→          fetch(`/api/channels/${row.channel.id}/read`, { method: 'POST' }).then(() => {
+   130→            qc.invalidateQueries({ queryKey: ['unread-counts'] })
+   131→            qc.invalidateQueries({ queryKey: ['channels'] })
+   132→            toast.success('Marked as read')
+   133→          })
+   134→        },
+   135→      },
+   136→      {
+   137→        label: row.isDm ? 'Delete conversation' : 'Leave channel',
+   138→        icon: <Trash2 className="w-4 h-4" />,
+   139→        variant: 'danger',
+   140→        onClick: async () => {
+   141→          if (row.isDm) {
+   142→            const ok = await confirm({
+   143→              title: 'Delete conversation?',
+   144→              message: 'ALL messages will be permanently deleted for both users.',
+   145→              confirmLabel: 'Delete',
+   146→              variant: 'danger',
+   147→            })
+   148→            if (ok) {
+   149→              fetch(`/api/channels/${row.channel.id}`, {
+   150→                method: 'DELETE',
+   151→              }).then((res) => {
+   152→                if (!res.ok) throw new Error('Delete failed')
+   153→                qc.invalidateQueries({ queryKey: ['channels'] })
+   154→                if (activeChannelId === row.channel.id) setActiveChannel(null)
+   155→                toast.success('Conversation deleted')
+   156→              }).catch(() => toast.error('Failed to delete'))
+   157→            }
+   158→          } else {
+   159→            const ok = await confirm({
+   160→              title: `Leave #${row.channel.name}?`,
+   161→              confirmLabel: 'Leave',
+   162→              variant: 'danger',
+   163→            })
+   164→            if (ok) {
+   165→              fetch(`/api/channels/${row.channel.id}/members`, {
+   166→                method: 'DELETE',
+   167→              }).then(() => {
+   168→                qc.invalidateQueries({ queryKey: ['channels'] })
+   169→                if (activeChannelId === row.channel.id) setActiveChannel(null)
+   170→                toast.success('Left channel')
+   171→              }).catch(() => toast.error('Failed to leave'))
+   172→            }
+   173→          }
+   174→        },
+   175→      },
+   176→    ])
+   177→  }
+   178→
+   179→  // Join a voice/video channel — creates a call and switches to the voice view
+   180→  const setView = useAppStore((s) => s.setView)
+   181→  const { startCall } = useCall()
+   182→  const joinCallMutation = useMutation({
+   183→    mutationFn: async (channelId: string) => {
+   184→      const res = await fetch('/api/calls', {
+   185→        method: 'POST',
+   186→        headers: { 'Content-Type': 'application/json' },
+   187→        body: JSON.stringify({ channelId }),
+   188→      })
+   189→      if (!res.ok) throw new Error('failed')
+   190→      return res.json()
+   191→    },
+   192→    onSuccess: async (data) => {
+   193→      await startCall({ callId: data.call.id, channelId: data.call.channelId })
+   194→      unlockAudio()
+   195→      setView('voice')
+   196→      toast.success('Joined channel')
+   197→    },
+   198→    onError: () => toast.error('Failed to join channel'),
+   199→  })
+   200→
+   201→  // Auto-select first channel on desktop only (mobile shows the list first)
+   202→  useEffect(() => {
+   203→    if (!activeChannelId && groups && groups.length > 0 && typeof window !== 'undefined' && window.innerWidth >= 1024) {
+   204→      const first = groups[0].channels.find((c: any) => c.type === 'text')
+   205→      if (first) setActiveChannel(first.id)
+   206→    }
+   207→  }, [activeChannelId, groups, setActiveChannel])
+   208→
+   209→  // Flatten channels into a unified list of "chat rows"
+   210→  // When a server (non-DM group) is selected in the rail, show ALL channel
+   211→  // types (text, voice, video) for that group. When 'dm' is selected, only
+   212→  // show DM text channels.
+   213→  //
+   214→  // Rows are sorted by most recent activity (lastMessageAt desc) so the
+   215→  // conversation with the newest message bubbles to the top. Channels with no
+   216→  // messages fall back to their creation timestamp — they sort to the bottom
+   217→  // of an active chat list but stay grouped above truly empty rows in a
+   218→  // brand-new account. Voice/video channels keep their original `order` and
+   219→  // are excluded from the activity sort (they have no messages).
+   220→  const allChats: ChatRow[] = useMemo(() => {
+   221→    if (!groups) return []
+   222→    const rows: ChatRow[] = []
+   223→    for (const g of groups) {
+   224→      // Filter by selected group from the server rail
+   225→      if (selectedGroupId === 'dm' && !g.isDm) continue
+   226→      if (selectedGroupId && selectedGroupId !== 'dm' && g.id !== selectedGroupId) continue
+   227→      for (const ch of g.channels) {
+   228→        // DMs only have text channels. Groups show all types.
+   229→        if (g.isDm && ch.type !== 'text') continue
+   230→        rows.push({
+   231→          channel: ch,
+   232→          isDm: g.isDm,
+   233→          isGroup: !g.isDm,
+   234→          isBot: false,
+   235→          partner: g.partner, // populated by the API for DM groups
+   236→          groupName: g.name,
+   237→          groupIcon: g.iconUrl,
+   238→        })
+   239→      }
+   240→    }
+   241→    // Sort by most recent activity (descending). Voice/video channels without
+   242→    // a lastMessageAt fall back to channel.createdAt; they'll naturally sort
+   243→    // below active text channels.
+   244→    rows.sort((a, b) => {
+   245→      const aTime = a.channel.lastMessageAt
+   246→        ? new Date(a.channel.lastMessageAt).getTime()
+   247→        : 0
+   248→      const bTime = b.channel.lastMessageAt
+   249→        ? new Date(b.channel.lastMessageAt).getTime()
+   250→        : 0
+   251→      return bTime - aTime
+   252→    })
+   253→    return rows
+   254→  }, [groups, selectedGroupId])
+   255→
+   256→  // Apply filter
+   257→  const filteredChats = useMemo(() => {
+   258→    let list = allChats
+   259→    if (filter === 'dms') list = list.filter((c) => c.isDm)
+   260→    else if (filter === 'groups') list = list.filter((c) => c.isGroup)
+   261→    else if (filter === 'bots') list = list.filter((c) => c.isBot)
+   262→
+   263→    if (search.trim()) {
+   264→      const q = search.toLowerCase()
+   265→      list = list.filter(
+   266→        (c) =>
+   267→          c.channel.name.toLowerCase().includes(q) ||
+   268→          c.groupName.toLowerCase().includes(q) ||
+   269→          (c.partner?.displayName.toLowerCase().includes(q) ?? false) ||
+   270→          (c.partner?.username.toLowerCase().includes(q) ?? false)
+   271→      )
+   272→    }
+   273→    return list
+   274→  }, [allChats, filter, search])
+   275→
+   276→  return (
+   277→    <div className="flex flex-col h-full w-full bg-sidebar/50 backdrop-blur-2xl">
+   278→      {/* Header — shows the selected group name or "Direct Messages" */}
+   279→      <div className="px-4 pt-4 pb-3 space-y-4 border-b border-white/5 bg-background/30 backdrop-blur-3xl shadow-sm">
+   280→        <div className="flex items-center justify-between">
+   281→          <div className="flex items-center gap-2.5 min-w-0">
+   282→            {/* Mobile: hamburger to open server rail drawer */}
+   283→            <button
+   284→              onClick={() => setServerRailOpen(true)}
+   285→              className="md:hidden w-9 h-9 rounded-xl bg-sidebar-accent flex items-center justify-center shrink-0 hover:bg-accent transition-colors active:scale-95"
+   286→              title="Groups & servers"
+   287→            >
+   288→              <Menu className="w-4 h-4" />
+   289→            </button>
+   290→            {isViewingDms ? (
+   291→              <>
+   292→                <div className="w-9 h-9 rounded-xl bg-primary/15 flex items-center justify-center shrink-0">
+   293→                  <MessageCircle className="w-4 h-4 text-primary" />
+   294→                </div>
+   295→                <div className="min-w-0">
+   296→                  <h1 className="text-lg font-semibold tracking-tight truncate">Direct Messages</h1>
+   297→                  <p className="text-[11px] text-muted-foreground">Private conversations</p>
+   298→                </div>
+   299→              </>
+   300→            ) : selectedGroup ? (
+   301→              <>
+   302→                <div className="w-9 h-9 rounded-xl bg-primary/15 flex items-center justify-center shrink-0 overflow-hidden">
+   303→                  {selectedGroup.iconUrl ? (
+   304→                    <img src={selectedGroup.iconUrl} alt="" className="w-full h-full object-cover" />
+   305→                  ) : (
+   306→                    <Users className="w-4 h-4 text-primary" />
+   307→                  )}
+   308→                </div>
+   309→                <div className="min-w-0">
+   310→                  <h1 className="text-lg font-semibold tracking-tight truncate">{selectedGroup.name}</h1>
+   311→                  {selectedGroup.description && (
+   312→                    <p className="text-[11px] text-muted-foreground truncate">{selectedGroup.description}</p>
+   313→                  )}
+   314→                </div>
+   315→              </>
+   316→            ) : (
+   317→              <h1 className="text-2xl font-semibold tracking-tight">Chats</h1>
+   318→            )}
+   319→          </div>
+   320→          <div className="flex gap-1 shrink-0">
+   321→            {isViewingDms && <NewDmButton />}
+   322→            {!isViewingDms && selectedGroup && <GroupSettingsButton group={selectedGroup} />}
+   323→          </div>
+   324→        </div>
+   325→
+   326→        {/* Search */}
+   327→        <div className="relative group">
+   328→          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
+   329→          <Input
+   330→            value={search}
+   331→            onChange={(e) => setSearch(e.target.value)}
+   332→            placeholder={isViewingDms ? "Search DMs..." : "Search channels..."}
+   333→            className="pl-10 h-10 bg-black/20 border-white/10 focus-visible:ring-primary/30 rounded-xl shadow-inner transition-all"
+   334→          />
+   335→        </div>
+   336→
+   337→        {/* Filter chips — only show for DMs */}
+   338→        {isViewingDms && (
+   339→          <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4">
+   340→            {([
+   341→              ['all', 'All'],
+   342→              ['unread', 'Unread'],
+   343→            ] as const).map(([key, label]) => (
+   344→              <button
+   345→                key={key}
+   346→                onClick={() => setFilter(key)}
+   347→                className={cn(
+   348→                  'px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors',
+   349→                  filter === key
+   350→                    ? 'bg-primary text-primary-foreground'
+   351→                    : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground'
+   352→                )}
+   353→              >
+   354→                {label}
+   355→              </button>
+   356→            ))}
+   357→          </div>
+   358→        )}
+   359→      </div>
+   360→
+   361→      {/* Chat list */}
+   362→      <ScrollArea className="flex-1">
+   363→        <div className="px-2 pb-4">
+   364→          {filteredChats.length === 0 ? (
+   365→            <EmptyChatList />
+   366→          ) : (
+   367→            <>
+   368→              <div className="space-y-0.5">
+   369→                {filteredChats.map((row) => {
+   370→                  const active = row.channel.id === activeChannelId
+   371→                  // A DM partner may have been deleted — detect and show a
+   372→                  // graceful "Deleted User" label instead of @user fallback.
+   373→                  const partnerDeleted = !row.isGroup && !row.partner
+   374→                  const presenceInfo = row.partner ? presence[row.partner.id] : null
+   375→                  const presenceStatus = presenceInfo?.status || 'offline'
+   376→                  const unreadCount = unreadData?.unread?.[row.channel.id] || 0
+   377→                  const displayName = row.isGroup
+   378→                    ? row.channel.name
+   379→                    : row.partner?.displayName || 'Deleted User'
+   380→
+   381→                  // Voice/video channels are rendered as "join" rows, not chat rows
+   382→                  const isCallChannel = row.channel.type === 'voice' || row.channel.type === 'video'
+   383→                  const CallIcon = row.channel.type === 'video' ? Video : Volume2
+   384→
+   385→                  if (isCallChannel) {
+   386→                    return (
+   387→                      <button
+   388→                        key={row.channel.id}
+   389→                        onClick={() => joinCallMutation.mutate(row.channel.id)}
+   390→                        disabled={joinCallMutation.isPending}
+   391→                        className={cn(
+   392→                          'w-full flex items-center gap-3 p-2.5 rounded-xl transition-colors text-left group/call',
+   393→                          'hover:bg-accent/50 disabled:opacity-50'
+   394→                        )}
+   395→                      >
+   396→                        {/* Icon */}
+   397→                        <div className={cn(
+   398→                          'relative w-12 h-12 rounded-full flex items-center justify-center shrink-0',
+   399→                          row.channel.type === 'video'
+   400→                            ? 'bg-emerald-500/15 text-emerald-400'
+   401→                            : 'bg-primary/15 text-primary'
+   402→                        )}>
+   403→                          <CallIcon className="w-5 h-5" />
+   404→                        </div>
+   405→
+   406→                        {/* Name + status */}
+   407→                        <div className="flex-1 min-w-0">
+   408→                          <div className="flex items-baseline justify-between gap-2">
+   409→                            <span className="truncate text-[15px] font-medium">
+   410→                              {row.channel.name}
+   411→                            </span>
+   412→                          </div>
+   413→                          <div className="text-xs text-muted-foreground truncate flex items-center gap-1.5">
+   414→                            <span className="capitalize">{row.channel.type} channel</span>
+   415→                            <span>·</span>
+   416→                            <span className="text-primary flex items-center gap-0.5">
+   417→                              <Phone className="w-3 h-3" />
+   418→                              Tap to join
+   419→                            </span>
+   420→                          </div>
+   421→                        </div>
+   422→
+   423→                        {/* Join button */}
+   424→                        <div className="w-9 h-9 rounded-full gradient-primary flex items-center justify-center shrink-0 group-hover/call:scale-110 transition-transform shadow-glow">
+   425→                          <Phone className="w-4 h-4 text-primary-foreground" />
+   426→                        </div>
+   427→                      </button>
+   428→                    )
+   429→                  }
+   430→
+   431→                  return (
+   432→                    <ChatTextRow
+   433→                      key={row.channel.id}
+   434→                      row={row}
+   435→                      active={active}
+   436→                      partnerDeleted={partnerDeleted}
+   437→                      presenceStatus={presenceStatus}
+   438→                      unreadCount={unreadCount}
+   439→                      displayName={displayName}
+   440→                      myId={myId}
+   441→                      onClick={() => setActiveChannel(row.channel.id)}
+   442→                      onContextMenu={(e) => { e.preventDefault(); showChatContextMenu(e, row) }}
+   443→                      onTouchStart={(e) => {
+   444→                        // Long-press detection for mobile
+   445→                        const touch = e.touches[0]
+   446→                        const timer = setTimeout(() => {
+   447→                          showChatContextMenu({
+   448→                            touches: [{ clientX: touch.clientX, clientY: touch.clientY }],
+   449→                          } as any, row)
+   450→                          // Trigger haptic feedback if available
+   451→                          if (navigator.vibrate) navigator.vibrate(50)
+   452→                        }, 500)
+   453→                        const cancel = () => clearTimeout(timer)
+   454→                        ;(e.currentTarget as HTMLElement).dataset.longPressTimer = String(timer)
+   455→                        // One-time listeners for cancellation
+   456→                        const el = e.currentTarget
+   457→                        const clear = () => {
+   458→                          cancel()
+   459→                          el.removeEventListener('touchend', clear)
+   460→                          el.removeEventListener('touchmove', clear)
+   461→                          el.removeEventListener('touchcancel', clear)
+   462→                        }
+   463→                        el.addEventListener('touchend', clear, { once: true })
+   464→                        el.addEventListener('touchmove', clear, { once: true })
+   465→                        el.addEventListener('touchcancel', clear, { once: true })
+   466→                      }}
+   467→                    />
+   468→                  )
+   469→                })}
+   470→              </div>
+   471→            </>
+   472→          )}
+   473→        </div>
+   474→      </ScrollArea>
+   475→    </div>
+   476→  )
+   477→}
+   478→
+   479→/**
+   480→ * Discover section removed — users now start DMs from the NewDmButton in the
+   481→ * chat list header (the + icon next to the search bar).
+   482→ */
+   483→
+   484→/**
+   485→ * Format a timestamp for the chat list row.
+   486→ *   - Today       → "HH:mm"   (e.g. "14:23")
+   487→ *   - Yesterday   → "Yesterday"
+   488→ *   - This year   → "MMM d"   (e.g. "Mar 5")
+   489→ *   - Older       → "MMM d, yyyy"
+   490→ *
+   491→ * Comparison is by calendar date (via date-fns `isToday`/`isYesterday` and
+   492→ * `getYear`), NOT raw epoch millis — so a message sent at 23:59 and viewed at
+   493→ * 00:01 correctly shows "Yesterday" instead of "00:01 today".
+   494→ */
+   495→function formatListTimestamp(dateStr: string | Date): string {
+   496→  const d = new Date(dateStr)
+   497→  if (isNaN(d.getTime())) return ''
+   498→  if (isToday(d)) return format(d, 'HH:mm')
+   499→  if (isYesterday(d)) return 'Yesterday'
+   500→  const now = new Date()
+   501→  if (d.getFullYear() === now.getFullYear()) return format(d, 'MMM d')
+   502→  return format(d, 'MMM d, yyyy')
+   503→}
+   504→
+   505→/**
+   506→ * Build the message preview text for a chat list row.
+   507→ *
+   508→ * Rules (matching common chat UX):
+   509→ *   - Media messages show a type label ("Photo", "Video", "Voice message",
+   510→ *     "File") — optionally with a caption if the message also has text.
+   511→ *   - Group channels prefix with the sender's name: "Sarah: lol that was
+   512→ *     wild". The current user's own messages show "You: ...".
+   513→ *   - DM channels with a bot partner prefix the bot's name on bot messages.
+   514→ *   - DM channels with another user show just the message body (the partner's
+   515→ *     name is already in the row title).
+   516→ *   - The result is truncated to ~40 chars to fit the row width.
+   517→ */
+   518→function getLastMessagePreview(
+   519→  row: ChatRow,
+   520→  myId: string | undefined
+   521→): string {
+   522→  const msg = row.channel.lastMessage
+   523→  if (!msg) {
+   524→    // Fall back to a sensible placeholder for empty channels
+   525→    if (row.isGroup) return row.groupName
+   526→    if (row.partner) return `@${row.partner.username}`
+   527→    return 'No messages yet'
+   528→  }
+   529→
+   530→  // Determine the media label (if any)
+   531→  let mediaLabel = ''
+   532→  if (msg.mediaType?.startsWith('image')) mediaLabel = 'Photo'
+   533→  else if (msg.mediaType?.startsWith('video')) mediaLabel = 'Video'
+   534→  else if (msg.mediaType?.startsWith('audio')) mediaLabel = 'Voice message'
+   535→  else if (msg.mediaType === 'file') mediaLabel = 'File'
+   536→  else if (msg.mediaUrl && !msg.body) mediaLabel = 'File' // unknown media with no text
+   537→
+   538→  const hasText = msg.body && msg.body.trim().length > 0
+   539→  // Combine media label + text body (e.g. "Photo: check this out")
+   540→  const textPart = hasText ? msg.body : ''
+   541→  const combined = mediaLabel
+   542→    ? hasText
+   543→      ? `${mediaLabel}: ${textPart}`
+   544→      : mediaLabel
+   545→    : textPart
+   546→
+   547→  // Prefix with sender name where it adds context:
+   548→  //   - Group channels: always prefix (sender could be anyone)
+   549→  //   - DM with a bot partner: prefix bot name on bot messages (so the user
+   550→  //     can tell bot replies apart from their own messages)
+   551→  //   - DM with another user: no prefix needed (the row title is the partner)
+   552→  const isMyMessage = myId && msg.senderId === myId && msg.senderType === 'user'
+   553→
+   554→  let prefixed: string
+   555→  if (row.isGroup) {
+   556→    const senderPrefix = isMyMessage ? 'You' : (msg.senderName || 'Someone')
+   557→    prefixed = `${senderPrefix}: ${combined}`
+   558→  } else if (msg.senderType === 'bot') {
+   559→    // DM with a bot — prefix the bot's name on bot replies
+   560→    prefixed = `${msg.senderName}: ${combined}`
+   561→  } else if (isMyMessage) {
+   562→    prefixed = `You: ${combined}`
+   563→  } else {
+   564→    prefixed = combined
+   565→  }
+   566→
+   567→  // Truncate to ~40 chars for the row preview
+   568→  return prefixed.length > 40 ? prefixed.slice(0, 39) + '…' : prefixed
+   569→}
+   570→
+   571→interface ChatTextRowProps {
+   572→  row: ChatRow
+   573→  active: boolean
+   574→  partnerDeleted: boolean
+   575→  presenceStatus: string
+   576→  unreadCount: number
+   577→  displayName: string
+   578→  myId: string | undefined
+   579→  onClick: () => void
+   580→  onContextMenu: (e: React.MouseEvent) => void
+   581→  onTouchStart: (e: React.TouchEvent) => void
+   582→}
+   583→
+   584→/**
+   585→ * A single text-channel row in the chat list.
+   586→ *
+   587→ * Extracted into its own component so each row can subscribe to its own
+   588→ * typing state via `useTypingStore` without re-rendering every row on every
+   589→ * typing pulse. Zustand's selector-based subscription means a row only
+   590→ * re-renders when ITS channel's typing state changes.
+   591→ */
+   592→function ChatTextRow({
+   593→  row,
+   594→  active,
+   595→  partnerDeleted,
+   596→  presenceStatus,
+   597→  unreadCount,
+   598→  displayName,
+   599→  myId,
+   600→  onClick,
+   601→  onContextMenu,
+   602→  onTouchStart,
+   603→}: ChatTextRowProps) {
+   604→  // Subscribe to typing for THIS channel only. The selector returns a
+   605→  // primitive boolean so the row only re-renders when typing starts/stops.
+   606→  const isTyping = useTypingStore((s) => {
+   607→    const m = s.typingByChannel[row.channel.id]
+   608→    return !!m && Object.keys(m).length > 0
+   609→  })
+   610→
+   611→  // When the channel is open, the in-chat typing indicator handles it —
+   612→  // don't replace the preview here. Only show "typing..." for channels the
+   613→  // user is NOT currently viewing.
+   614→  const showTyping = isTyping && !active
+   615→
+   616→  const previewText = getLastMessagePreview(row, myId)
+   617→  const timestamp = row.channel.lastMessage
+   618→    ? formatListTimestamp(row.channel.lastMessage.createdAt)
+   619→    : ''
+   620→
+   621→  return (
+   622→    <button
+   623→      onClick={onClick}
+   624→      onContextMenu={onContextMenu}
+   625→      onTouchStart={onTouchStart}
+   626→      className={cn(
+   627→        'w-full flex items-center gap-3.5 p-3 rounded-2xl transition-all text-left select-none relative overflow-hidden',
+   628→        active
+   629→          ? 'bg-primary/10 ring-1 ring-primary/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)]'
+   630→          : 'hover:bg-white/[0.04]'
+   631→      )}
+   632→    >
+   633→      {/* Avatar */}
+   634→      {row.isGroup ? (
+   635→        <div className="relative w-12 h-12 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
+   636→          <Hash className="w-5 h-5 text-primary" />
+   637→        </div>
+   638→      ) : partnerDeleted ? (
+   639→        <div className="relative shrink-0">
+   640→          <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center text-muted-foreground">
+   641→            <UserX className="w-5 h-5" />
+   642→          </div>
+   643→        </div>
+   644→      ) : (
+   645→        <div className="relative shrink-0">
+   646→          <Avatar className="w-12 h-12">
+   647→            <AvatarImage src={row.partner?.avatarUrl || undefined} />
+   648→            <AvatarFallback>
+   649→              {row.partner?.displayName?.charAt(0) || row.channel.name.charAt(0).toUpperCase()}
+   650→            </AvatarFallback>
+   651→          </Avatar>
+   652→          <span
+   653→            className={cn(
+   654→              'absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-sidebar',
+   655→              presenceStatus === 'online' && 'bg-status-online',
+   656→              presenceStatus === 'idle' && 'bg-status-idle',
+   657→              presenceStatus === 'dnd' && 'bg-status-dnd',
+   658→              presenceStatus === 'offline' && 'bg-status-offline'
+   659→            )}
+   660→          />
+   661→        </div>
+   662→      )}
+   663→
+   664→      {/* Name + preview + timestamp */}
+   665→      <div className="flex-1 min-w-0">
+   666→        <div className="flex items-baseline justify-between gap-2">
+   667→          <span
+   668→            className={cn(
+   669→              'truncate text-[15px]',
+   670→              unreadCount > 0 ? 'font-semibold text-foreground' : 'font-medium',
+   671→              partnerDeleted && 'text-muted-foreground italic'
+   672→            )}
+   673→          >
+   674→            {displayName}
+   675→          </span>
+   676→          {timestamp && (
+   677→            <span
+   678→              className={cn(
+   679→                'shrink-0 text-[11px] tabular-nums',
+   680→                unreadCount > 0 ? 'text-primary font-medium' : 'text-muted-foreground'
+   681→              )}
+   682→            >
+   683→              {timestamp}
+   684→            </span>
+   685→          )}
+   686→        </div>
+   687→        <div className="flex items-center justify-between gap-2 mt-0.5">
+   688→          {showTyping ? (
+   689→            <span className="text-xs truncate italic text-primary flex items-center gap-1 min-w-0">
+   690→              <span className="flex gap-0.5 shrink-0">
+   691→                <span className="w-1 h-1 rounded-full bg-current animate-bounce [animation-delay:0ms]" />
+   692→                <span className="w-1 h-1 rounded-full bg-current animate-bounce [animation-delay:120ms]" />
+   693→                <span className="w-1 h-1 rounded-full bg-current animate-bounce [animation-delay:240ms]" />
+   694→              </span>
+   695→              <span className="truncate">typing...</span>
+   696→            </span>
+   697→          ) : (
+   698→            <span
+   699→              className={cn(
+   700→                'text-xs truncate flex-1 min-w-0',
+   701→                unreadCount > 0 ? 'text-foreground/80 font-medium' : 'text-muted-foreground',
+   702→                partnerDeleted && 'italic'
+   703→              )}
+   704→            >
+   705→              {previewText}
+   706→            </span>
+   707→          )}
+   708→          {unreadCount > 0 && !active && (
+   709→            <span className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+   710→              {unreadCount > 99 ? '99+' : unreadCount}
+   711→            </span>
+   712→          )}
+   713→        </div>
+   714→      </div>
+   715→    </button>
+   716→  )
+   717→}
+   718→
+   719→function EmptyChatList() {
+   720→  return (
+   721→    <div className="text-center py-20 px-6">
+   722→      <div className="w-20 h-20 mx-auto rounded-3xl bg-primary/10 flex items-center justify-center mb-4 ring-1 ring-primary/15">
+   723→        <MessageCircle className="w-9 h-9 text-primary" strokeWidth={1.5} />
+   724→      </div>
+   725→      <h3 className="font-semibold text-lg">No conversations yet</h3>
+   726→      <p className="text-sm text-muted-foreground mt-1.5 max-w-xs mx-auto leading-relaxed">
+   727→        Start a DM with the + button, or create a group from the server rail.
+   728→      </p>
+   729→    </div>
+   730→  )
+   731→}
+   732→
+   733→function JoinGroupButton() {
+   734→  const [open, setOpen] = useState(false)
+   735→  const [code, setCode] = useState('')
+   736→  const qc = useQueryClient()
+   737→
+   738→  const join = useMutation({
+   739→    mutationFn: async () => {
+   740→      const res = await fetch('/api/groups', {
+   741→        method: 'PATCH',
+   742→        headers: { 'Content-Type': 'application/json' },
+   743→        body: JSON.stringify({ inviteCode: code.trim() }),
+   744→      })
+   745→      if (!res.ok) {
+   746→        const err = await res.json().catch(() => ({}))
+   747→        throw new Error(err.error || 'Invalid invite code')
+   748→      }
+   749→      return res.json()
+   750→    },
+   751→    onSuccess: () => {
+   752→      qc.invalidateQueries({ queryKey: ['channels'] })
+   753→      toast.success('Joined group')
+   754→      setOpen(false)
+   755→      setCode('')
+   756→    },
+   757→    onError: (e: any) => toast.error(e.message),
+   758→  })
+   759→
+   760→  return (
+   761→    <Dialog open={open} onOpenChange={setOpen}>
+   762→      <DialogTrigger asChild>
+   763→        <Button variant="ghost" size="icon" className="h-9 w-9" title="Join group">
+   764→          <LogIn className="w-5 h-5" />
+   765→        </Button>
+   766→      </DialogTrigger>
+   767→      <DialogContent>
+   768→        <DialogHeader>
+   769→          <DialogTitle>Join a group</DialogTitle>
+   770→          <DialogDescription>Enter the invite code your friend shared with you.</DialogDescription>
+   771→        </DialogHeader>
+   772→        <Input
+   773→          value={code}
+   774→          onChange={(e) => setCode(e.target.value)}
+   775→          placeholder="Paste invite code..."
+   776→          autoCapitalize="none"
+   777→        />
+   778→        <DialogFooter>
+   779→          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+   780→          <Button onClick={() => join.mutate()} disabled={!code.trim() || join.isPending}>
+   781→            {join.isPending ? 'Joining...' : 'Join'}
+   782→          </Button>
+   783→        </DialogFooter>
+   784→      </DialogContent>
+   785→    </Dialog>
+   786→  )
+   787→}
+   788→
+   789→function CreateGroupButton() {
+   790→  const [open, setOpen] = useState(false)
+   791→  const [name, setName] = useState('')
+   792→  const [channels, setChannels] = useState('general')
+   793→  const qc = useQueryClient()
+   794→
+   795→  const create = useMutation({
+   796→    mutationFn: async () => {
+   797→      const res = await fetch('/api/groups', {
+   798→        method: 'POST',
+   799→        headers: { 'Content-Type': 'application/json' },
+   800→        body: JSON.stringify({
+   801→          name,
+   802→          channels: channels.split(',').map((s) => s.trim()).filter(Boolean),
+   803→        }),
+   804→      })
+   805→      if (!res.ok) throw new Error('failed')
+   806→      return res.json()
+   807→    },
+   808→    onSuccess: () => {
+   809→      qc.invalidateQueries({ queryKey: ['channels'] })
+   810→      toast.success('Group created')
+   811→      setOpen(false)
+   812→      setName('')
+   813→      setChannels('general')
+   814→    },
+   815→    onError: () => toast.error('Failed to create group'),
+   816→  })
+   817→
+   818→  return (
+   819→    <Dialog open={open} onOpenChange={setOpen}>
+   820→      <DialogTrigger asChild>
+   821→        <Button variant="ghost" size="icon" className="h-9 w-9">
+   822→          <Users className="w-5 h-5" />
+   823→        </Button>
+   824→      </DialogTrigger>
+   825→      <DialogContent>
+   826→        <DialogHeader>
+   827→          <DialogTitle>Create a group</DialogTitle>
+   828→          <DialogDescription>
+   829→            Groups contain channels. You'll be the owner and can invite friends with the invite code.
+   830→          </DialogDescription>
+   831→        </DialogHeader>
+   832→        <div className="space-y-4">
+   833→          <div className="space-y-2">
+   834→            <Label htmlFor="group-name">Group name</Label>
+   835→            <Input id="group-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Weekend Crew" />
+   836→          </div>
+   837→          <div className="space-y-2">
+   838→            <Label htmlFor="group-channels">Channels (comma-separated)</Label>
+   839→            <Input
+   840→              id="group-channels"
+   841→              value={channels}
+   842→              onChange={(e) => setChannels(e.target.value)}
+   843→              placeholder="general, memes, planning"
+   844→            />
+   845→          </div>
+   846→        </div>
+   847→        <DialogFooter>
+   848→          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+   849→          <Button onClick={() => create.mutate()} disabled={!name.trim() || create.isPending}>
+   850→            {create.isPending ? 'Creating...' : 'Create'}
+   851→          </Button>
+   852→        </DialogFooter>
+   853→      </DialogContent>
+   854→    </Dialog>
+   855→  )
+   856→}
+   857→
+   858→function NewDmButton() {
+   859→  const [open, setOpen] = useState(false)
+   860→  const qc = useQueryClient()
+   861→  const setActiveChannel = useAppStore((s) => s.setActiveChannel)
+   862→  const setView = useAppStore((s) => s.setView)
+   863→  // Per-target in-flight guard: prevents the same user from being clicked
+   864→  // multiple times while the DM creation request is pending. Without this,
+   865→  // rapid clicks (especially during slow dev-mode compilation) create
+   866→  // duplicate DM channels.
+   867→  const inFlightRef = useRef<Set<string>>(new Set())
+   868→
+   869→  const { data: users } = useQuery({
+   870→    queryKey: ['users'],
+   871→    queryFn: async () => {
+   872→      const res = await fetch('/api/users')
+   873→      const data = await res.json()
+   874→      return data.users as any[]
+   875→    },
+   876→  })
+   877→
+   878→  const startDm = useMutation({
+   879→    mutationFn: async (targetUserId: string) => {
+   880→      // Per-target guard — if a request for this user is already in flight,
+   881→      // bail out silently. This is a no-op, not an error.
+   882→      if (inFlightRef.current.has(targetUserId)) {
+   883→        return null
+   884→      }
+   885→      inFlightRef.current.add(targetUserId)
+   886→      try {
+   887→        const res = await fetch('/api/groups', {
+   888→          method: 'PUT',
+   889→          headers: { 'Content-Type': 'application/json' },
+   890→          body: JSON.stringify({ targetUserId }),
+   891→        })
+   892→        if (!res.ok) throw new Error('failed')
+   893→        return res.json()
+   894→      } finally {
+   895→        // Small delay so a double-click immediately after success is also
+   896→        // absorbed (the dialog closes on success, but there's a render gap)
+   897→        setTimeout(() => inFlightRef.current.delete(targetUserId), 1500)
+   898→      }
+   899→    },
+   900→    onSuccess: (data) => {
+   901→      if (!data) return // guard bail-out
+   902→      qc.invalidateQueries({ queryKey: ['channels'] })
+   903→      setActiveChannel(data.channel.id)
+   904→      setOpen(false)
+   905→      toast.success('DM started')
+   906→    },
+   907→    onError: () => {
+   908→      toast.error('Failed to start DM')
+   909→    },
+   910→  })
+   911→
+   912→  return (
+   913→    <Dialog open={open} onOpenChange={setOpen}>
+   914→      <DialogTrigger asChild>
+   915→        <Button variant="ghost" size="icon" className="h-9 w-9">
+   916→          <Plus className="w-5 h-5" />
+   917→        </Button>
+   918→      </DialogTrigger>
+   919→      <DialogContent>
+   920→        <DialogHeader>
+   921→          <DialogTitle>New direct message</DialogTitle>
+   922→          <DialogDescription>Pick someone to chat with privately.</DialogDescription>
+   923→        </DialogHeader>
+   924→        <ScrollArea className="max-h-80">
+   925→          <div className="space-y-1">
+   926→            {users?.length === 0 && (
+   927→              <div className="text-center text-sm text-muted-foreground p-4">
+   928→                No other users yet. Invite some friends!
+   929→              </div>
+   930→            )}
+   931→            {users?.map((u) => {
+   932→              const pending = startDm.isPending && startDm.variables === u.id
+   933→              return (
+   934→                <button
+   935→                  key={u.id}
+   936→                  onClick={() => startDm.mutate(u.id)}
+   937→                  disabled={startDm.isPending}
+   938→                  className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-accent text-left disabled:opacity-50 disabled:pointer-events-none"
+   939→                >
+   940→                  <Avatar className="w-10 h-10">
+   941→                    <AvatarImage src={u.avatarUrl || undefined} />
+   942→                    <AvatarFallback>{u.displayName?.charAt(0) || '?'}</AvatarFallback>
+   943→                  </Avatar>
+   944→                  <div className="flex-1 min-w-0">
+   945→                    <div className="text-sm font-medium truncate">{u.displayName}</div>
+   946→                    <div className="text-xs text-muted-foreground truncate">@{u.username}</div>
+   947→                  </div>
+   948→                  {pending && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground shrink-0" />}
+   949→                </button>
+   950→              )
+   951→            })}
+   952→          </div>
+   953→        </ScrollArea>
+   954→      </DialogContent>
+   955→    </Dialog>
+   956→  )
+   957→}
+   958→
+   959→/**
+   960→ * Group settings button — opens the GroupSettingsDialog for the currently
+   961→ * selected group. Shows a Crown for owners and Shield for admins.
+   962→ */
+   963→function GroupSettingsButton({ group }: { group: any }) {
+   964→  const [open, setOpen] = useState(false)
+   965→  const { data: session } = useSession()
+   966→  const myId = (session?.user as any)?.id
+   967→  const isOwner = group.ownerId === myId
+   968→
+   969→  // Check if I'm an admin via the members API
+   970→  const { data: myMembership } = useQuery({
+   971→    queryKey: ['my-membership', group.id],
+   972→    queryFn: async () => {
+   973→      const res = await fetch(`/api/groups/${group.id}/members`)
+   974→      if (!res.ok) return null
+   975→      const data = await res.json()
+   976→      return data.members?.find((m: any) => m.userId === myId) || null
+   977→    },
+   978→    enabled: !!myId && open,
+   979→  })
+   980→  const isAdmin = myMembership?.role === 'admin'
+   981→  const canManage = isOwner || isAdmin
+   982→  const myRole = isOwner ? 'owner' : isAdmin ? 'admin' : 'member'
+   983→
+   984→  return (
+   985→    <>
+   986→      <Button
+   987→        variant="ghost"
+   988→        size="icon"
+   989→        className="h-9 w-9"
+   990→        onClick={() => setOpen(true)}
+   991→        title="Group settings"
+   992→      >
+   993→        <Settings className="w-4 h-4" />
+   994→      </Button>
+   995→      {open && (
+   996→        <GroupSettingsDialog
+   997→          group={group}
+   998→          myRole={myRole}
+   999→          onClose={() => setOpen(false)}
+  1000→        />
+  1001→      )}
+  1002→    </>
+  1003→  )
+  1004→}
+  1005→

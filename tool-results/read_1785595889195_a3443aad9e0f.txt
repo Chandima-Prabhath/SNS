@@ -1,0 +1,670 @@
+     1→/**
+     2→ * Adoo Realtime — Socket.io server setup
+     3→ *
+     4→ * Single-port architecture: this module exports a function that attaches a
+     5→ * Socket.io server to an existing Node.js httpServer. We use this from
+     6→ * `server.ts` (custom Next.js server) so that the Next.js app and the realtime
+     7→ * service share the SAME port. No more separate mini-service, no more
+     8→ * XTransformPort query param.
+     9→ *
+    10→ * Responsibilities (kept intentionally narrow — this is a dumb relay):
+    11→ *   1. Chat relay       — message, edit, delete, typing, read receipts
+    12→ *   2. Presence         — online/idle/dnd/offline broadcast
+    13→ *   3. Voice signaling  — WebRTC offer/answer/ICE relay only (never media)
+    14→ *
+    15→ * Auth: client sends the NextAuth session cookie via `withCredentials: true`.
+    16→ * The middleware reads it from `socket.handshake.headers.cookie` and decodes
+    17→ * the JWT directly (no HTTP roundtrip to NextAuth — single-process friendly).
+    18→ */
+    19→import type { Server as HTTPServer } from 'http'
+    20→import { Server as IOServer } from 'socket.io'
+    21→import jwt from 'next-auth/jwt'
+    22→import type { NextApiRequest } from 'next'
+    23→import { db } from '@/lib/db'
+    24→
+    25→const SOCKET_PATH = '/api/socket'
+    26→
+    27→interface AuthenticatedSocket {
+    28→  userId?: string
+    29→  username?: string
+    30→}
+    31→
+    32→// in-memory presence map (userId → { status, socketIds[], username })
+    33→// Use globalThis to share across Next.js module contexts — same fix as ioRef.
+    34→// Without this, API routes (which load a different module instance) see an
+    35→// empty presence map, so sendMusicCommand() can't find the target user's
+    36→// sockets and silently drops the command.
+    37→const globalForPresence = globalThis as unknown as {
+    38→  __adoo_presence?: Map<string, { status: string; socketIds: Set<string>; username: string }>
+    39→}
+    40→const presence: Map<string, { status: string; socketIds: Set<string>; username: string }> =
+    41→  globalForPresence.__adoo_presence || new Map()
+    42→globalForPresence.__adoo_presence = presence
+    43→
+    44→// Use globalThis to share the io instance across Next.js module contexts.
+    45→const globalForIo = globalThis as unknown as { __adoo_io?: IOServer | null }
+    46→
+    47→export function getIO(): IOServer | null {
+    48→  return globalForIo.__adoo_io || null
+    49→}
+    50→
+    51→/**
+    52→ * Send a music bot command to a specific user's sockets via the presence map.
+    53→ * Used by the bot framework's controlMusic helper — the server-side bot code
+    54→ * calls this to tell the user's client to play/pause/skip/stop music.
+    55→ *
+    56→ * This is the correct path for server→client music control. The old approach
+    57→ * (io.emit to ALL sockets) sent the wrong payload shape and broadcast to
+    58→ * everyone instead of just the target user.
+    59→ */
+    60→export function sendMusicCommand(
+    61→  targetUserId: string,
+    62→  command: { action: 'play' | 'pause' | 'skip' | 'queue' | 'stop'; query?: string }
+    63→): void {
+    64→  const io = getIO()
+    65→  if (!io) {
+    66→    console.warn('[sendMusicCommand] io is null — socket.io not initialized')
+    67→    return
+    68→  }
+    69→  const target = presence.get(targetUserId)
+    70→  if (!target) {
+    71→    console.warn(`[sendMusicCommand] target user ${targetUserId} not found in presence map (size=${presence.size})`)
+    72→    // Fallback: broadcast to all sockets. Not ideal for production but
+    73→    // ensures the command reaches the user even if presence tracking is off.
+    74→    io.emit('music:bot-command', command)
+    75→    return
+    76→  }
+    77→  console.log(`[sendMusicCommand] sending ${command.action} to ${targetUserId} (${target.socketIds.size} sockets)`)
+    78→  for (const sid of target.socketIds) {
+    79→    io.to(sid).emit('music:bot-command', command)
+    80→  }
+    81→}
+    82→
+    83→export function attachRealtime(httpServer: HTTPServer): IOServer {
+    84→  if (globalForIo.__adoo_io) return globalForIo.__adoo_io
+    85→
+    86→  const io = new IOServer(httpServer, {
+    87→    path: SOCKET_PATH,
+    88→    cors: {
+    89→      origin: true,
+    90→      credentials: true,
+    91→      methods: ['GET', 'POST'],
+    92→    },
+    93→    pingTimeout: 60000,
+    94→    pingInterval: 25000,
+    95→    // Allow large SDP payloads (WebRTC offer/answer can be 5-10KB)
+    96→    maxHttpBufferSize: 1e6,
+    97→  })
+    98→  globalForIo.__adoo_io = io
+    99→
+   100→  // ─────────────────────────────────────────────────────────────────────────
+   101→  // Auth middleware — decode NextAuth JWT from cookie
+   102→  // ─────────────────────────────────────────────────────────────────────────
+   103→  io.use(async (socket, next) => {
+   104→    try {
+   105→      const cookieHeader = socket.handshake.headers.cookie || ''
+   106→      console.log('[realtime auth] cookie header present:', !!cookieHeader, 'length:', cookieHeader.length)
+   107→
+   108→      // Parse cookies into a plain object (small helper, avoids extra dep)
+   109→      const cookies: Record<string, string> = {}
+   110→      for (const part of cookieHeader.split(';')) {
+   111→        const idx = part.indexOf('=')
+   112→        if (idx === -1) continue
+   113→        const k = part.slice(0, idx).trim()
+   114→        const v = part.slice(idx + 1).trim()
+   115→        cookies[k] = decodeURIComponent(v)
+   116→      }
+   117→
+   118→      // NextAuth JWT cookie name depends on env:
+   119→      //   dev:      next-auth.session-token
+   120→      //   prod TLS: __Secure-next-auth.session-token
+   121→      const tokenRaw =
+   122→        cookies['__Secure-next-auth.session-token'] ||
+   123→        cookies['next-auth.session-token']
+   124→
+   125→      if (!tokenRaw) {
+   126→        console.log('[realtime auth] no session cookie found. Available cookies:', Object.keys(cookies))
+   127→        return next(new Error('unauthorized: no session cookie'))
+   128→      }
+   129→
+   130→      // Decode the JWT. We don't have a real Request here, so we shim one.
+   131→      // next-auth/jwt.decode only needs secret + token.
+   132→      const secret = process.env.NEXTAUTH_SECRET
+   133→      if (!secret) {
+   134→        console.error('[realtime auth] NEXTAUTH_SECRET is not set in environment!')
+   135→        return next(new Error('server misconfigured: NEXTAUTH_SECRET missing'))
+   136→      }
+   137→
+   138→      const decoded = await jwt.decode({
+   139→        token: tokenRaw,
+   140→        secret,
+   141→      } as any)
+   142→
+   143→      if (!decoded || !decoded.id) {
+   144→        console.log('[realtime auth] JWT decode returned null or missing id. decoded:', decoded ? Object.keys(decoded) : 'null')
+   145→        return next(new Error('unauthorized: invalid session'))
+   146→      }
+   147→
+   148→      ;(socket as any).userId = decoded.id
+   149→      ;(socket as any).username = decoded.username || decoded.email || 'user'
+   150→      console.log('[realtime auth] success: userId=', decoded.id, 'username=', (socket as any).username)
+   151→      next()
+   152→    } catch (e: any) {
+   153→      console.error('[realtime auth] error:', e?.message || e, e?.stack?.slice(0, 200))
+   154→      next(new Error('unauthorized'))
+   155→    }
+   156→  })
+   157→
+   158→  function broadcastPresence() {
+   159→    const list = Array.from(presence.entries()).map(([id, p]) => ({
+   160→      userId: id,
+   161→      username: p.username,
+   162→      status: p.status,
+   163→    }))
+   164→    io.emit('presence:update', list)
+   165→  }
+   166→
+   167→  function setPresence(userId: string, username: string, status: string, socketId: string) {
+   168→    const existing = presence.get(userId)
+   169→    if (existing) {
+   170→      existing.socketIds.add(socketId)
+   171→      existing.status = status
+   172→      existing.username = username
+   173→    } else {
+   174→      presence.set(userId, { status, username, socketIds: new Set([socketId]) })
+   175→    }
+   176→    broadcastPresence()
+   177→  }
+   178→
+   179→  function removeSocket(userId: string, socketId: string) {
+   180→    const p = presence.get(userId)
+   181→    if (!p) return
+   182→    p.socketIds.delete(socketId)
+   183→    if (p.socketIds.size === 0) {
+   184→      presence.delete(userId)
+   185→    }
+   186→    broadcastPresence()
+   187→  }
+   188→
+   189→  /**
+   190→   * Check if a call should end (fewer than 2 participants).
+   191→   * If so, notify all remaining participants and mark the call as ended.
+   192→   */
+   193→  function checkCallEnd(callId: string) {
+   194→    const room = io.sockets.adapter.rooms.get(`call:${callId}`)
+   195→    const participantCount = room ? room.size : 0
+   196→
+   197→    if (participantCount < 2) {
+   198→      // Notify any remaining participant (or none) that the call ended
+   199→      io.to(`call:${callId}`).emit('call:ended', {
+   200→        callId,
+   201→        reason: participantCount === 0 ? 'all_left' : 'insufficient_participants',
+   202→      })
+   203→
+   204→      // Make remaining sockets leave the room
+   205→      if (room) {
+   206→        for (const sid of room) {
+   207→          const s = io.sockets.sockets.get(sid)
+   208→          s?.leave(`call:${callId}`)
+   209→        }
+   210→      }
+   211→
+   212→      console.log(`[realtime] call ${callId} ended (${participantCount} participants remaining)`)
+   213→    }
+   214→  }
+   215→
+   216→  // ─────────────────────────────────────────────────────────────────────────
+   217→  // Connection lifecycle
+   218→  // ─────────────────────────────────────────────────────────────────────────
+   219→  io.on('connection', (socket) => {
+   220→    const auth = socket as unknown as AuthenticatedSocket & { userId: string; username: string }
+   221→    const { userId, username } = auth
+   222→    console.log(`[realtime] connect ${username} (${userId})`)
+   223→
+   224→    setPresence(userId, username, 'online', socket.id)
+   225→
+   226→    // ─── Chat channel subscriptions ──────────────────────────────────────
+   227→    socket.on('channel:join', async (channelId: string) => {
+   228→      // Verify membership before joining the socket room (C8 fix)
+   229→      const membership = await db.channelMember.findUnique({
+   230→        where: { channelId_userId: { channelId, userId } },
+   231→      }).catch(() => null)
+   232→      if (membership) {
+   233→        socket.join(`channel:${channelId}`)
+   234→      }
+   235→    })
+   236→
+   237→    socket.on('channel:leave', (channelId: string) => {
+   238→      socket.leave(`channel:${channelId}`)
+   239→    })
+   240→
+   241→    socket.on('channel:message', (payload: { channelId: string; message: any }) => {
+   242→      // C9 fix: only broadcast messages from the authenticated user
+   243→      if (payload.message?.senderId === userId) {
+   244→        socket.to(`channel:${payload.channelId}`).emit('channel:message', payload.message)
+   245→      }
+   246→    })
+   247→
+   248→    socket.on('channel:message-edit', (payload: { channelId: string; message: any }) => {
+   249→      // C9 fix: only broadcast edits for the user's own messages
+   250→      if (payload.message?.senderId === userId) {
+   251→        socket.to(`channel:${payload.channelId}`).emit('channel:message-edit', payload.message)
+   252→      }
+   253→    })
+   254→
+   255→    socket.on('channel:message-delete', (payload: { channelId: string; messageId: string }) => {
+   256→      socket.to(`channel:${payload.channelId}`).emit('channel:message-delete', {
+   257→        messageId: payload.messageId,
+   258→      })
+   259→    })
+   260→
+   261→    socket.on('channel:typing', async (payload: { channelId: string; isTyping: boolean }) => {
+   262→      const typingPayload = {
+   263→        userId,
+   264→        username,
+   265→        channelId: payload.channelId,
+   266→        isTyping: payload.isTyping,
+   267→      }
+   268→
+   269→      // Active viewers (sockets that have joined this channel's room) get the
+   270→      // event via the room broadcast — this is the existing fast path.
+   271→      socket.to(`channel:${payload.channelId}`).emit('channel:typing', typingPayload)
+   272→
+   273→      // Fan out to ALL channel members via the presence map so the chat list
+   274→      // can show "typing..." for channels the user hasn't actively joined.
+   275→      //
+   276→      // Without this, a member viewing a different channel would never see the
+   277→      // typing indicator in their chat list because they're not in the channel
+   278→      // room. We fetch the member list from the DB on each typing pulse —
+   279→      // typing is debounced client-side to ~1.5s, so this is at most ~0.7 QPS
+   280→      // per typist, which SQLite handles easily.
+   281→      //
+   282→      // We use `volatile` so a slow client connection doesn't queue up stale
+   283→      // typing pulses — only the most recent state matters.
+   284→      try {
+   285→        const members = await db.channelMember.findMany({
+   286→          where: { channelId: payload.channelId },
+   287→          select: { userId: true },
+   288→        })
+   289→        for (const m of members) {
+   290→          if (m.userId === userId) continue // skip the typist themselves
+   291→          const target = presence.get(m.userId)
+   292→          if (!target) continue
+   293→          for (const sid of target.socketIds) {
+   294→            // Skip the sender's own socket (multi-tab: don't echo back)
+   295→            if (sid === socket.id) continue
+   296→            // Skip sockets already in the channel room — they got it via the
+   297→            // room broadcast above and we don't want to double-deliver.
+   298→            const s = io.sockets.sockets.get(sid)
+   299→            if (s?.rooms.has(`channel:${payload.channelId}`)) continue
+   300→            io.to(sid).volatile.emit('channel:typing', typingPayload)
+   301→          }
+   302→        }
+   303→      } catch (e) {
+   304→        // Silent — typing is best-effort, don't crash the socket handler.
+   305→      }
+   306→    })
+   307→
+   308→    socket.on('channel:read', (payload: { channelId: string; messageId: string }) => {
+   309→      socket.to(`channel:${payload.channelId}`).emit('channel:read', {
+   310→        userId,
+   311→        channelId: payload.channelId,
+   312→        messageId: payload.messageId,
+   313→      })
+   314→    })
+   315→
+   316→    // Delivery ACK — when a client receives a message via 'channel:message',
+   317→    // it emits 'channel:delivered' back. We update the DB and broadcast to
+   318→    // the sender so their UI can show the single-checkmark "delivered" state.
+   319→    socket.on('channel:delivered', async (payload: { channelId: string; messageId: string }) => {
+   320→      try {
+   321→        // Only update if deliveredAt is not already set (avoid redundant writes)
+   322→        const msg = await db.message.findUnique({
+   323→          where: { id: payload.messageId },
+   324→          select: { deliveredAt: true, senderId: true },
+   325→        })
+   326→        if (!msg || msg.deliveredAt) return  // already delivered or not found
+   327→        // Don't ACK your own messages (the sender client also emits this)
+   328→        if (msg.senderId === userId) return
+   329→
+   330→        await db.message.update({
+   331→          where: { id: payload.messageId },
+   332→          data: { deliveredAt: new Date() },
+   333→        })
+   334→
+   335→        // Broadcast to the channel (the sender will pick this up and update their UI)
+   336→        socket.to(`channel:${payload.channelId}`).emit('channel:delivered', {
+   337→          messageId: payload.messageId,
+   338→          channelId: payload.channelId,
+   339→        })
+   340→      } catch (e) {
+   341→        // Best-effort — don't let delivery ACK failures break anything
+   342→      }
+   343→    })
+   344→
+   345→    // ─── Music bot control ─────────────────────────────────────────────
+   346→    // Bots emit this to control a user's music player. The server forwards
+   347→    // the command to the target user's sockets via the presence map.
+   348→    socket.on('music:bot-command', (payload: {
+   349→      targetUserId: string
+   350→      command: {
+   351→        action: 'play' | 'pause' | 'skip' | 'queue' | 'stop'
+   352→        query?: string
+   353→      }
+   354→    }) => {
+   355→      const target = presence.get(payload.targetUserId)
+   356→      if (!target) return
+   357→      for (const sid of target.socketIds) {
+   358→        io.to(sid).emit('music:bot-command', payload.command)
+   359→      }
+   360→    })
+   361→
+   362→    // ─── Status / Stories ────────────────────────────────────────────────
+   363→    socket.on('story:posted', (payload: { story: any }) => {
+   364→      socket.broadcast.emit('story:posted', payload.story)
+   365→    })
+   366→
+   367→    socket.on('story:viewed', (payload: { storyId: string; userId: string }) => {
+   368→      socket.broadcast.emit('story:viewed', payload)
+   369→    })
+   370→
+   371→    // ─── Voice call signaling (WebRTC) ───────────────────────────────────
+   372→    // The server tracks active calls and their participants. When a call
+   373→    // drops below 2 participants, it's auto-ended and everyone is notified.
+   374→
+   375→    socket.on('call:join', (callId: string) => {
+   376→      socket.join(`call:${callId}`)
+   377→
+   378→      // Tell everyone already in the call that we joined (so they can offer)
+   379→      socket.to(`call:${callId}`).emit('call:peer-joined', {
+   380→        peerId: socket.id,
+   381→        userId,
+   382→        username,
+   383→      })
+   384→
+   385→      // Tell the joiner who's already in the call
+   386→      const roomSocketIds = Array.from(io.sockets.adapter.rooms.get(`call:${callId}`) || []).filter(
+   387→        (id) => id !== socket.id
+   388→      )
+   389→      const peers = roomSocketIds.map((sid) => {
+   390→        const otherSocket = io.sockets.sockets.get(sid) as any
+   391→        return {
+   392→          peerId: sid,
+   393→          userId: otherSocket?.userId || '',
+   394→          username: otherSocket?.username || 'user',
+   395→        }
+   396→      })
+   397→      socket.emit('call:peers', { peers })
+   398→    })
+   399→
+   400→    socket.on('call:leave', (callId: string) => {
+   401→      socket.leave(`call:${callId}`)
+   402→      socket.to(`call:${callId}`).emit('call:peer-left', {
+   403→        peerId: socket.id,
+   404→        userId,
+   405→      })
+   406→
+   407→      // Check if the call should end (fewer than 2 participants remain)
+   408→      checkCallEnd(callId)
+   409→    })
+   410→
+   411→    // Also handle disconnect — user might close the tab
+   412→    socket.on('disconnect', () => {
+   413→      // Find all calls this socket was in and check if they should end
+   414→      for (const room of socket.rooms) {
+   415→        if (room.startsWith('call:')) {
+   416→          const callId = room.substring(5)
+   417→          socket.to(room).emit('call:peer-left', {
+   418→            peerId: socket.id,
+   419→            userId,
+   420→          })
+   421→          checkCallEnd(callId)
+   422→        }
+   423→      }
+   424→    })
+   425→
+   426→    socket.on('call:offer', (payload: { to: string; sdp: any }) => {
+   427→      io.to(payload.to).emit('call:offer', { from: socket.id, sdp: payload.sdp })
+   428→    })
+   429→
+   430→    socket.on('call:answer', (payload: { to: string; sdp: any }) => {
+   431→      io.to(payload.to).emit('call:answer', { from: socket.id, sdp: payload.sdp })
+   432→    })
+   433→
+   434→    socket.on('call:ice-candidate', (payload: { to: string; candidate: any }) => {
+   435→      io.to(payload.to).emit('call:ice-candidate', { from: socket.id, candidate: payload.candidate })
+   436→    })
+   437→
+   438→    // ─── DM call ringing (for 1:1 calls) ─────────────────────────────────
+   439→    // The caller rings a specific user via their socket connection(s).
+   440→    // We look up all sockets for that userId (via the presence map) and forward.
+   441→    socket.on('call:ring', (payload: {
+   442→      callId: string
+   443→      targetUserId: string
+   444→      from: { userId: string; username: string; displayName: string }
+   445→      channelId?: string
+   446→      dmGroupId?: string
+   447→      video?: boolean
+   448→    }) => {
+   449→      // Send push notification immediately (works even if app is closed)
+   450→      import('./push').then(m => {
+   451→        m.sendPushNotification(payload.targetUserId, {
+   452→          type: 'call',
+   453→          title: payload.from.displayName,
+   454→          body: `Incoming ${payload.video ? 'video' : 'voice'} call`,
+   455→          callId: payload.callId,
+   456→          channelId: payload.channelId,
+   457→          from: payload.from,
+   458→        })
+   459→      }).catch(() => {})
+   460→
+   461→      // RETRY: keep sending call:incoming every 5 seconds for up to 1 minute.
+   462→      // This handles the case where the app is closed — the push notification
+   463→      // wakes it, the socket reconnects, and the next retry delivers the event.
+   464→      const incomingPayload = {
+   465→        callId: payload.callId,
+   466→        from: payload.from,
+   467→        channelId: payload.channelId,
+   468→        dmGroupId: payload.dmGroupId,
+   469→        video: payload.video ?? false,
+   470→      }
+   471→
+   472→      // Send immediately
+   473→      const sendIncoming = () => {
+   474→        const target = presence.get(payload.targetUserId)
+   475→        if (target) {
+   476→          for (const sid of target.socketIds) {
+   477→            io.to(sid).emit('call:incoming', incomingPayload)
+   478→          }
+   479→        }
+   480→      }
+   481→      sendIncoming()
+   482→
+   483→      // Retry every 5s for 60s (12 attempts)
+   484→      let attempts = 0
+   485→      const retryInterval = setInterval(() => {
+   486→        attempts++
+   487→        if (attempts >= 12) {
+   488→          clearInterval(retryInterval)
+   489→          return
+   490→        }
+   491→        // Check if the call is still active
+   492→        // (the caller might have cancelled)
+   493→        const target = presence.get(payload.targetUserId)
+   494→        if (target) {
+   495→          // Check if any socket has acknowledged by joining the call room
+   496→          const callRoom = io.sockets.adapter.rooms.get(`call:${payload.callId}`)
+   497→          if (callRoom && callRoom.size > 0) {
+   498→            // Someone joined the call — stop retrying
+   499→            clearInterval(retryInterval)
+   500→            return
+   501→          }
+   502→          sendIncoming()
+   503→          console.log(`[call] retry ${attempts}/12 sending call:incoming to ${payload.targetUserId}`)
+   504→        }
+   505→      }, 5000)
+   506→
+   507→      // Clean up interval when caller disconnects
+   508→      socket.on('disconnect', () => {
+   509→        clearInterval(retryInterval)
+   510→      })
+   511→    })
+   512→
+   513→    socket.on('call:accept', (payload: { callId: string; byUserId: string }) => {
+   514→      // Notify all of caller's sockets that the call was accepted
+   515→      const callerSockets = presence.get(payload.byUserId)
+   516→      if (callerSockets) {
+   517→        for (const sid of callerSockets.socketIds) {
+   518→          io.to(sid).emit('call:accept', { callId: payload.callId, byUserId: userId })
+   519→        }
+   520→      }
+   521→    })
+   522→
+   523→    socket.on('call:reject', (payload: { callId: string; byUserId: string; reason?: string }) => {
+   524→      const callerSockets = presence.get(payload.byUserId)
+   525→      if (callerSockets) {
+   526→        for (const sid of callerSockets.socketIds) {
+   527→          io.to(sid).emit('call:reject', { callId: payload.callId, reason: payload.reason || 'rejected' })
+   528→        }
+   529→      }
+   530→    })
+   531→
+   532→    socket.on('call:cancel', (payload: { callId: string; targetUserId: string }) => {
+   533→      // Caller is cancelling an outgoing ring
+   534→      const targetSockets = presence.get(payload.targetUserId)
+   535→      if (targetSockets) {
+   536→        for (const sid of targetSockets.socketIds) {
+   537→          io.to(sid).emit('call:cancel', { callId: payload.callId })
+   538→        }
+   539→      }
+   540→    })
+   541→
+   542→    // ─── Push notifications: server pushes new messages to all of a user's ─
+   543→    // sessions so they get unread badges / notifications regardless of which
+   544→    // screen they're on. Persistent socket connection = real-time notifications.
+   545→    socket.on('notify:user', (payload: { userId: string; type: string; data: any }) => {
+   546→      const targetPresence = presence.get(payload.userId)
+   547→      if (!targetPresence) return
+   548→      for (const sid of targetPresence.socketIds) {
+   549→        // Don't echo back to the sender's own socket
+   550→        if (sid === socket.id) continue
+   551→        io.to(sid).emit('notify', { type: payload.type, data: payload.data })
+   552→      }
+   553→    })
+   554→
+   555→    // Broadcast a new message to all members of a channel (server-side driven,
+   556→    // not just relying on the sender's socket to relay)
+   557→    socket.on('channel:broadcast-message', (payload: { channelId: string; message: any; recipientIds: string[] }) => {
+   558→      for (const uid of payload.recipientIds) {
+   559→        const targetPresence = presence.get(uid)
+   560→        if (!targetPresence) continue
+   561→        for (const sid of targetPresence.socketIds) {
+   562→          if (sid === socket.id) continue // skip sender
+   563→          io.to(sid).emit('channel:message', payload.message)
+   564→          io.to(sid).emit('notify', {
+   565→            type: 'message',
+   566→            data: {
+   567→              channelId: payload.channelId,
+   568→              messageId: payload.message.id,
+   569→              senderId: payload.message.senderId,
+   570→              senderName: payload.message.sender?.displayName || payload.message.sender?.username,
+   571→              body: payload.message.body,
+   572→              senderType: payload.message.senderType,
+   573→            },
+   574→          })
+   575→        }
+   576→      }
+   577→    })
+   578→
+   579→    // ─── Presence management ─────────────────────────────────────────────
+   580→    socket.on('presence:set', (status: string) => {
+   581→      setPresence(userId, username, status, socket.id)
+   582→    })
+   583→
+   584→    socket.on('presence:request', () => {
+   585→      const list = Array.from(presence.entries()).map(([id, p]) => ({
+   586→        userId: id,
+   587→        username: p.username,
+   588→        status: p.status,
+   589→      }))
+   590→      socket.emit('presence:update', list)
+   591→    })
+   592→
+   593→    // ─── Music room sync ────────────────────────────────────────────────
+   594→    // Host-authoritative: the host broadcasts playback state changes to all
+   595→    // room members. Members apply the state with drift compensation.
+   596→    socket.on('music:join', (roomId: string) => {
+   597→      socket.join(`music:${roomId}`)
+   598→      // Notify the room that someone joined — the host should respond with
+   599→      // a sync broadcast so the new member gets the current state.
+   600→      socket.to(`music:${roomId}`).emit('music:member-joined', {
+   601→        roomId,
+   602→        userId,
+   603→        username,
+   604→      })
+   605→    })
+   606→
+   607→    socket.on('music:leave', (roomId: string) => {
+   608→      socket.leave(`music:${roomId}`)
+   609→    })
+   610→
+   611→    // Broadcast sync events to all room members.
+   612→    // The host sends: { roomId, state, position, videoId?, trackInfo? }
+   613→    // We include the server's receive timestamp for drift compensation.
+   614→    socket.on('music:sync', (payload: {
+   615→      roomId: string
+   616→      state: string
+   617→      position: number
+   618→      videoId?: string
+   619→      trackInfo?: any
+   620→      queue?: { videoId: string }[]
+   621→    }) => {
+   622→      io.to(`music:${payload.roomId}`).emit('music:sync', {
+   623→        ...payload,
+   624→        serverTimestamp: Date.now(),
+   625→      })
+   626→
+   627→      // ── Server-side proactive preloading ────────────────────────────
+   628→      // When the host broadcasts a playing state, proactively preload the
+   629→      // current track + the next 2 tracks in the queue. This runs on the
+   630→      // SERVER's event loop, completely independent of client tab throttling.
+   631→      // By the time the song ends, the next track is already on disk.
+   632→      if (payload.state === 'playing' && payload.videoId) {
+   633→        import('@/lib/ytdlp-download').then(({ getOrCreateDownload }) => {
+   634→          // Current track
+   635→          getOrCreateDownload(payload.videoId!).catch(() => {})
+   636→          // Next 2 tracks in the queue
+   637→          if (payload.queue && payload.queue.length > 0) {
+   638→            for (const track of payload.queue.slice(0, 2)) {
+   639→              if (track.videoId) {
+   640→                getOrCreateDownload(track.videoId).catch(() => {})
+   641→              }
+   642→            }
+   643→          }
+   644→        }).catch(() => {})
+   645→      }
+   646→    })
+   647→
+   648→    // Request sync — a member who just joined asks the host for the current
+   649→    // state. The host should respond with a music:sync broadcast.
+   650→    socket.on('music:request-sync', (roomId: string) => {
+   651→      socket.to(`music:${roomId}`).emit('music:request-sync', {
+   652→        roomId,
+   653→        fromUserId: userId,
+   654→      })
+   655→    })
+   656→
+   657→    socket.on('disconnect', () => {
+   658→      removeSocket(userId, socket.id)
+   659→      console.log(`[realtime] disconnect ${username} (${userId})`)
+   660→    })
+   661→
+   662→    socket.on('error', (err: any) => {
+   663→      console.error(`[realtime] socket error ${userId}:`, err)
+   664→    })
+   665→  })
+   666→
+   667→  console.log(`[realtime] attached, path=${SOCKET_PATH}`)
+   668→  return io
+   669→}
+   670→
