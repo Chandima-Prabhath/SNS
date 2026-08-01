@@ -186,12 +186,12 @@ export function DesktopSidebar() {
           className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-accent/60 transition-colors group"
         >
           <Avatar className="w-9 h-9 ring-2 ring-border/50 group-hover:ring-primary/30 transition-all">
-            <AvatarImage src={(session?.user as any)?.avatarUrl || undefined} />
-            <AvatarFallback>{(session?.user as any)?.displayName?.charAt(0).toUpperCase() || '?'}</AvatarFallback>
+            <AvatarImage src={session?.user?.avatarUrl || undefined} />
+            <AvatarFallback>{session?.user?.displayName?.charAt(0).toUpperCase() || '?'}</AvatarFallback>
           </Avatar>
           <div className="flex-1 min-w-0 text-left">
-            <div className="text-sm font-medium truncate">{(session?.user as any)?.displayName}</div>
-            <div className="text-xs text-muted-foreground truncate">@{(session?.user as any)?.username}</div>
+            <div className="text-sm font-medium truncate">{session?.user?.displayName}</div>
+            <div className="text-xs text-muted-foreground truncate">@{session?.user?.username}</div>
           </div>
         </button>
       </div>

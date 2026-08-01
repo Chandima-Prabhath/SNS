@@ -16,7 +16,7 @@ import { db } from '@/lib/db'
 export async function POST() {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
 
   await db.$transaction([
     db.userSession.deleteMany({ where: { userId } }),

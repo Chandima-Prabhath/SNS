@@ -83,7 +83,7 @@ export function ChatList() {
   const presence = usePresence()
   const { data: unreadData } = useUnreadCounts()
   const { data: session } = useSession()
-  const myId = (session?.user as any)?.id
+  const myId = session?.user?.id
 
   const [search, setSearch] = useState('')
 
@@ -985,7 +985,7 @@ function NewDmButton() {
 function GroupSettingsButton({ group }: { group: any }) {
   const [open, setOpen] = useState(false)
   const { data: session } = useSession()
-  const myId = (session?.user as any)?.id
+  const myId = session?.user?.id
   const isOwner = group.ownerId === myId
 
   // Check if I'm an admin via the members API

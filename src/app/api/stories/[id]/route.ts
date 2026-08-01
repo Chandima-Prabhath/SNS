@@ -7,7 +7,7 @@ import { db } from '@/lib/db'
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
   const { id: storyId } = await params
 
   await db.storyViewer.upsert({
@@ -23,12 +23,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
   const { id: storyId } = await params
 
   const story = await db.story.findUnique({ where: { id: storyId } })
   if (!story) return NextResponse.json({ error: 'not found' }, { status: 404 })
-  if (story.userId !== userId && (session.user as any).role !== 'admin') {
+  if (story.userId !== userId && session.user.role !== 'admin') {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
 

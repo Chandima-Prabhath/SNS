@@ -48,7 +48,7 @@ export async function POST(req: Request) {
     if (!session?.user) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     }
-    const userId = (session.user as any).id
+    const userId = session.user.id
 
     const { text, voice = 'alba', customVoiceId } = await req.json()
 

@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
 
   const url = new URL(req.url)
   const q = url.searchParams.get('q')?.trim()

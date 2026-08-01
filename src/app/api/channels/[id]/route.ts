@@ -10,7 +10,7 @@ import { db } from '@/lib/db'
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
   const { id: channelId } = await params
   const body = await req.json()
   const { name, topic } = body
@@ -52,7 +52,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
   const { id: channelId } = await params
 
   const channel = await db.channel.findUnique({

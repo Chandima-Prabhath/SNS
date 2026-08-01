@@ -50,7 +50,7 @@ export function SettingsView() {
   const { data: session } = useSession()
   const [section, setSection] = useState<SettingsSection>('profile')
 
-  const role = (session?.user as any)?.role
+  const role = session?.user?.role
   const isAdmin = role === 'admin' || role === 'owner'
 
   const sections: { key: SettingsSection; label: string; icon: typeof User; adminOnly?: boolean }[] = [

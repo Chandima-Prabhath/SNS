@@ -23,7 +23,7 @@ export async function POST(
     if (!session?.user) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     }
-    const userId = (session.user as any).id
+    const userId = session.user.id
     const { id: channelId, messageId } = await params
 
     console.log(`[callback] channelId=${channelId} messageId=${messageId} userId=${userId}`)
@@ -77,7 +77,7 @@ export async function POST(
     }
 
     const botId = originalMessage.senderId
-    const senderName = (session.user as any).username || (session.user as any).displayName || 'User'
+    const senderName = session.user.username || session.user.displayName || 'User'
 
     // Record timestamp BEFORE dispatch — we'll query bot replies created
     // after this moment to avoid matching stale messages

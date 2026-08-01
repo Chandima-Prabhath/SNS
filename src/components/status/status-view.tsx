@@ -28,7 +28,7 @@ import { compressImage, formatBytes } from '@/lib/image-compress'
 export function StatusView() {
   const { stories, isLoading, upload, remove } = useStories()
   const { data: session } = useSession()
-  const myId = (session?.user as any)?.id
+  const myId = session?.user?.id
 
   const myStories = stories.find((s) => s.userId === myId)
   const otherStories = stories.filter((s) => s.userId !== myId)

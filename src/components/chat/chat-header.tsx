@@ -59,15 +59,15 @@ export function ChatHeader({ channel }: ChatHeaderProps) {
 
       // For DM calls, ring the partner and play ringback tone
       if (partner && session?.user) {
-        const myName = (session.user as any).displayName || (session.user as any).username || 'Someone'
+        const myName = session.user.displayName || session.user.username || 'Someone'
         const { getSocket } = await import('@/lib/socket')
         const socket = await getSocket()
         socket.emit('call:ring', {
           callId: data.call.id,
           targetUserId: partner.id,
           from: {
-            userId: (session.user as any).id,
-            username: (session.user as any).username,
+            userId: session.user.id,
+            username: session.user.username,
             displayName: myName,
           },
           channelId: channel.id,

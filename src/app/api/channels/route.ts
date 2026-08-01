@@ -21,7 +21,7 @@ import { db } from '@/lib/db'
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
 
   // 1. Fetch all memberships with channel + group info (single query)
   const memberships = await db.channelMember.findMany({

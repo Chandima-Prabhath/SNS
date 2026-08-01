@@ -21,7 +21,7 @@ import { db } from '@/lib/db'
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const currentUserId = (session.user as any).id
+  const currentUserId = session.user.id
 
   const url = new URL(req.url)
   const search = url.searchParams.get('search')?.trim()

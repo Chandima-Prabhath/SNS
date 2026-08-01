@@ -66,7 +66,7 @@ export async function POST(req: Request) {
 
       // Verify channel membership
       const membership = await db.channelMember.findFirst({
-        where: { channelId: msg.channelId, userId: (session.user as any).id },
+        where: { channelId: msg.channelId, userId: session.user.id },
       })
       if (!membership) {
         return NextResponse.json(

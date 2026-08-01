@@ -16,7 +16,7 @@ export async function DELETE(
 ) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
   const { playlistId } = await params
 
   // Verify ownership

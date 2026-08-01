@@ -21,7 +21,7 @@ export function VoiceView() {
   const { status, callId, isVideoCall, startCall, endCall } = useCall()
   const setView = useAppStore((s) => s.setView)
   const { data: session } = useSession()
-  const myId = (session?.user as any)?.id
+  const myId = session?.user?.id
 
   const { data: groups } = useQuery({
     queryKey: ['channels'],

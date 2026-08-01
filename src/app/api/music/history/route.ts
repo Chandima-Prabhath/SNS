@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
 
   const history = await db.playHistory.findMany({
     where: { userId },
@@ -43,7 +43,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
 
   const body = await req.json()
   const { videoId, title, artist, thumbnail, durationSeconds } = body
@@ -91,7 +91,7 @@ export async function POST(req: Request) {
 export async function DELETE() {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
 
   await db.playHistory.deleteMany({ where: { userId } })
   return NextResponse.json({ ok: true })

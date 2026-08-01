@@ -30,8 +30,8 @@ export const dynamic = 'force-dynamic'
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
-  const senderName = (session.user as any).displayName || (session.user as any).username || 'User'
+  const userId = session.user.id
+  const senderName = session.user.displayName || session.user.username || 'User'
 
   const body = await req.json()
   const { targetUserId, type, targetId, channelId, dmGroupId, isVideo, roomName } = body

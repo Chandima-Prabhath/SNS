@@ -176,7 +176,7 @@ export function ChannelList() {
 function GroupHeader({ group }: { group: any }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const { data: session } = useSession()
-  const myId = (session?.user as any)?.id
+  const myId = session?.user?.id
   const isOwner = group.ownerId === myId
 
   // Check if I'm an admin via GroupMember

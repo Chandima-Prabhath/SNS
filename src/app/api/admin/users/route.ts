@@ -6,7 +6,7 @@ import { db } from '@/lib/db'
 async function requireAdmin() {
   const session = await getServerSession(authOptions)
   if (!session?.user) return null
-  if ((session.user as any).role !== 'admin' && (session.user as any).role !== 'owner') return null
+  if (session.user.role !== 'admin' && session.user.role !== 'owner') return null
   return session
 }
 

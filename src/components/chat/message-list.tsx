@@ -41,7 +41,7 @@ export function MessageList({ channelId }: MessageListProps) {
   const { messages, isLoading, send, edit, remove, sendCallback, typing, markRead, replyTo, setReplyTo, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useChannel(channelId)
   const { data: session } = useSession()
-  const myId = (session?.user as any)?.id
+  const myId = session?.user?.id
   const scrollRef = useRef<HTMLDivElement>(null)
   const lastMessageIdRef = useRef<string | null>(null)
   const isAtBottomRef = useRef(true)

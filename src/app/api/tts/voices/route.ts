@@ -15,7 +15,7 @@ const execFileAsync = promisify(execFile)
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
 
   const voices = await db.customVoice.findMany({
     where: { ownerId: userId },
@@ -41,7 +41,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
   const { name, audioUrl } = await req.json()
 
   if (!name?.trim()) return NextResponse.json({ error: 'name required' }, { status: 400 })

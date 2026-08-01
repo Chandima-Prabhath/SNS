@@ -8,7 +8,7 @@ import { listBotModules } from '@/lib/bot'
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
 
   const bots = await db.bot.findMany({
     where: { ownerId: userId },
@@ -28,7 +28,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
   const body = await req.json()
   const { name, username, description, module, avatarUrl } = body
 

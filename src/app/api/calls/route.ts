@@ -16,7 +16,7 @@ import { db } from '@/lib/db'
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
   const body = await req.json()
   const { channelId, dmGroupId } = body
 

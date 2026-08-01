@@ -8,7 +8,7 @@ import { canPostInChannel } from '@/lib/chat-utils'
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
   const { id: channelId } = await params
   const url = new URL(req.url)
   const before = url.searchParams.get('before') // message id for cursor
@@ -49,7 +49,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
   const { id: channelId } = await params
 
   const allowed = await canPostInChannel(channelId, userId)
@@ -164,7 +164,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           botId,
           channelId,
           senderId: userId,
-          senderName: (session.user as any).username || (session.user as any).email || 'user',
+          senderName: session.user.username || session.user.email || 'user',
           messageId: message.id,
           body: text,
           replyToId,
@@ -283,7 +283,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
   const { id: channelId } = await params
   const { messageId, body } = await req.json()
 
@@ -303,7 +303,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
   const { id: channelId } = await params
   const url = new URL(req.url)
   const messageId = url.searchParams.get('messageId')
@@ -311,7 +311,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
   const msg = await db.message.findUnique({ where: { id: messageId } })
   if (!msg) return NextResponse.json({ error: 'not found' }, { status: 404 })
-  if (msg.senderId !== userId && (session.user as any).role !== 'admin') {
+  if (msg.senderId !== userId && session.user.role !== 'admin') {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
   const updated = await db.message.update({

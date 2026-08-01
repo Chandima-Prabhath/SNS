@@ -99,9 +99,9 @@ export const authOptions: NextAuthOptions = {
         return { ...session, user: undefined } as any
       }
       if (token && session.user) {
-        ;(session.user as any).id = token.id
-        ;(session.user as any).username = token.username
-        ;(session.user as any).role = token.role
+        session.user.id = token.id
+        session.user.username = token.username || ''
+        session.user.role = token.role || 'member'
       }
       return session
     },

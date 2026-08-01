@@ -16,7 +16,7 @@ import { db } from '@/lib/db'
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const userId = (session.user as any).id
+  const userId = session.user.id
 
   // Find active calls in channels where the user is a member,
   // but where the user is NOT a participant yet
