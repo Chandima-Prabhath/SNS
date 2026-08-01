@@ -96,9 +96,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       where: { channelId },
       select: { userId: true },
     })
-    const memberBotIds = new Set(channelBotMembers.map((m) => m.userId))
-    const allBots = await db.bot.findMany({ where: { enabled: true } })
-    const bots = allBots.filter((b) => memberBotIds.has(b.id))
+    const memberBotIds = channelBotMembers.map((m) => m.userId)
+    // Only load bots that are members of THIS channel — avoids loading every
+    // bot in the DB and filtering in JS. Significant speedup when many bots exist.
+    const bots = memberBotIds.length > 0
+      ? await db.bot.findMany({ where: { id: { in: memberBotIds }, enabled: true } })
+      : []
 
     // Parse the message
     const commandMatch = text.match(/^\/(\w+)(?:@(\w+))?/)
@@ -143,7 +146,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
-    for (const [botId, isMention] of dispatches) {
+    // Dispatch all bots IN PARALLEL — bots are independent and running them
+    // sequentially adds N×latency (2 bots × 3s each = 6s sequential vs 3s parallel).
+    // Each dispatch catches its own errors so one failing bot doesn't block others.
+    await Promise.all([...dispatches].map(async ([botId, isMention]) => {
       try {
         await dispatchBotUpdate({
           botId,
@@ -160,7 +166,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       } catch (e) {
         console.error(`[bot dispatch] bot ${botId} failed:`, e)
       }
-    }
+    }))
   } catch (e) {
     console.error('[bot dispatch] error', e)
   }
@@ -235,20 +241,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const recipientIds = memberIds.map((m) => m.userId).filter((id) => id !== userId)
 
-  // Send push notifications to all recipients (for background notifications)
-  try {
-    const { sendPushNotification } = await import('@/lib/push')
-    for (const recipientId of recipientIds) {
-      await sendPushNotification(recipientId, {
-        type: 'message',
-        title: message.sender?.displayName || 'New message',
-        body: message.body.slice(0, 100),
-        channelId,
-      })
-    }
-  } catch (e) {
-    // Push notification failed — don't block the message
-    console.error('[push] failed to send:', e)
+  // Send push notifications to all recipients — FIRE AND FORGET.
+  // Each push does a webpush HTTP call (~100-500ms). With 8 recipients that's
+  // ~2.4s if awaited sequentially. We don't await — the user's message POST
+  // response should not be blocked by push notification delivery.
+  if (recipientIds.length > 0) {
+    import('@/lib/push').then(({ sendPushNotification }) => {
+      for (const recipientId of recipientIds) {
+        sendPushNotification(recipientId, {
+          type: 'message',
+          title: message.sender?.displayName || 'New message',
+          body: message.body.slice(0, 100),
+          channelId,
+        }).catch((e) => {
+          console.error('[push] failed for', recipientId, e?.message || e)
+        })
+      }
+    }).catch((e) => {
+      console.error('[push] failed to load push module:', e?.message || e)
+    })
   }
 
   return NextResponse.json({

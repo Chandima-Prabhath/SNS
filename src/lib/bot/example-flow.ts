@@ -113,7 +113,7 @@ export const EXAMPLE_BOT_FLOW: BotFlow = {
       position: { x: X.main, y: Y.delay },
       data: {
         type: 'delay',
-        seconds: 1,
+        seconds: 0.3,
         label: 'Pause Before Routing',
       },
     },

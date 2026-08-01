@@ -13,6 +13,7 @@
 import { db } from '@/lib/db'
 import { writeFile, mkdir } from 'fs/promises'
 import { existsSync } from 'fs'
+import { getIO } from '@/lib/realtime-server'
 import path from 'path'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -250,10 +251,16 @@ export async function dispatchBotUpdate(params: {
       formData.append('text', text.slice(0, 500))
       formData.append('voice_url', voice)
 
+      // 30s timeout — Pocket TTS should respond in <5s. If it hangs, abort
+      // and return null so the bot falls back to a text message.
+      const ttsController = new AbortController()
+      const ttsTimeout = setTimeout(() => ttsController.abort(), 30_000)
       const ttsRes = await fetch(`${ttsUrl}/tts`, {
         method: 'POST',
         body: formData,
+        signal: ttsController.signal,
       })
+      clearTimeout(ttsTimeout)
 
       if (!ttsRes.ok) {
         console.error(`[bot:tts] TTS server error ${ttsRes.status}`)
@@ -298,7 +305,6 @@ export async function dispatchBotUpdate(params: {
   const typingTimers = new Map<string, ReturnType<typeof setInterval>>()
   const setTyping = async (seconds: number) => {
     try {
-      const { getIO } = await import('@/lib/realtime-server')
       const io = getIO()
       if (!io) return
 
@@ -526,10 +532,16 @@ export async function dispatchBotCallback(params: {
       formData.append('text', text.slice(0, 500))
       formData.append('voice_url', voice)
 
+      // 30s timeout — Pocket TTS should respond in <5s. If it hangs, abort
+      // and return null so the bot falls back to a text message.
+      const ttsController = new AbortController()
+      const ttsTimeout = setTimeout(() => ttsController.abort(), 30_000)
       const ttsRes = await fetch(`${ttsUrl}/tts`, {
         method: 'POST',
         body: formData,
+        signal: ttsController.signal,
       })
+      clearTimeout(ttsTimeout)
 
       if (!ttsRes.ok) return null
 
@@ -565,7 +577,6 @@ export async function dispatchBotCallback(params: {
   // Helper: emit typing indicator (duplicate of dispatchBotUpdate version)
   const setTyping = async (seconds: number) => {
     try {
-      const { getIO } = await import('@/lib/realtime-server')
       const io = getIO()
       if (!io) return
       const room = `channel:${params.channelId}`

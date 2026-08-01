@@ -999,7 +999,12 @@ export async function executeBotFlow(
           const method = currentNode.data.method || 'GET'
           const headers = currentNode.data.headers ? JSON.parse(currentNode.data.headers) : {}
           const body = currentNode.data.body ? interpolate(currentNode.data.body, ctx) : undefined
-          const res = await fetch(url, { method, headers, body })
+          // 30s timeout — external APIs should respond within this window.
+          // Prevents a slow/down API from hanging the bot forever.
+          const apiController = new AbortController()
+          const apiTimeout = setTimeout(() => apiController.abort(), 30_000)
+          const res = await fetch(url, { method, headers, body, signal: apiController.signal })
+          clearTimeout(apiTimeout)
           const text = await res.text()
           const vname = currentNode.data.variableName
           if (vname) {
@@ -1008,7 +1013,10 @@ export async function executeBotFlow(
           }
           trace.push({ type: 'api_call', timestamp: now(), nodeId: currentNode.id, url, method, status: res.status, durationMs: now() - callStart })
         } catch (e: any) {
-          trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: `API call failed: ${e?.message || e}` })
+          const errMsg = e?.name === 'AbortError'
+            ? `API call timed out (>30s)`
+            : `API call failed: ${e?.message || e}`
+          trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: errMsg })
         }
         currentNode = followEdge(currentNode.id, null)
         break
@@ -1049,14 +1057,34 @@ export async function executeBotFlow(
           const maxTokens = currentNode.data.aiMaxTokens ?? 256
 
           const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434'
-          const res = await fetch(`${ollamaUrl}/api/generate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model, prompt, system: systemPrompt, stream: false,
-              options: { temperature, num_predict: maxTokens },
-            }),
-          })
+          // 15s timeout — Ollama with gemma3:270m should respond in <2s.
+          // If it hangs (model loading, OOM, etc.), abort and show an error
+          // instead of hanging the entire bot dispatch forever.
+          const aiController = new AbortController()
+          const aiTimeout = setTimeout(() => aiController.abort(), 15_000)
+          let res: Response
+          try {
+            res = await fetch(`${ollamaUrl}/api/generate`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model, prompt, system: systemPrompt, stream: false,
+                options: { temperature, num_predict: maxTokens },
+              }),
+              signal: aiController.signal,
+            })
+          } catch (fetchErr: any) {
+            clearTimeout(aiTimeout)
+            const errMsg = fetchErr?.name === 'AbortError'
+              ? `Ollama timed out (>15s) — is the model loaded?`
+              : `Ollama fetch failed: ${fetchErr?.message || fetchErr}`
+            ctx.variables[vname] = `[AI error: timeout]`
+            trace.push({ type: 'error', timestamp: now(), nodeId: currentNode.id, message: errMsg })
+            trace.push({ type: 'ai_call', timestamp: now(), nodeId: currentNode.id, model, prompt: prompt.slice(0, 100), responseLength: 0, durationMs: now() - callStart })
+            currentNode = followEdge(currentNode.id, null)
+            break
+          }
+          clearTimeout(aiTimeout)
 
           if (!res.ok) {
             const errText = await res.text().catch(() => 'unknown error')

@@ -173,12 +173,18 @@ export const visualBot: BotModule = {
 
     // ── Fresh start: run from trigger ──────────────────────────────────
     console.log(`[visual bot] no paused session — running from trigger`)
-    await runFromTrigger(flow, ctx)
+    // Pass the already-loaded state to avoid a redundant getState() DB query
+    await runFromTrigger(flow, ctx, state)
   },
 }
 
-async function runFromTrigger(flow: BotFlow, ctx: BotContext) {
-  const state: VisualSessionState = { ...EMPTY_STATE, ...(await ctx.getState()) }
+async function runFromTrigger(flow: BotFlow, ctx: BotContext, existingState?: VisualSessionState) {
+  // Reuse the already-loaded state if provided (avoids a duplicate DB query).
+  // Only call getState() if we don't have a state yet (e.g. when called from
+  // the stale-session reset path at line 65).
+  const state: VisualSessionState = existingState
+    ? { ...EMPTY_STATE, ...existingState }
+    : { ...EMPTY_STATE, ...(await ctx.getState()) }
   if (!state.variables) state.variables = {}
   seedMediaVars(state.variables, ctx)
 
