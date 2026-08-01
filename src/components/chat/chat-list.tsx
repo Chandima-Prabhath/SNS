@@ -857,31 +857,32 @@ function CreateGroupButton() {
 
 function NewDmButton() {
   const [open, setOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const qc = useQueryClient()
   const setActiveChannel = useAppStore((s) => s.setActiveChannel)
   const setView = useAppStore((s) => s.setView)
-  // Per-target in-flight guard: prevents the same user from being clicked
-  // multiple times while the DM creation request is pending. Without this,
-  // rapid clicks (especially during slow dev-mode compilation) create
-  // duplicate DM channels.
   const inFlightRef = useRef<Set<string>>(new Set())
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Debounced search — only fetches when the user stops typing for 200ms
   const { data: users } = useQuery({
-    queryKey: ['users'],
+    queryKey: ['users', searchQuery],
     queryFn: async () => {
-      const res = await fetch('/api/users')
+      const params = searchQuery ? `?search=${encodeURIComponent(searchQuery)}&limit=20` : '?limit=20'
+      const res = await fetch(`/api/users${params}`)
       const data = await res.json()
       return data.users as any[]
     },
   })
 
+  const handleSearchChange = (value: string) => {
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
+    searchTimeoutRef.current = setTimeout(() => setSearchQuery(value), 200)
+  }
+
   const startDm = useMutation({
     mutationFn: async (targetUserId: string) => {
-      // Per-target guard — if a request for this user is already in flight,
-      // bail out silently. This is a no-op, not an error.
-      if (inFlightRef.current.has(targetUserId)) {
-        return null
-      }
+      if (inFlightRef.current.has(targetUserId)) return null
       inFlightRef.current.add(targetUserId)
       try {
         const res = await fetch('/api/groups', {
@@ -892,16 +893,15 @@ function NewDmButton() {
         if (!res.ok) throw new Error('failed')
         return res.json()
       } finally {
-        // Small delay so a double-click immediately after success is also
-        // absorbed (the dialog closes on success, but there's a render gap)
         setTimeout(() => inFlightRef.current.delete(targetUserId), 1500)
       }
     },
     onSuccess: (data) => {
-      if (!data) return // guard bail-out
+      if (!data) return
       qc.invalidateQueries({ queryKey: ['channels'] })
       setActiveChannel(data.channel.id)
       setOpen(false)
+      setSearchQuery('')
       toast.success('DM started')
     },
     onError: () => {
@@ -910,7 +910,7 @@ function NewDmButton() {
   })
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setSearchQuery('') }}>
       <DialogTrigger asChild>
         <Button variant="ghost" size="icon" className="h-9 w-9">
           <Plus className="w-5 h-5" />
@@ -919,13 +919,23 @@ function NewDmButton() {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New direct message</DialogTitle>
-          <DialogDescription>Pick someone to chat with privately.</DialogDescription>
+          <DialogDescription>Search for someone to chat with privately.</DialogDescription>
         </DialogHeader>
+        {/* Search input */}
+        <div className="relative mb-2">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by name or username..."
+            onChange={(e) => handleSearchChange(e.target.value)}
+            className="pl-9"
+            autoFocus
+          />
+        </div>
         <ScrollArea className="max-h-80">
           <div className="space-y-1">
             {users?.length === 0 && (
               <div className="text-center text-sm text-muted-foreground p-4">
-                No other users yet. Invite some friends!
+                {searchQuery ? `No users found for "${searchQuery}"` : 'No other users yet. Invite some friends!'}
               </div>
             )}
             {users?.map((u) => {

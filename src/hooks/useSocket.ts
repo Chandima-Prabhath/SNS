@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import type { Socket } from 'socket.io-client'
 import { getSocket, disconnectSocket } from '@/lib/socket'
@@ -16,6 +16,7 @@ export function useSocket() {
   const { status } = useSession()
   const [socket, setSocket] = useState<Socket | null>(null)
   const [connected, setConnected] = useState(false)
+  const socketRef = useRef<Socket | null>(null)
 
   useEffect(() => {
     if (status !== 'authenticated') {
@@ -27,6 +28,7 @@ export function useSocket() {
     getSocket()
       .then((s) => {
         if (cancelled) return
+        socketRef.current = s
         setSocket(s)
         setConnected(s.connected)
 
@@ -44,6 +46,15 @@ export function useSocket() {
 
     return () => {
       cancelled = true
+      // Clean up event listeners to prevent stacking on re-renders.
+      // Without this, every re-run of this effect adds a new pair of
+      // connect/disconnect listeners that never get removed.
+      const s = socketRef.current
+      if (s) {
+        s.off('connect')
+        s.off('disconnect')
+        socketRef.current = null
+      }
     }
   }, [status])
 
