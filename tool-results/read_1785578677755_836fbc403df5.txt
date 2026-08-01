@@ -1,0 +1,890 @@
+     1→'use client'
+     2→
+     3→import { useEffect, useRef, useState, useMemo } from 'react'
+     4→import { useChannel, type ChannelMessage, type KeyboardButton } from '@/hooks/useChannel'
+     5→import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+     6→import { Button } from '@/components/ui/button'
+     7→import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot, UserX, Copy, Pin, AudioLines, ChevronDown, Phone, Video, Music as MusicIcon, FileText, Loader2 } from 'lucide-react'
+     8→import { cn } from '@/lib/utils'
+     9→import { format, isToday, isYesterday } from 'date-fns'
+    10→import { useAppStore } from '@/stores/useAppStore'
+    11→import { VoiceMessagePlayer } from '@/components/chat/voice-message-player'
+    12→import { useSession } from 'next-auth/react'
+    13→import { motion, AnimatePresence } from 'framer-motion'
+    14→import { useContextMenu } from '@/components/ui/context-menu-provider'
+    15→import { useCall } from '@/hooks/useCall'
+    16→import { useMusicStore } from '@/stores/useMusicStore'
+    17→import { toast } from 'sonner'
+    18→
+    19→/**
+    20→ * Detect whether a media URL + mediaType combination represents an audio file.
+    21→ *
+    22→ * We check BOTH the mediaType AND the file extension, because some browsers
+    23→ * tag WebM audio recordings as 'video/webm' (WebM is primarily a video
+    24→ * container) or 'application/octet-stream' (if the type is lost in FormData
+    25→ * upload). Without this check, voice messages would render as a black
+    26→ * <video> square instead of the custom VoiceMessagePlayer.
+    27→ */
+    28→function isAudioFile(mediaUrl: string | null | undefined, mediaType: string | null | undefined): boolean {
+    29→  if (mediaType?.startsWith('audio')) return true
+    30→  if (!mediaUrl) return false
+    31→  const AUDIO_EXTENSIONS = ['.webm', '.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac']
+    32→  const lower = mediaUrl.toLowerCase()
+    33→  return AUDIO_EXTENSIONS.some((ext) => lower.endsWith(ext))
+    34→}
+    35→
+    36→interface MessageListProps {
+    37→  channelId: string
+    38→}
+    39→
+    40→export function MessageList({ channelId }: MessageListProps) {
+    41→  const { messages, isLoading, send, edit, remove, sendCallback, typing, markRead, replyTo, setReplyTo } =
+    42→    useChannel(channelId)
+    43→  const { data: session } = useSession()
+    44→  const myId = (session?.user as any)?.id
+    45→  const scrollRef = useRef<HTMLDivElement>(null)
+    46→  const lastMessageIdRef = useRef<string | null>(null)
+    47→  const isAtBottomRef = useRef(true)
+    48→
+    49→  // Scroll-to-bottom button state.
+    50→  //   - showScrollButton: visible when the user has scrolled >200px from the
+    51→  //     bottom (matches the threshold in the task spec).
+    52→  //   - unreadBelow: count of new messages that have arrived BELOW the user's
+    53→  //     current scroll position. Resets to 0 when the user scrolls back to the
+    54→  //     bottom (or clicks the button).
+    55→  const [showScrollButton, setShowScrollButton] = useState(false)
+    56→  const [unreadBelow, setUnreadBelow] = useState(0)
+    57→
+    58→  // Reset scroll state when switching channels — otherwise the auto-scroll
+    59→  // logic thinks we already saw the last message and skips the initial scroll.
+    60→  // Refs are reset here (no rerender needed); the button state is reset in
+    61→  // the channel-switch derived-state check below to keep it in sync with
+    62→  // React's render cycle.
+    63→  useEffect(() => {
+    64→    lastMessageIdRef.current = null
+    65→    isAtBottomRef.current = true
+    66→  }, [channelId])
+    67→
+    68→  // Reset the scroll-button React state when the channel changes. We use the
+    69→  // "derived state" pattern (calling setState during render in a conditional)
+    70→  // instead of useEffect+setState — React specifically endorses this for
+    71→  // "reset state when a prop changes" because it avoids the extra render
+    72→  // cycle that useEffect+setState triggers.
+    73→  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+    74→  const [prevChannelId, setPrevChannelId] = useState(channelId)
+    75→  if (prevChannelId !== channelId) {
+    76→    setPrevChannelId(channelId)
+    77→    setShowScrollButton(false)
+    78→    setUnreadBelow(0)
+    79→  }
+    80→
+    81→  // Track whether the user is at the bottom of the scroll container.
+    82→  // We use a ref so the scroll handler doesn't trigger re-renders, but we
+    83→  // also mirror `showScrollButton` into React state so the button can
+    84→  // appear/disappear. The 80px threshold for "at bottom" matches the
+    85→  // existing auto-scroll logic; the 200px threshold for showing the button
+    86→  // is per the task spec.
+    87→  useEffect(() => {
+    88→    const el = scrollRef.current
+    89→    if (!el) return
+    90→    const onScroll = () => {
+    91→      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    92→      const atBottom = distanceFromBottom < 80
+    93→      isAtBottomRef.current = atBottom
+    94→      // Show the floating button only when scrolled meaningfully up
+    95→      setShowScrollButton(distanceFromBottom > 200)
+    96→      // Reset the "new messages below" counter when the user reaches the
+    97→      // bottom — they've now seen everything.
+    98→      if (atBottom) {
+    99→        setUnreadBelow(0)
+   100→      }
+   101→    }
+   102→    el.addEventListener('scroll', onScroll, { passive: true })
+   103→    return () => el.removeEventListener('scroll', onScroll)
+   104→  }, [])
+   105→
+   106→  // Auto-scroll — handles BOTH the initial load (channel switch / first
+   107→  // messages arriving) and subsequent new messages.
+   108→  //
+   109→  // • Initial load: wait 200ms so avatars/images have time to render and
+   110→  //   lay out before we measure scrollHeight. Double rAF was too short for
+   111→  //   channels with media-heavy history (scroll would land on "yesterday"
+   112→  //   instead of the latest message).
+   113→  // • New message: use requestAnimationFrame so the DOM updates before we
+   114→  //   measure. Scroll smoothly so the user sees the message slide in.
+   115→  // • Own message: ALWAYS scroll, even if the user scrolled up (so sending
+   116→  //   a message snaps back to the bottom).
+   117→  // • New message while scrolled up: DON'T scroll, but increment the
+   118→  //   "unread below" counter so the scroll-to-bottom button shows a badge.
+   119→  //   Multiple messages can land in a single render (e.g., a burst of bot
+   120→  //   replies) — count all of them by comparing indices.
+   121→  useEffect(() => {
+   122→    const el = scrollRef.current
+   123→    if (!el) return
+   124→    const lastMsg = messages[messages.length - 1]
+   125→    if (!lastMsg) return
+   126→    // Already processed this exact message — nothing to do.
+   127→    if (lastMessageIdRef.current === lastMsg.id) return
+   128→
+   129→    const isMine = lastMsg.senderId === myId
+   130→    const isInitialLoad = !lastMessageIdRef.current
+   131→    const shouldScroll = isInitialLoad || isMine || isAtBottomRef.current
+   132→
+   133→    // Count how many new messages arrived since the last one we processed.
+   134→    // If the previous last-seen id is still in the array, the delta is the
+   135→    // number of messages after it. Fall back to 1 if we can't find it (e.g.,
+   136→    // the array was refetched and the old id is gone).
+   137→    let newCount = 1
+   138→    if (lastMessageIdRef.current) {
+   139→      const lastSeenIdx = messages.findIndex((m) => m.id === lastMessageIdRef.current)
+   140→      if (lastSeenIdx >= 0) {
+   141→        newCount = Math.max(1, messages.length - 1 - lastSeenIdx)
+   142→      }
+   143→    }
+   144→
+   145→    lastMessageIdRef.current = lastMsg.id
+   146→    markRead(lastMsg.id)
+   147→
+   148→    if (!shouldScroll) {
+   149→      // User is scrolled up — count this burst as new messages below the fold.
+   150→      setUnreadBelow((n) => n + newCount)
+   151→      return
+   152→    }
+   153→
+   154→    if (isInitialLoad) {
+   155→      // Give the browser time to lay out all the historical messages (and
+   156→      // their media) before we jump. 200ms is enough for most avatars and
+   157→      // thumbnails to load without making the channel switch feel slow.
+   158→      const t = window.setTimeout(() => {
+   159→        const e = scrollRef.current
+   160→        if (e) e.scrollTop = e.scrollHeight
+   161→      }, 200)
+   162→      return () => window.clearTimeout(t)
+   163→    }
+   164→
+   165→    // New message — wait one frame so the new bubble has rendered before
+   166→    // we measure scrollHeight. Otherwise we'd scroll to the OLD bottom and
+   167→    // the latest message would sit just below the fold.
+   168→    const raf = requestAnimationFrame(() => {
+   169→      const e = scrollRef.current
+   170→      if (e) {
+   171→        e.scrollTo({ top: e.scrollHeight, behavior: 'smooth' })
+   172→      }
+   173→    })
+   174→    // We scrolled to the bottom — clear the unread-below counter.
+   175→    setUnreadBelow(0)
+   176→    return () => cancelAnimationFrame(raf)
+   177→  }, [messages, myId, markRead])
+   178→
+   179→  // Group consecutive messages by same sender within 5 min
+   180→  const grouped = useMemo(() => {
+   181→    const groups: ChannelMessage[][] = []
+   182→    let current: ChannelMessage[] = []
+   183→    for (const m of messages) {
+   184→      if (current.length === 0) {
+   185→        current.push(m)
+   186→      } else {
+   187→        const prev = current[current.length - 1]
+   188→        const sameSender = prev.senderId === m.senderId && prev.senderType === m.senderType
+   189→        const timeDiff = new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime()
+   190→        if (sameSender && timeDiff < 5 * 60 * 1000) {
+   191→          current.push(m)
+   192→        } else {
+   193→          groups.push(current)
+   194→          current = [m]
+   195→        }
+   196→      }
+   197→    }
+   198→    if (current.length > 0) groups.push(current)
+   199→    return groups
+   200→  }, [messages])
+   201→
+   202→  return (
+   203→    <div className="flex-1 flex flex-col min-h-0 bg-background relative overflow-hidden">
+   204→      {/* Subtle cinematic glow in the background */}
+   205→      <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(var(--primary),0.05),transparent)] pointer-events-none" />
+   206→      <div ref={scrollRef as any} className="flex-1 min-h-0 overflow-y-auto relative z-10 scroll-smooth">
+   207→        <div className="px-3 md:px-6 py-4 space-y-3 max-w-4xl mx-auto">
+   208→          {isLoading && <LoadingState />}
+   209→
+   210→          {!isLoading && messages.length === 0 && (
+   211→            <div className="text-center py-20 px-4">
+   212→              <div className="w-16 h-16 mx-auto rounded-3xl bg-primary/10 flex items-center justify-center mb-3 ring-1 ring-primary/15">
+   213→                <Reply className="w-7 h-7 text-primary" strokeWidth={1.5} />
+   214→              </div>
+   215→              <p className="text-base font-semibold">No messages yet</p>
+   216→              <p className="text-sm text-muted-foreground mt-1">Be the first to say hello</p>
+   217→            </div>
+   218→          )}
+   219→
+   220→          {grouped.map((group, gi) => {
+   221→            const first = group[0]
+   222→            const isMine = first.senderId === myId && first.senderType === 'user'
+   223→            const isBot = first.senderType === 'bot'
+   224→            const senderDeleted = first.senderType === 'user' && !first.sender
+   225→            const senderName =
+   226→              first.senderType === 'bot'
+   227→                ? first.sender?.displayName || 'Bot'
+   228→                : first.sender?.displayName || (senderDeleted ? 'Deleted User' : 'Unknown')
+   229→            const dayLabel = formatDay(first.createdAt)
+   230→            const prevGroup = gi > 0 ? grouped[gi - 1] : null
+   231→            const showDayDivider = !prevGroup || formatDay(prevGroup[0].createdAt) !== dayLabel
+   232→
+   233→            return (
+   234→              <div key={gi}>
+   235→                {showDayDivider && (
+   236→                  <div className="flex items-center gap-3 my-5">
+   237→                    <div className="flex-1 h-px bg-border" />
+   238→                    <span className="text-xs text-muted-foreground font-medium">{dayLabel}</span>
+   239→                    <div className="flex-1 h-px bg-border" />
+   240→                  </div>
+   241→                )}
+   242→                <MessageGroup
+   243→                  group={group}
+   244→                  isMine={isMine}
+   245→                  isBot={isBot}
+   246→                  senderDeleted={senderDeleted}
+   247→                  senderName={senderName}
+   248→                  avatarUrl={first.sender?.avatarUrl || null}
+   249→                  myId={myId}
+   250→                  onReply={(m) =>
+   251→                    setReplyTo({ id: m.id, body: m.body, senderName })
+   252→                  }
+   253→                  onDelete={(m) => remove(m.id)}
+   254→                  onEditSubmit={async (messageId, text) => edit(messageId, text)}
+   255→                  onCallback={async (messageId, callbackData) => sendCallback(messageId, callbackData)}
+   256→                />
+   257→              </div>
+   258→            )
+   259→          })}
+   260→
+   261→          {/* Typing indicator */}
+   262→          <AnimatePresence>
+   263→            {typing.length > 0 && (
+   264→              <motion.div
+   265→                initial={{ opacity: 0, y: 8 }}
+   266→                animate={{ opacity: 1, y: 0 }}
+   267→                exit={{ opacity: 0, y: 8 }}
+   268→                className="flex items-center gap-2 text-xs text-muted-foreground italic px-2"
+   269→              >
+   270→                <span className="flex gap-1">
+   271→                  <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:0ms]" />
+   272→                  <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:120ms]" />
+   273→                  <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:240ms]" />
+   274→                </span>
+   275→                {typing.map((t) => t.username).join(', ')} {typing.length === 1 ? 'is' : 'are'} typing...
+   276→              </motion.div>
+   277→            )}
+   278→          </AnimatePresence>
+   279→        </div>
+   280→      </div>
+   281→
+   282→      {/* Scroll-to-bottom button — appears when the user has scrolled >200px
+   283→          up from the bottom. Shows an unread count badge for messages that
+   284→          arrived below the current scroll position. Smooth-scrolls to the
+   285→          bottom on click and hides itself when already at the bottom. */}
+   286→      <AnimatePresence>
+   287→        {showScrollButton && (
+   288→          <motion.button
+   289→            initial={{ opacity: 0, scale: 0.8, y: 8 }}
+   290→            animate={{ opacity: 1, scale: 1, y: 0 }}
+   291→            exit={{ opacity: 0, scale: 0.8, y: 8 }}
+   292→            transition={{ duration: 0.15 }}
+   293→            onClick={() => {
+   294→              const e = scrollRef.current
+   295→              if (e) {
+   296→                e.scrollTo({ top: e.scrollHeight, behavior: 'smooth' })
+   297→                // Optimistically clear — the scroll handler will confirm
+   298→                // once the smooth scroll settles at the bottom.
+   299→                setUnreadBelow(0)
+   300→                setShowScrollButton(false)
+   301→              }
+   302→            }}
+   303→            aria-label="Scroll to latest messages"
+   304→            title="Scroll to latest"
+   305→            className="absolute bottom-4 right-4 z-20 w-11 h-11 rounded-full bg-card border border-border/60 shadow-lg flex items-center justify-center hover:bg-accent active:scale-95 transition-all"
+   306→          >
+   307→            <ChevronDown className="w-5 h-5" />
+   308→            {unreadBelow > 0 && (
+   309→              <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center ring-2 ring-card">
+   310→                {unreadBelow > 99 ? '99+' : unreadBelow}
+   311→              </span>
+   312→            )}
+   313→          </motion.button>
+   314→        )}
+   315→      </AnimatePresence>
+   316→    </div>
+   317→  )
+   318→}
+   319→
+   320→function LoadingState() {
+   321→  return (
+   322→    <div className="space-y-3">
+   323→      {[1, 2, 3].map((i) => (
+   324→        <div key={i} className="flex gap-2.5 animate-pulse">
+   325→          <div className="w-8 h-8 rounded-full bg-muted" />
+   326→          <div className="flex-1 space-y-1.5">
+   327→            <div className="h-3 w-24 bg-muted rounded" />
+   328→            <div className="h-4 w-3/4 bg-muted rounded" />
+   329→          </div>
+   330→        </div>
+   331→      ))}
+   332→    </div>
+   333→  )
+   334→}
+   335→
+   336→function formatDay(dateStr: string | Date) {
+   337→  const d = new Date(dateStr)
+   338→  if (isToday(d)) return 'Today'
+   339→  if (isYesterday(d)) return 'Yesterday'
+   340→  return format(d, 'MMM d, yyyy')
+   341→}
+   342→
+   343→interface MessageGroupProps {
+   344→  group: ChannelMessage[]
+   345→  isMine: boolean
+   346→  isBot: boolean
+   347→  senderDeleted?: boolean
+   348→  senderName: string
+   349→  avatarUrl: string | null
+   350→  myId?: string
+   351→  onReply: (m: ChannelMessage) => void
+   352→  onDelete: (m: ChannelMessage) => void
+   353→  onEditSubmit: (messageId: string, text: string) => Promise<any>
+   354→  onCallback: (messageId: string, callbackData: string) => Promise<void>
+   355→}
+   356→
+   357→function MessageGroup(props: MessageGroupProps) {
+   358→  const { group, isMine, isBot, senderDeleted, senderName, avatarUrl } = props
+   359→  const [editingId, setEditingId] = useState<string | null>(null)
+   360→  const replyTo = useAppStore((s) => s.replyTo)
+   361→  const setReplyTo = useAppStore((s) => s.setReplyTo)
+   362→
+   363→  return (
+   364→    <div className="group/group flex gap-2.5">
+   365→      {/* Avatar — only show on first message of group, hidden for own messages on mobile */}
+   366→      <div className="w-8 shrink-0 pt-0.5">
+   367→        {isMine ? (
+   368→          <div className="w-8" />
+   369→        ) : senderDeleted ? (
+   370→          <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+   371→            <UserX className="w-4 h-4 text-muted-foreground" />
+   372→          </div>
+   373→        ) : (
+   374→          <Avatar className="w-9 h-9 shadow-sm ring-1 ring-white/10">
+   375→            <AvatarImage src={avatarUrl || undefined} />
+   376→            <AvatarFallback className={cn('text-xs font-semibold', isBot && 'bg-primary/20 text-primary')}>
+   377→              {isBot ? <Bot className="w-[18px] h-[18px]" /> : senderName.charAt(0).toUpperCase()}
+   378→            </AvatarFallback>
+   379→          </Avatar>
+   380→        )}
+   381→      </div>
+   382→
+   383→      <div className="flex-1 min-w-0 space-y-0.5">
+   384→        {/* Sender name + time — only on first message of group */}
+   385→        <div className="flex items-baseline gap-2 mb-0.5">
+   386→          <span className={cn(
+   387→            'text-[13px] font-semibold',
+   388→            isBot && 'text-primary',
+   389→            isMine && 'text-foreground',
+   390→            senderDeleted && 'text-muted-foreground italic'
+   391→          )}>
+   392→            {isMine ? 'You' : senderName}
+   393→            {isBot && <span className="ml-1 text-[10px] uppercase font-bold text-primary/70">BOT</span>}
+   394→          </span>
+   395→          <span className="text-[11px] text-muted-foreground">
+   396→            {format(new Date(group[0].createdAt), 'HH:mm')}
+   397→          </span>
+   398→        </div>
+   399→
+   400→        {group.map((m, i) => (
+   401→          <MessageItem
+   402→            key={m.id}
+   403→            message={m}
+   404→            isMine={isMine}
+   405→            isLastOfGroup={i === group.length - 1}
+   406→            isEditing={editingId === m.id}
+   407→            setEditing={(v) => setEditingId(v ? m.id : null)}
+   408→            onReply={() => props.onReply(m)}
+   409→            onDelete={() => props.onDelete(m)}
+   410→            onEditSubmit={async (text) => {
+   411→              await props.onEditSubmit(m.id, text)
+   412→              setEditingId(null)
+   413→            }}
+   414→            onCallback={async (callbackData) => {
+   415→              await props.onCallback(m.id, callbackData)
+   416→            }}
+   417→            highlight={replyTo?.id === m.id}
+   418→            clearHighlight={() => setReplyTo(null)}
+   419→          />
+   420→        ))}
+   421→      </div>
+   422→    </div>
+   423→  )
+   424→}
+   425→
+   426→interface MessageItemProps {
+   427→  message: ChannelMessage
+   428→  isMine: boolean
+   429→  isLastOfGroup: boolean
+   430→  isEditing: boolean
+   431→  setEditing: (v: boolean) => void
+   432→  onReply: () => void
+   433→  onDelete: () => void
+   434→  onEditSubmit: (text: string) => Promise<void>
+   435→  onCallback: (callbackData: string) => Promise<void>
+   436→  highlight?: boolean
+   437→  clearHighlight: () => void
+   438→}
+   439→
+   440→function MessageItem(props: MessageItemProps) {
+   441→  const { message: m, isMine, isLastOfGroup, isEditing, setEditing, onEditSubmit } = props
+   442→  const [editText, setEditText] = useState(m.body)
+   443→  const isDeleted = !!m.deletedAt
+   444→  const ctxMenu = useContextMenu()
+   445→  const { startCall } = useCall()
+   446→  const setActiveRoomId = useMusicStore((s) => s.setActiveRoomId)
+   447→
+   448→  // Handle invitation Join button — joins a call or music room
+   449→  const handleInviteJoin = async (invite: any) => {
+   450→    try {
+   451→      if (invite.type === 'call') {
+   452→        // Join the call via the API (idempotent — joins existing or creates)
+   453→        const payload = invite.dmGroupId
+   454→          ? { dmGroupId: invite.dmGroupId }
+   455→          : { channelId: invite.channelId }
+   456→        const res = await fetch('/api/calls', {
+   457→          method: 'POST',
+   458→          headers: { 'Content-Type': 'application/json' },
+   459→          body: JSON.stringify(payload),
+   460→        })
+   461→        if (!res.ok) throw new Error('Failed to join call')
+   462→        const data = await res.json()
+   463→        // Start our side (mic + WebRTC)
+   464→        await startCall({
+   465→          callId: data.call.id,
+   466→          channelId: invite.channelId,
+   467→          dmGroupId: invite.dmGroupId,
+   468→          enableVideo: invite.isVideo ?? false,
+   469→        })
+   470→        toast.success('Joined the call')
+   471→      } else if (invite.type === 'music') {
+   472→        // Join the music room — set active room + auto-join as member
+   473→        setActiveRoomId(invite.targetId)
+   474→        await fetch(`/api/music/rooms/${invite.targetId}`).catch(() => {})
+   475→        toast.success(`Joined music room "${invite.roomName || 'Unnamed'}"`)
+   476→        // Navigate to music view
+   477→        window.location.hash = 'music'
+   478→      }
+   479→    } catch (e: any) {
+   480→      toast.error(e.message || 'Failed to join')
+   481→    }
+   482→  }
+   483→
+   484→  const showMessageContextMenu = (e: React.MouseEvent | React.TouchEvent) => {
+   485→    let x: number, y: number
+   486→    if ('touches' in e) {
+   487→      const t = e.touches[0] || (e.changedTouches?.[0])
+   488→      if (!t) return
+   489→      x = t.clientX; y = t.clientY
+   490→    } else {
+   491→      x = e.clientX; y = e.clientY
+   492→    }
+   493→    if (!ctxMenu) return
+   494→    const items: Array<{ label: string; icon: React.ReactNode; onClick: () => void; variant?: 'default' | 'danger' }> = [
+   495→      {
+   496→        label: 'Reply',
+   497→        icon: <Reply className="w-4 h-4" />,
+   498→        onClick: () => props.onReply(),
+   499→      },
+   500→      {
+   501→        label: 'Copy text',
+   502→        icon: <Copy className="w-4 h-4" />,
+   503→        onClick: () => {
+   504→          navigator.clipboard.writeText(m.body)
+   505→        },
+   506→      },
+   507→    ]
+   508→    if (isMine && !isEditing) {
+   509→      items.push({
+   510→        label: 'Edit',
+   511→        icon: <Edit2 className="w-4 h-4" />,
+   512→        onClick: () => setEditing(true),
+   513→      })
+   514→      items.push({
+   515→        label: 'Delete',
+   516→        icon: <Trash2 className="w-4 h-4" />,
+   517→        variant: 'danger',
+   518→        onClick: () => props.onDelete(),
+   519→      })
+   520→    }
+   521→    ctxMenu.show(x, y, items)
+   522→  }
+   523→
+   524→  if (isDeleted) {
+   525→    return (
+   526→      <div className={cn('flex', isMine ? 'justify-end' : 'justify-start')}>
+   527→        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground italic px-3 py-1.5 rounded-2xl bg-muted/50">
+   528→          <Trash2 className="w-3 h-3" />
+   529→          Message deleted
+   530→        </span>
+   531→      </div>
+   532→    )
+   533→  }
+   534→
+   535→  return (
+   536→    <motion.div
+   537→      initial={{ opacity: 0, y: 4 }}
+   538→      animate={{ opacity: 1, y: 0 }}
+   539→      transition={{ duration: 0.15 }}
+   540→      className={cn(
+   541→        'group/msg relative flex items-end gap-1',
+   542→        isMine ? 'justify-end' : 'justify-start',
+   543→        props.highlight && 'ring-2 ring-primary/40 rounded-2xl',
+   544→        'transition-shadow'
+   545→      )}
+   546→      onClick={() => props.highlight && props.clearHighlight()}
+   547→    >
+   548→      {!isMine && <div className="w-8 shrink-0" />}
+   549→
+   550→      {/* Message bubble */}
+   551→      <div
+   552→        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); showMessageContextMenu(e) }}
+   553→        onTouchStart={(e) => {
+   554→          // Long-press for mobile
+   555→          const touch = e.touches[0]
+   556→          const timer = setTimeout(() => {
+   557→            showMessageContextMenu({ touches: [{ clientX: touch.clientX, clientY: touch.clientY }] } as any)
+   558→            if (navigator.vibrate) navigator.vibrate(50)
+   559→          }, 500)
+   560→          const el = e.currentTarget
+   561→          const clear = () => {
+   562→            clearTimeout(timer)
+   563→            el.removeEventListener('touchend', clear)
+   564→            el.removeEventListener('touchmove', clear)
+   565→            el.removeEventListener('touchcancel', clear)
+   566→          }
+   567→          el.addEventListener('touchend', clear, { once: true })
+   568→          el.addEventListener('touchmove', clear, { once: true })
+   569→          el.addEventListener('touchcancel', clear, { once: true })
+   570→        }}
+   571→        className={cn(
+   572→          'relative max-w-[78%] md:max-w-[65%] px-4 py-2.5 text-[15px] leading-relaxed break-words select-none cursor-default backdrop-blur-md',
+   573→          isMine
+   574→            ? 'bg-gradient-to-br from-primary/90 to-primary text-primary-foreground rounded-[22px] rounded-br-sm shadow-[0_4px_12px_rgba(var(--primary),0.2)] border border-primary/20'
+   575→            : 'bg-black/30 text-foreground rounded-[22px] rounded-bl-sm shadow-sm border border-white/10',
+   576→          isLastOfGroup && 'mb-1.5'
+   577→        )}
+   578→      >
+   579→        {/* Reply context */}
+   580→        {m.replyTo && (
+   581→          <div className={cn(
+   582→            'border-l-2 pl-2 mb-1.5 text-xs opacity-80',
+   583→            isMine ? 'border-bubble-mine-foreground/40' : 'border-primary/40'
+   584→          )}>
+   585→            <div className="font-medium">
+   586→              {m.replyTo.senderType === 'bot'
+   587→                ? m.replyTo.sender?.displayName || 'Bot'
+   588→                : m.replyTo.sender?.displayName || 'Unknown'}
+   589→            </div>
+   590→            <div className="truncate opacity-70">{m.replyTo.body.slice(0, 80)}</div>
+   591→          </div>
+   592→        )}
+   593→
+   594→        {/* Invitation cards (call / music room invites) */}
+   595→        {(m.mediaType === 'invite-call' || m.mediaType === 'invite-music') && (() => {
+   596→          try {
+   597→            const invite = JSON.parse(m.body)
+   598→            const isCall = invite.type === 'call'
+   599→            return (
+   600→              <div className="mb-1.5 -mx-1">
+   601→                <div className={cn(
+   602→                  'rounded-xl border overflow-hidden',
+   603→                  isCall ? 'bg-blue-500/10 border-blue-500/30' : 'bg-purple-500/10 border-purple-500/30'
+   604→                )}>
+   605→                  {/* Header */}
+   606→                  <div className="flex items-center gap-2.5 p-3">
+   607→                    <div className={cn(
+   608→                      'w-10 h-10 rounded-full flex items-center justify-center shrink-0',
+   609→                      isCall ? 'bg-blue-500/20' : 'bg-purple-500/20'
+   610→                    )}>
+   611→                      {isCall ? (
+   612→                        invite.isVideo ? <Video className="w-5 h-5 text-blue-400" /> : <Phone className="w-5 h-5 text-blue-400" />
+   613→                      ) : (
+   614→                        <MusicIcon className="w-5 h-5 text-purple-400" />
+   615→                      )}
+   616→                    </div>
+   617→                    <div className="flex-1 min-w-0">
+   618→                      <div className="text-sm font-semibold">
+   619→                        {isCall
+   620→                          ? `${invite.fromName} invited you to a ${invite.isVideo ? 'video' : 'voice'} call`
+   621→                          : `${invite.fromName} invited you to music room "${invite.roomName || 'Unnamed'}"`
+   622→                        }
+   623→                      </div>
+   624→                      <div className="text-xs opacity-60">
+   625→                        {isCall ? 'Tap Join to connect' : 'Tap Join to listen together'}
+   626→                      </div>
+   627→                    </div>
+   628→                  </div>
+   629→                  {/* Action buttons */}
+   630→                  <div className="flex gap-1.5 p-2 pt-0">
+   631→                    <button
+   632→                      onClick={() => handleInviteJoin(invite)}
+   633→                      className={cn(
+   634→                        'flex-1 py-2 rounded-lg text-xs font-semibold transition-all active:scale-95',
+   635→                        isCall
+   636→                          ? 'bg-blue-500/30 text-blue-300 hover:bg-blue-500/40'
+   637→                          : 'bg-purple-500/30 text-purple-300 hover:bg-purple-500/40'
+   638→                      )}
+   639→                    >
+   640→                      Join
+   641→                    </button>
+   642→                  </div>
+   643→                </div>
+   644→              </div>
+   645→            )
+   646→          } catch {
+   647→            return null
+   648→          }
+   649→        })()}
+   650→
+   651→        {/* Media — detect audio by both mediaType AND file extension, because
+   652→            some older voice messages may have been stored with mediaType
+   653→            'video/webm' or 'application/octet-stream' due to a browser bug
+   654→            where WebM audio recordings get misclassified. */}
+   655→        {m.mediaUrl && m.mediaType?.startsWith('image') && (
+   656→          <img src={m.mediaUrl} alt="" className="rounded-lg mb-1.5 max-w-full -mx-1 w-[calc(100%+0.5rem)]" />
+   657→        )}
+   658→        {m.mediaUrl && m.mediaType?.startsWith('video') && !isAudioFile(m.mediaUrl, m.mediaType) && (
+   659→          <video src={m.mediaUrl} controls className="rounded-lg mb-1.5 max-w-full -mx-1 w-[calc(100%+0.5rem)]" />
+   660→        )}
+   661→        {m.mediaUrl && (m.mediaType?.startsWith('audio') || isAudioFile(m.mediaUrl, m.mediaType)) && (
+   662→          <div className="mb-1.5 -mx-1">
+   663→            <VoiceMessagePlayer
+   664→              src={m.mediaUrl}
+   665→              isMine={isMine}
+   666→              label={m.mediaType === 'audio' ? 'TTS' : 'Voice'}
+   667→            />
+   668→            <TranscriptButton message={m} isMine={isMine} />
+   669→          </div>
+   670→        )}
+   671→
+   672→        {/* Telegram-style inline keyboard buttons */}
+   673→        {m.keyboard && !isEditing && (() => {
+   674→          try {
+   675→            const keyboard = JSON.parse(m.keyboard) as KeyboardButton[][]
+   676→            if (!Array.isArray(keyboard) || keyboard.length === 0) return null
+   677→            return (
+   678→              <div className="mt-1.5 space-y-1">
+   679→                {keyboard.map((row, ri) => (
+   680→                  <div key={ri} className="flex gap-1 flex-wrap">
+   681→                    {row.map((btn, bi) => (
+   682→                      <button
+   683→                        key={bi}
+   684→                        onClick={() => props.onCallback(btn.callbackData)}
+   685→                        className={cn(
+   686→                          'flex-1 min-w-[60px] px-3 py-1.5 rounded-lg text-xs font-medium transition-all active:scale-95',
+   687→                          'backdrop-blur-md border',
+   688→                          isMine
+   689→                            ? 'bg-black/15 border-white/20 text-primary-foreground hover:bg-black/25'
+   690→                            : 'bg-primary/15 border-primary/30 text-primary hover:bg-primary/25'
+   691→                        )}
+   692→                      >
+   693→                        {btn.text}
+   694→                      </button>
+   695→                    ))}
+   696→                  </div>
+   697→                ))}
+   698→              </div>
+   699→            )
+   700→          } catch {
+   701→            return null
+   702→          }
+   703→        })()}
+   704→
+   705→        {/* Body or editor */}
+   706→        {isEditing ? (
+   707→          <div className="space-y-1.5">
+   708→            <textarea
+   709→              autoFocus
+   710→              value={editText}
+   711→              onChange={(e) => setEditText(e.target.value)}
+   712→              className="w-full bg-background/20 border border-background/30 rounded p-2 text-sm resize-none text-foreground placeholder:text-foreground/60"
+   713→              rows={2}
+   714→              onKeyDown={(e) => {
+   715→                if (e.key === 'Enter' && !e.shiftKey) {
+   716→                  e.preventDefault()
+   717→                  onEditSubmit(editText)
+   718→                }
+   719→                if (e.key === 'Escape') setEditing(false)
+   720→              }}
+   721→            />
+   722→            <div className="flex gap-1.5">
+   723→              <Button size="sm" className="h-7 text-xs" onClick={() => onEditSubmit(editText)}>
+   724→                <Check className="w-3 h-3 mr-1" /> Save
+   725→              </Button>
+   726→              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditing(false)}>
+   727→                <X className="w-3 h-3 mr-1" /> Cancel
+   728→              </Button>
+   729→            </div>
+   730→          </div>
+   731→        ) : (
+   732→          <>
+   733→            {/* Don't show body text for invite messages (it's JSON) or for
+   734→                audio messages (the VoiceMessagePlayer already communicates
+   735→                what it is via its label — showing "Voice message" text below
+   736→                the player is redundant and looks unstyled). */}
+   737→            {m.mediaType !== 'invite-call' && m.mediaType !== 'invite-music' && !m.mediaType?.startsWith('audio') && !isAudioFile(m.mediaUrl, m.mediaType) && (
+   738→              <div className="whitespace-pre-wrap">{m.body}</div>
+   739→            )}
+   740→            {m.editedAt && (
+   741→              <span className={cn('text-[10px] opacity-60 ml-1')}>
+   742→                edited
+   743→              </span>
+   744→            )}
+   745→          </>
+   746→        )}
+   747→      </div>
+   748→
+   749→      {/* Hover/tap actions */}
+   750→      {!isEditing && (
+   751→        <div
+   752→          className={cn(
+   753→            'opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity flex items-center',
+   754→            'bg-card/95 backdrop-blur-sm rounded-full shadow-sm border border-border/50',
+   755→            isMine ? 'order-first' : ''
+   756→          )}
+   757→        >
+   758→          <button onClick={props.onReply} className="p-1.5 hover:bg-accent rounded-full" title="Reply">
+   759→            <Reply className="w-3.5 h-3.5" />
+   760→          </button>
+   761→          {isMine && (
+   762→            <>
+   763→              <button onClick={() => setEditing(true)} className="p-1.5 hover:bg-accent rounded-full" title="Edit">
+   764→                <Edit2 className="w-3.5 h-3.5" />
+   765→              </button>
+   766→              <button onClick={props.onDelete} className="p-1.5 hover:bg-accent text-red-500 rounded-full" title="Delete">
+   767→                <Trash2 className="w-3.5 h-3.5" />
+   768→              </button>
+   769→            </>
+   770→          )}
+   771→        </div>
+   772→      )}
+   773→    </motion.div>
+   774→  )
+   775→}
+   776→
+   777→// ─── Transcript button for voice messages ───────────────────────────────────
+   778→//
+   779→// Shows a "Show transcript" toggle below voice messages. The transcript can
+   780→// come from three sources (checked in order):
+   781→//   1. m.transcript — populated by the server's auto-transcription background
+   782→//      job (which fires when the voice message is uploaded)
+   783→//   2. A manual /api/asr call — if auto-transcription hasn't completed yet
+   784→//      (or the server was down when the message was sent), the user can
+   785→//      click the button to force transcription on demand
+   786→//   3. If both fail, we show "(transcription unavailable)"
+   787→
+   788→function TranscriptButton({ message, isMine }: { message: ChannelMessage; isMine: boolean }) {
+   789→  const [expanded, setExpanded] = useState(false)
+   790→  const [loading, setLoading] = useState(false)
+   791→  const [manualTranscript, setManualTranscript] = useState<string | null>(null)
+   792→  const [error, setError] = useState<string | null>(null)
+   793→  // Track whether the user manually re-transcribed. If so, the manual result
+   794→  // takes priority over the (possibly stale/garbage) cached message.transcript.
+   795→  const [manualOverride, setManualOverride] = useState(false)
+   796→
+   797→  // If auto-transcription already produced a transcript, use it directly —
+   798→  // UNLESS the user has manually re-transcribed (manualOverride), in which
+   799→  // case the manual result wins. This fixes the cache bug where a failed
+   800→  // auto-transcription (e.g. "..." or null) would persist even after a
+   801→  // successful manual retry.
+   802→  const transcript = manualOverride ? manualTranscript : (manualTranscript || message.transcript)
+   803→
+   804→  const handleShow = async () => {
+   805→    // If we already have a valid transcript and no error, just toggle
+   806→    if (transcript && !error) {
+   807→      setExpanded((v) => !v)
+   808→      return
+   809→    }
+   810→
+   811→    // Otherwise, fetch it on demand via /api/asr
+   812→    setLoading(true)
+   813→    setError(null) // Clear any previous error before retrying
+   814→    try {
+   815→      const res = await fetch('/api/asr', {
+   816→        method: 'POST',
+   817→        headers: { 'Content-Type': 'application/json' },
+   818→        body: JSON.stringify({
+   819→          mediaUrl: message.mediaUrl,
+   820→          messageId: message.id,
+   821→        }),
+   822→      })
+   823→      if (!res.ok) {
+   824→        const err = await res.json().catch(() => ({}))
+   825→        throw new Error(err.error || `HTTP ${res.status}`)
+   826→      }
+   827→      const data = await res.json()
+   828→      if (data.text && /[a-zA-Z0-9]/.test(data.text)) {
+   829→        // Valid transcription — update state and override the cached value
+   830→        setManualTranscript(data.text)
+   831→        setManualOverride(true)
+   832→        setExpanded(true)
+   833→      } else {
+   834→        setError('No speech detected (transcription returned empty or garbage)')
+   835→      }
+   836→    } catch (e: any) {
+   837→      setError(e?.message || 'Transcription failed — is the ASR server running?')
+   838→    } finally {
+   839→      setLoading(false)
+   840→    }
+   841→  }
+   842→
+   843→  // Don't render the button at all if there's no transcript and no mediaUrl
+   844→  // to transcribe
+   845→  if (!message.mediaUrl) return null
+   846→
+   847→  return (
+   848→    <div className="mt-1">
+   849→      <button
+   850→        onClick={handleShow}
+   851→        disabled={loading}
+   852→        className={cn(
+   853→          'flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors',
+   854→          isMine
+   855→            ? 'bg-black/10 hover:bg-black/20 text-foreground/70'
+   856→            : 'bg-black/10 hover:bg-black/20 text-foreground/70',
+   857→          loading && 'opacity-60 cursor-wait'
+   858→        )}
+   859→      >
+   860→        {loading ? (
+   861→          <Loader2 className="w-3 h-3 animate-spin" />
+   862→        ) : (
+   863→          <FileText className="w-3 h-3" />
+   864→        )}
+   865→        {transcript
+   866→          ? (expanded ? 'Hide transcript' : 'Show transcript')
+   867→          : (loading ? 'Transcribing…' : 'Transcribe')}
+   868→      </button>
+   869→
+   870→      {error && (
+   871→        <p className="mt-1 text-[11px] text-red-500/80 px-2">{error}</p>
+   872→      )}
+   873→
+   874→      {expanded && transcript && (
+   875→        <div className={cn(
+   876→          'mt-1.5 px-2.5 py-2 rounded-lg text-xs leading-relaxed border-l-2',
+   877→          isMine
+   878→            ? 'bg-black/10 border-primary/50 text-foreground/80'
+   879→            : 'bg-black/15 border-primary/50 text-foreground/80'
+   880→        )}>
+   881→          <p className="font-medium text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+   882→            Transcript
+   883→          </p>
+   884→          <p>{transcript}</p>
+   885→        </div>
+   886→      )}
+   887→    </div>
+   888→  )
+   889→}
+   890→
