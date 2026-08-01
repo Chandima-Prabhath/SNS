@@ -2,6 +2,18 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { z } from 'zod'
+
+const profileUpdateSchema = z.object({
+  displayName: z.string().min(1).max(50).optional(),
+  bio: z.string().max(500).optional(),
+  avatarUrl: z.string().max(500).optional().nullable(),
+  customStatus: z.string().max(100).optional().nullable(),
+  status: z.enum(['online', 'idle', 'dnd', 'offline']).optional(),
+  lastSeenVisible: z.boolean().optional(),
+  readReceiptsEnabled: z.boolean().optional(),
+  typingIndicatorsEnabled: z.boolean().optional(),
+})
 
 // Update own profile
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -14,11 +26,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
 
   const body = await req.json()
-  const allowed = ['displayName', 'bio', 'avatarUrl', 'customStatus', 'status', 'lastSeenVisible', 'readReceiptsEnabled', 'typingIndicatorsEnabled']
-  const data: any = {}
-  for (const k of allowed) {
-    if (k in body) data[k] = body[k]
+
+  // Validate input
+  const parsed = profileUpdateSchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'validation failed', details: parsed.error.issues }, { status: 400 })
   }
+
+  const data = parsed.data
 
   const updated = await db.user.update({
     where: { id: userId },

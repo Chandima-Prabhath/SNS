@@ -58,10 +58,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const body = await req.json()
   const text = (body.body || '').trim()
   if (!text) return NextResponse.json({ error: 'empty message' }, { status: 400 })
+  if (text.length > 5000) return NextResponse.json({ error: 'message too long (max 5000 chars)' }, { status: 400 })
 
   const replyToId = body.replyToId || null
   const mediaUrl = body.mediaUrl || null
   const mediaType = body.mediaType || null
+
+  // Validate mediaUrl format if provided
+  if (mediaUrl && !mediaUrl.startsWith('/api/uploads/')) {
+    return NextResponse.json({ error: 'mediaUrl must start with /api/uploads/' }, { status: 400 })
+  }
+  if (mediaType && typeof mediaType !== 'string') {
+    return NextResponse.json({ error: 'mediaType must be a string' }, { status: 400 })
+  }
 
   const message = await db.message.create({
     data: {

@@ -2,17 +2,33 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import sharp from 'sharp'
-import { readFile } from 'fs/promises'
+import { readFile, mkdir, stat } from 'fs/promises'
+import { existsSync } from 'fs'
+import { createReadStream } from 'fs'
+import { Readable } from 'stream'
 import path from 'path'
+import crypto from 'crypto'
 
 /**
  * GET /api/img?src=/uploads/xxx.png&w=400&q=60
  *
- * Server-side image optimization using sharp.
- * Generates a resized, compressed version of the original image.
+ * Server-side image optimization using sharp with ON-DISK CACHING.
+ *
+ * The first request for a given (src, w, q) combination runs sharp and
+ * saves the result to public/cache/img/<hash>.webp. Subsequent requests
+ * for the same combination stream the cached file directly — no sharp
+ * processing needed.
+ *
+ * Cache key: sha256(src + w + q) — deterministic, collision-free.
+ * Cache format: WebP (best compression for photos, supported by all
+ * modern browsers).
+ *
  * Used for progressive loading: fetch a small version first (w=40, q=30),
  * then upgrade to a larger version.
  */
+
+const CACHE_DIR = path.join(process.cwd(), 'public', 'cache', 'img')
+
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -24,30 +40,54 @@ export async function GET(req: Request) {
 
   if (!src) return NextResponse.json({ error: 'src required' }, { status: 400 })
 
-  // Normalize source path — /api/uploads/xxx.png and /uploads/xxx.png both
-  // point to the same file on disk (public/uploads/xxx.png). Strip /api prefix.
+  // Normalize source path
   const normalizedSrc = src.replace(/^\/api\/uploads\//, '/uploads/')
   const safePath = normalizedSrc.replace(/\.\./g, '').replace(/^\//, '')
   const filePath = path.join(process.cwd(), 'public', safePath)
 
+  // Generate cache key: sha256(src + w + q)
+  const cacheKey = crypto.createHash('sha256').update(`${safePath}-${w}-${q}`).digest('hex').slice(0, 32)
+  const cachePath = path.join(CACHE_DIR, `${cacheKey}.webp`)
+
+  // ── Cache hit: stream the cached file directly (no sharp processing) ──
+  if (existsSync(cachePath)) {
+    try {
+      const fileStat = await stat(cachePath)
+      if (fileStat.size > 0) {
+        const stream = createReadStream(cachePath)
+        const webStream = Readable.toWeb(stream) as ReadableStream
+        return new Response(webStream, {
+          headers: {
+            'Content-Type': 'image/webp',
+            'Cache-Control': 'public, max-age=31536000, immutable',
+          },
+        })
+      }
+    } catch {
+      // Cache file corrupted — fall through to re-generate
+    }
+  }
+
+  // ── Cache miss: run sharp and save to cache ──
   try {
     const buffer = await readFile(filePath)
-    const ext = path.extname(filePath).toLowerCase()
-    let pipeline = sharp(buffer).resize(w, null, { withoutEnlargement: true })
+    const output = await sharp(buffer)
+      .resize(w, null, { withoutEnlargement: true })
+      .webp({ quality: q })
+      .toBuffer()
 
-    if (ext === '.png') {
-      pipeline = pipeline.png({ quality: q, compressionLevel: 9 })
-    } else if (ext === '.webp') {
-      pipeline = pipeline.webp({ quality: q })
-    } else {
-      pipeline = pipeline.jpeg({ quality: q, progressive: true })
+    // Save to cache (best-effort — don't fail if cache write fails)
+    try {
+      if (!existsSync(CACHE_DIR)) await mkdir(CACHE_DIR, { recursive: true })
+      const { writeFile } = await import('fs/promises')
+      await writeFile(cachePath, output)
+    } catch {
+      // Cache write failed (disk full, permissions) — non-fatal
     }
-
-    const output = await pipeline.toBuffer()
 
     return new NextResponse(new Uint8Array(output), {
       headers: {
-        'Content-Type': ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg',
+        'Content-Type': 'image/webp',
         'Cache-Control': 'public, max-age=31536000, immutable',
       },
     })
