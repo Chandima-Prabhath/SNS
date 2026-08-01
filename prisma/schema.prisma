@@ -62,6 +62,7 @@ model User {
   settings        UserSetting[]
   userSessions    UserSession[]
   likedSongs      LikedSong[]
+  playHistory     PlayHistory[]
   playlists       Playlist[]
   sessions        Session[]
   accounts        Account[]
@@ -134,6 +135,21 @@ model LikedSong {
 
   @@unique([userId, videoId])
   @@index([userId])
+}
+
+/** Play history — per-user, synced across devices via DB. */
+model PlayHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoId   String
+  title     String
+  artist    String
+  thumbnail String?
+  durationSeconds Int?
+  playedAt  DateTime @default(now())
+
+  @@index([userId, playedAt])
 }
 
 /** User-created playlists. */

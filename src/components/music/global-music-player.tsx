@@ -190,21 +190,36 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
         } catch (e: any) {
           useMusicStore.getState().setIsLoading(false)
           if (e?.name === 'NotSupportedError' || e?.name === 'MediaError') {
-            try {
-              const res = await fetch(`/api/music/stream/${track.videoId}`, {
-                method: 'HEAD',
-              })
-              if (!res.ok) {
-                const data = await res.json().catch(() => ({}))
-                toast.error(data.error || 'Could not download this track.')
-                setCurrentTrack(null)
-                setIsPlaying(false)
+            // The stream returned 202 (download in progress) or failed.
+            // Retry after 2s — the server-side preload should have the track
+            // ready by then. Max 3 retries before giving up.
+            const videoId = track.videoId
+            let retries = 0
+            const retry = async () => {
+              retries++
+              if (retries > 3) {
+                toast.error('Could not load this track — try skipping.')
+                return
               }
-            } catch {
-              toast.error(
-                'The server is downloading this track — try again in a moment.',
-              )
+              // Check if the track is now cached
+              try {
+                const res = await fetch(`/api/music/stream/${videoId}`, { method: 'HEAD' })
+                if (res.status === 200 || res.ok) {
+                  // Track is ready — reload the audio element
+                  if (audioRef.current && loadedVideoIdRef.current === videoId) {
+                    audioRef.current.load()
+                    audioRef.current.play().catch(() => {})
+                  }
+                } else if (res.status === 202) {
+                  // Still downloading — retry in 2s
+                  setTimeout(retry, 2000)
+                }
+              } catch {
+                // Network error — retry in 2s
+                setTimeout(retry, 2000)
+              }
             }
+            setTimeout(retry, 2000)
           }
         }
       }

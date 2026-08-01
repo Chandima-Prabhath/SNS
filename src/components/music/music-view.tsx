@@ -34,30 +34,15 @@ interface Room {
 type Tab = 'browse' | 'rooms' | 'queue' | 'library'
 type LibraryTab = 'history' | 'liked' | 'playlists'
 
-const HISTORY_KEY = 'adoo-music-history'
 const MAX_HISTORY = 50
 
-/** Track shape used by the UI. The DB stores the same fields (minus the
- *  `order` column on PlaylistSong which we don't expose in the UI). */
+/** Track shape used by the UI. */
 interface DbTrack extends Track {}
 interface Playlist {
   id: string
   name: string
   songs: Track[]
   updatedAt?: string
-}
-
-function loadHistory(): Track[] {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY)
-    return raw ? JSON.parse(raw) : []
-  } catch { return [] }
-}
-
-function saveHistory(tracks: Track[]) {
-  try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(tracks.slice(0, MAX_HISTORY)))
-  } catch {}
 }
 
 /**
@@ -83,7 +68,6 @@ export function MusicView() {
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchAbortRef = useRef<AbortController | null>(null)
   const qc = useQueryClient()
-  const [history, setHistory] = useState<Track[]>([])
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('history')
   const [newPlaylistName, setNewPlaylistName] = useState('')
   const [showNewPlaylistInput, setShowNewPlaylistInput] = useState(false)
@@ -103,6 +87,17 @@ export function MusicView() {
     },
   })
   const liked: Track[] = likedData?.songs || []
+
+  // ── DB-backed play history (react-query) ─────────────────────────────
+  const { data: historyData } = useQuery({
+    queryKey: ['music-history'],
+    queryFn: async () => {
+      const res = await fetch('/api/music/history')
+      if (!res.ok) throw new Error('failed')
+      return res.json()
+    },
+  })
+  const history: Track[] = historyData?.songs || []
 
   // ── DB-backed playlists (react-query) ────────────────────────────────
   const { data: playlistsData } = useQuery({
@@ -163,11 +158,6 @@ export function MusicView() {
 
   // ─── Player actions (broadcast + audio handled by global player) ──────
   const { playTrack, playNext, removeFromQueue, clearQueue } = useMusicPlayer()
-
-  // Load history on mount (history stays in localStorage — it's per-device)
-  useEffect(() => {
-    setHistory(loadHistory())
-  }, [])
 
   // ── Liked songs helpers (DB-backed) ──────────────────────────────────
   const toggleLike = async (track: Track) => {
@@ -277,17 +267,25 @@ export function MusicView() {
     }
   }
 
-  // Track when the current track changes — add to history
+  // Track when the current track changes — add to DB-backed history
   useEffect(() => {
     if (currentTrack) {
-      setHistory((prev) => {
-        const filtered = prev.filter((t) => t.videoId !== currentTrack.videoId)
-        const updated = [currentTrack, ...filtered].slice(0, MAX_HISTORY)
-        saveHistory(updated)
-        return updated
-      })
+      // POST to DB — deduplicates + trims server-side
+      fetch('/api/music/history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoId: currentTrack.videoId,
+          title: currentTrack.title,
+          artist: currentTrack.artist,
+          thumbnail: currentTrack.thumbnail,
+          durationSeconds: currentTrack.durationSeconds,
+        }),
+      }).then(() => {
+        qc.invalidateQueries({ queryKey: ['music-history'] })
+      }).catch(() => {})
     }
-  }, [currentTrack])
+  }, [currentTrack, qc])
 
   // Fetch trending
   const { data: trendingData, isLoading: trendingLoading } = useQuery({
@@ -1002,9 +1000,12 @@ export function MusicView() {
                             variant="ghost"
                             size="sm"
                             onClick={() => {
-                              setHistory([])
-                              saveHistory([])
-                              toast.success('History cleared')
+                              fetch('/api/music/history', { method: 'DELETE' })
+                                .then(() => {
+                                  qc.invalidateQueries({ queryKey: ['music-history'] })
+                                  toast.success('History cleared')
+                                })
+                                .catch(() => toast.error('Failed to clear history'))
                             }}
                             className="text-red-400 hover:text-red-300 h-7 text-xs"
                           >
