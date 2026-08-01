@@ -4,43 +4,14 @@ import { authOptions } from '@/lib/auth'
 import { createReadStream, statSync, existsSync } from 'fs'
 import { Readable } from 'stream'
 import path from 'path'
+import { UPLOAD_DIR, getMimeType, validateExtension, ALLOWED_EXTENSIONS } from '@/lib/media'
 
 // Force dynamic Node.js route — we read from disk on every request.
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// Allowed file extensions — blocks SVG (XSS), HTML, JS, etc.
-const ALLOWED_EXTENSIONS = new Set([
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico',
-  '.mp3', '.wav', '.ogg', '.webm', '.m4a', '.flac',
-  '.mp4', '.mov', '.avi',
-  '.pdf', '.txt',
-  '.safetensors',
-  '.bin',
-])
-
-// MIME type map for common upload extensions. Browsers need the correct
-// Content-Type to play audio/video inline.
-const MIME_TYPES: Record<string, string> = {
-  '.wav': 'audio/wav',
-  '.mp3': 'audio/mpeg',
-  '.ogg': 'audio/ogg',
-  '.webm': 'audio/webm',
-  '.m4a': 'audio/mp4',
-  '.flac': 'audio/flac',
-  '.mp4': 'video/mp4',
-  '.mov': 'video/quicktime',
-  '.avi': 'video/x-msvideo',
-  '.webm-video': 'video/webm',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.png': 'image/png',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.pdf': 'application/pdf',
-  '.bin': 'application/octet-stream',
-}
+// ALLOWED_EXTENSIONS + MIME_TYPES are now imported from src/lib/media.ts
+// (single source of truth shared with /api/upload)
 
 /**
  * GET /api/uploads/[filename] — Serve an uploaded file from public/uploads/.
@@ -99,7 +70,7 @@ export async function GET(
       return new NextResponse('File is empty', { status: 500 })
     }
 
-    const contentType = MIME_TYPES[ext] || 'application/octet-stream'
+    const contentType = getMimeType(ext)
 
     // Check for Range header (audio/video seeking)
     const rangeHeader = req.headers.get('range')

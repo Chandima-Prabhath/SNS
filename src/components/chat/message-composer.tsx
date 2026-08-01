@@ -137,11 +137,27 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const res = await fetch('/api/upload', { method: 'POST', body: formData })
-      if (!res.ok) {
-        const text = await res.text()
-        throw new Error(text.slice(0, 120) || 'Upload failed')
+
+      // Retry logic: try up to 2 times on failure
+      let res: Response | null = null
+      let lastError = ''
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          res = await fetch('/api/upload', { method: 'POST', body: formData })
+          if (res.ok) break
+          const text = await res.text()
+          lastError = text.slice(0, 120) || 'Upload failed'
+          if (res.status === 413 || res.status === 403) break // don't retry size/type errors
+        } catch (err: any) {
+          lastError = err?.message || 'Network error'
+        }
+        if (attempt === 0) await new Promise(r => setTimeout(r, 1000)) // wait 1s before retry
       }
+
+      if (!res || !res.ok) {
+        throw new Error(lastError || 'Upload failed after retries')
+      }
+
       const data = await res.json()
       await send({
         body: data.type.startsWith('image') ? 'Photo' : 'File',
