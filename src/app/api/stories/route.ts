@@ -10,28 +10,34 @@ export async function GET() {
   const userId = (session.user as any).id
   const now = new Date()
 
-  // Get all non-expired stories
+  // Get non-expired stories visible to me — filtered in DB, not in JS.
+  // This avoids loading ALL stories + audience lists into memory.
   const stories = await db.story.findMany({
-    where: { expiresAt: { gt: now } },
+    where: {
+      expiresAt: { gt: now },
+      OR: [
+        { userId }, // my own stories
+        { audience: 'all' }, // public stories
+        {
+          audience: 'include',
+          audienceList: { some: { userId } }, // I'm in the include list
+        },
+        {
+          audience: 'exclude',
+          audienceList: { none: { userId } }, // I'm NOT in the exclude list
+        },
+      ],
+    },
     include: {
       user: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
       viewers: { select: { userId: true, viewedAt: true } },
-      audienceList: { select: { userId: true } },
     },
     orderBy: { createdAt: 'desc' },
   })
 
-  // Filter by audience
-  const visible = stories.filter((s) => {
-    if (s.userId === userId) return true
-    if (s.audience === 'all') return true
-    const inList = s.audienceList.some((a) => a.userId === userId)
-    return s.audience === 'include' ? inList : !inList
-  })
-
   // Group by user
   const byUser: Record<string, any> = {}
-  for (const s of visible) {
+  for (const s of stories) {
     if (!byUser[s.userId]) {
       byUser[s.userId] = {
         userId: s.userId,
