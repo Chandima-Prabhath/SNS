@@ -72,7 +72,10 @@ export const authOptions: NextAuthOptions = {
 
         // If user was deleted or tokenVersion was bumped (force logout),
         // invalidate the token by returning an empty object.
-        if (!dbUser || dbUser.tokenVersion !== token.tokenVersion) {
+        // Backward compat: old JWTs don't have tokenVersion (undefined).
+        // Treat undefined as 0 so existing sessions aren't broken.
+        const jwtVersion = (token.tokenVersion as number) ?? 0
+        if (!dbUser || dbUser.tokenVersion !== jwtVersion) {
           return {} as any // forces re-auth
         }
 

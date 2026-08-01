@@ -123,7 +123,6 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
         cookies['next-auth.session-token']
 
       if (!tokenRaw) {
-        console.log('[realtime auth] no session cookie found. Available cookies:', Object.keys(cookies))
         return next(new Error('unauthorized: no session cookie'))
       }
 
@@ -141,7 +140,6 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       } as any)
 
       if (!decoded || !decoded.id) {
-        console.log('[realtime auth] JWT decode returned null or missing id. decoded:', decoded ? Object.keys(decoded) : 'null')
         return next(new Error('unauthorized: invalid session'))
       }
 
