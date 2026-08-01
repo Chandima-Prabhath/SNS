@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { SessionProvider } from 'next-auth/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
+import { ReactFlowProvider } from '@xyflow/react'
 import { BotBuilderEditor } from '@/components/bots/bot-builder-editor'
 import type { BotFlow } from '@/lib/bot/flow-types'
 import { Button } from '@/components/ui/button'
@@ -86,7 +87,9 @@ function BotBuilderContent() {
       </header>
 
       <div className="flex-1 min-h-0">
-        <BotBuilderEditor initialFlow={initialFlow} onSave={handleSave} bot={bot} />
+        <ReactFlowProvider>
+          <BotBuilderEditor initialFlow={initialFlow} onSave={handleSave} bot={bot} />
+        </ReactFlowProvider>
       </div>
     </div>
   )
