@@ -5,9 +5,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useChannel } from '@/hooks/useChannel'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Reply, X, Send, Image as ImageIcon, Loader2, AudioLines, Sparkles,
-  Mic, Plus, Trash2, User,
+  Mic, Plus, Trash2, User, Smile,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -64,13 +65,38 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
       toast.error('Failed to send message')
     } finally {
       setSending(false)
+      // Re-focus on next tick so the textarea is ready for the next message.
+      // This fixes the 'focus lost after send' bug — previously the textarea
+      // was disabled during sending, the browser dropped focus to <body>, and
+      // nothing pulled it back.
+      requestAnimationFrame(() => textareaRef.current?.focus())
     }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Enter = send, Shift+Enter = newline (default behavior — fall through)
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
+      return
+    }
+    // Ctrl/Cmd+Enter = send (fallback for users who expect it)
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault()
+      handleSend()
+      return
+    }
+    // Escape = cancel reply, or clear draft if no reply
+    if (e.key === 'Escape') {
+      if (replyTo) {
+        e.preventDefault()
+        setReplyTo(null)
+      } else if (text) {
+        e.preventDefault()
+        setText('')
+        sendTyping(false)
+      }
+      return
     }
   }
 
@@ -104,6 +130,47 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
       setUploading(false)
       e.target.value = ''
     }
+  }
+
+  // Paste handler — if the user pastes an image, upload and send it directly
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile()
+        if (!file) continue
+        e.preventDefault()
+        setUploading(true)
+        try {
+          const formData = new FormData()
+          formData.append('file', file, `pasted-${Date.now()}.png`)
+          const res = await fetch('/api/upload', { method: 'POST', body: formData })
+          if (!res.ok) throw new Error('Upload failed')
+          const data = await res.json()
+          await send({
+            body: 'Photo',
+            mediaUrl: data.url,
+            mediaType: data.type,
+          })
+        } catch (err: any) {
+          toast.error(err.message || 'Paste upload failed')
+        } finally {
+          setUploading(false)
+        }
+        return
+      }
+    }
+    // Fall through: plain-text paste (incl. URLs) behaves normally
+  }
+
+  // Common emoji set for the desktop picker (no library needed)
+  const EMOJI_SET = '😀 😂 ❤️ 👍 🙏 🔥 😎 🥳 🤔 😴 😭 😡 🎉 💀 🤝 👀 🥺 😘 💕 😅 😬 🤯 😇 🙃 😮 😌 🥰 😋 🤗 ✅ ❌ ⚠️ 🔔 📌 💡 🎁 📷 🎬 🎵 ⏰ ⭐ 🌟 ⚡ 🚀 💪 👏 🫡 🤙 👋 💯 🎊 🥂 🍻 🎂 🌈 ☀️ 🌙 ⛄ 🌸 🌹 🍕 🍔 🍟 🥗 🍣 🍦 ☕ 🍺 🎮 🎧 📚 ✈️ 🚗 ⚽ 🏀 🎯 🏆 🎨'.split(' ')
+
+  const handleEmojiPick = (emoji: string) => {
+    setText((t) => t + emoji)
+    // Keep focus in the textarea so the user can continue typing
+    requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
   return (
@@ -171,6 +238,31 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
             <input type="file" className="hidden" accept="image/*,video/*,audio/*" onChange={handleUpload} disabled={uploading} />
           </label>
 
+          {/* Emoji picker (desktop only — mobile users have native keyboards) */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                className="hidden md:flex w-10 h-10 items-center justify-center rounded-full transition-all shrink-0 text-muted-foreground hover:bg-primary/10 hover:text-primary active:scale-90"
+                title="Emoji"
+              >
+                <Smile className="w-[22px] h-[22px] transition-colors" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 p-2" side="top" align="start">
+              <div className="grid grid-cols-8 gap-0.5 text-2xl max-h-64 overflow-y-auto">
+                {EMOJI_SET.map((e, i) => (
+                  <button
+                    key={i}
+                    onClick={() => handleEmojiPick(e)}
+                    className="hover:bg-accent rounded p-1 transition-colors text-center leading-none"
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+
           <button
             onClick={() => setTtsOpen(true)}
             className="hidden md:flex w-10 h-10 items-center justify-center rounded-full transition-all shrink-0 text-muted-foreground hover:bg-primary/10 hover:text-primary active:scale-90"
@@ -228,17 +320,27 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
           </div>
 
           {/* Text input — grows up to ~4 lines */}
-          <div className="flex-1 min-w-0 bg-transparent rounded-2xl px-3 py-2 flex items-end focus-within:bg-white/5 transition-colors">
+          <div className="flex-1 min-w-0 bg-transparent rounded-2xl px-3 py-2 flex items-end focus-within:bg-white/5 transition-colors relative">
             <Textarea
               ref={textareaRef}
               value={text}
               onChange={handleChange}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               placeholder="Type a message..."
+              maxLength={5000}
               className="flex-1 resize-none min-h-[24px] max-h-[160px] bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 p-0 text-[16px] leading-relaxed shadow-none placeholder:text-muted-foreground/60"
-              disabled={sending || uploading}
               rows={1}
             />
+            {/* Character counter — only visible when approaching the limit */}
+            {text.length > 4500 && (
+              <span className={cn(
+                'text-[10px] tabular-nums shrink-0 self-end mb-1.5 mr-1',
+                text.length >= 5000 ? 'text-red-500' : 'text-muted-foreground'
+              )}>
+                {text.length}/5000
+              </span>
+            )}
           </div>
 
           {/* Send button */}

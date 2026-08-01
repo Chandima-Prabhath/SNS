@@ -276,6 +276,35 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       })
     })
 
+    // Delivery ACK — when a client receives a message via 'channel:message',
+    // it emits 'channel:delivered' back. We update the DB and broadcast to
+    // the sender so their UI can show the single-checkmark "delivered" state.
+    socket.on('channel:delivered', async (payload: { channelId: string; messageId: string }) => {
+      try {
+        // Only update if deliveredAt is not already set (avoid redundant writes)
+        const msg = await db.message.findUnique({
+          where: { id: payload.messageId },
+          select: { deliveredAt: true, senderId: true },
+        })
+        if (!msg || msg.deliveredAt) return  // already delivered or not found
+        // Don't ACK your own messages (the sender client also emits this)
+        if (msg.senderId === userId) return
+
+        await db.message.update({
+          where: { id: payload.messageId },
+          data: { deliveredAt: new Date() },
+        })
+
+        // Broadcast to the channel (the sender will pick this up and update their UI)
+        socket.to(`channel:${payload.channelId}`).emit('channel:delivered', {
+          messageId: payload.messageId,
+          channelId: payload.channelId,
+        })
+      } catch (e) {
+        // Best-effort — don't let delivery ACK failures break anything
+      }
+    })
+
     // ─── Status / Stories ────────────────────────────────────────────────
     socket.on('story:posted', (payload: { story: any }) => {
       socket.broadcast.emit('story:posted', payload.story)

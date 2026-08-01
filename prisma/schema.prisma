@@ -272,6 +272,11 @@ model Message {
   // disappearing messages (TTL)
   expiresAt   DateTime?
 
+  // deliveredAt — set when ANY other client receives the message via socket.
+  // Used to show the single-checkmark "delivered" state (message reached
+  // the recipient's device). NULL = still pending delivery.
+  deliveredAt DateTime?
+
   createdAt   DateTime @default(now())
 
   readReceipts MessageReadReceipt[]

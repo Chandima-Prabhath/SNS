@@ -28,6 +28,9 @@ export interface ChannelMessage {
    *  progress or for non-audio messages. Populated by the auto-transcription
    *  background job or via the /api/asr proxy route. */
   transcript?: string | null
+  /** Timestamp when the message was delivered to at least one recipient's
+   *  device. NULL = still pending. Used for the single-checkmark state. */
+  deliveredAt?: string | null
   /** Telegram-style inline keyboard — JSON string of KeyboardButton[][].
    *  Parsed by the message renderer into tappable buttons. */
   keyboard: string | null
@@ -76,6 +79,14 @@ export function useChannel(channelId: string | null) {
         if (old.some((m) => m.id === msg.id)) return old
         return [...old, msg]
       })
+      // ACK delivery to the sender — emit a 'channel:delivered' event back
+      // through the socket. The server will update Message.deliveredAt and
+      // broadcast to the sender's other devices. We ACK ALL incoming messages
+      // (even our own, which the server ignores) — simpler than tracking the
+      // current user ID here.
+      if (socket && msg.senderType === 'user') {
+        socket.emit('channel:delivered', { channelId, messageId: msg.id })
+      }
     }
     const onEdit = (msg: any) => {
       qc.setQueryData(['messages', channelId], (old: ChannelMessage[] | undefined) => {
@@ -100,15 +111,26 @@ export function useChannel(channelId: string | null) {
         )
       })
     }
+    const onDelivered = (payload: { messageId: string; channelId: string }) => {
+      if (payload.channelId !== channelId) return
+      qc.setQueryData(['messages', channelId], (old: ChannelMessage[] | undefined) => {
+        if (!old) return old
+        return old.map((m) =>
+          m.id === payload.messageId ? { ...m, deliveredAt: new Date().toISOString() } : m
+        )
+      })
+    }
     socket.on('channel:message', onMessage)
     socket.on('channel:message-edit', onEdit)
     socket.on('channel:message-delete', onDelete)
     socket.on('channel:message-transcribed', onTranscribed)
+    socket.on('channel:delivered', onDelivered)
     return () => {
       socket.off('channel:message', onMessage)
       socket.off('channel:message-edit', onEdit)
       socket.off('channel:message-delete', onDelete)
       socket.off('channel:message-transcribed', onTranscribed)
+      socket.off('channel:delivered', onDelivered)
     }
   }, [socket, channelId, qc])
 

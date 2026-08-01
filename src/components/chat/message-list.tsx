@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useMemo } from 'react'
 import { useChannel, type ChannelMessage, type KeyboardButton } from '@/hooks/useChannel'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { Reply, Edit2, Trash2, X, Check, Image as ImageIcon, Bot, UserX, Copy, Pin, AudioLines, ChevronDown, Phone, Video, Music as MusicIcon, FileText, Loader2 } from 'lucide-react'
+import { Reply, Edit2, Trash2, X, Check, CheckCheck, Image as ImageIcon, Bot, UserX, Copy, Pin, AudioLines, ChevronDown, Phone, Video, Music as MusicIcon, FileText, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { format, isToday, isYesterday } from 'date-fns'
 import { useAppStore } from '@/stores/useAppStore'
@@ -743,6 +743,30 @@ function MessageItem(props: MessageItemProps) {
               </span>
             )}
           </>
+        )}
+
+        {/* Read receipt checkmarks — only on the LAST own message in a group.
+            - No checkmark = sending / not yet delivered
+            - Single Check (gray) = delivered to recipient's device
+            - Double CheckCheck (blue) = read by at least one recipient
+            Matches WhatsApp/Telegram convention. */}
+        {isMine && isLastOfGroup && m.senderType === 'user' && (
+          <div className="flex justify-end mt-0.5">
+            <span className={cn(
+              'text-[10px] inline-flex items-center',
+              (m.readReceipts?.length ?? 0) > 0
+                ? 'text-blue-400'
+                : 'text-foreground/50'
+            )}>
+              {(m.readReceipts?.length ?? 0) > 0 ? (
+                <CheckCheck className="w-3.5 h-3.5" />
+              ) : m.deliveredAt ? (
+                <Check className="w-3.5 h-3.5" />
+              ) : (
+                <Check className="w-3.5 h-3.5 opacity-50" />
+              )}
+            </span>
+          </div>
         )}
       </div>
 
