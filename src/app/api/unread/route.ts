@@ -21,25 +21,26 @@ export async function GET() {
 
   // Single query: for each channel membership, count messages after the
   // lastReadMessageId's createdAt timestamp (or all messages if no lastRead).
-  // Uses a subquery to get the lastRead message's createdAt.
-  const rows = await db.$queryRaw`
+  // Uses $queryRawUnsafe — SQLite doesn't support Prisma's tagged template
+  // array params. Also SQLite uses CAST() instead of ::int for type casting.
+  const rows = await db.$queryRawUnsafe(`
     SELECT
       cm."channelId",
-      COUNT(m.id)::int as "unreadCount"
+      COUNT(m.id) as "unreadCount"
     FROM "ChannelMember" cm
     LEFT JOIN "Message" m ON
       m."channelId" = cm."channelId"
-      AND m."senderId" != ${userId}
+      AND m."senderId" != ?
       AND m."senderType" = 'user'
       AND m."deletedAt" IS NULL
       AND m."createdAt" > COALESCE(
         (SELECT m2."createdAt" FROM "Message" m2 WHERE m2.id = cm."lastReadMessageId"),
-        '1970-01-01'::timestamp
+        '1970-01-01'
       )
-    WHERE cm."userId" = ${userId}
+    WHERE cm."userId" = ?
     GROUP BY cm."channelId"
     HAVING COUNT(m.id) > 0
-  ` as { channelId: string; unreadCount: number }[]
+  `, userId, userId) as { channelId: string; unreadCount: number }[]
 
   const unread: Record<string, number> = {}
   let total = 0

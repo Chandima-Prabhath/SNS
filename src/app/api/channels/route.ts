@@ -37,14 +37,16 @@ export async function GET() {
   //    Uses a correlated subquery — much faster than N findFirst queries.
   let latestByChannel = new Map<string, any>()
   if (textChannelIds.length > 0) {
+    // Use $queryRawUnsafe with manual placeholders — SQLite doesn't support
+    // array parameters in Prisma's tagged template $queryRaw.
     const placeholders = textChannelIds.map(() => '?').join(',')
-    const rows = await db.$queryRaw`
+    const sql = `
       SELECT m.*,
              u."displayName" as "senderDisplayName",
              u."username" as "senderUsername"
       FROM "Message" m
       LEFT JOIN "User" u ON u.id = m."senderId"
-      WHERE m."channelId" IN (${textChannelIds.map((id) => id)}) 
+      WHERE m."channelId" IN (${placeholders})
         AND m."deletedAt" IS NULL
         AND m."createdAt" = (
           SELECT MAX(m2."createdAt")
@@ -52,7 +54,8 @@ export async function GET() {
           WHERE m2."channelId" = m."channelId"
             AND m2."deletedAt" IS NULL
         )
-    ` as any[]
+    `
+    const rows = await db.$queryRawUnsafe(sql, ...textChannelIds) as any[]
 
     for (const row of rows) {
       latestByChannel.set(row.channelId, row)
