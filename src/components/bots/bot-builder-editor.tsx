@@ -728,8 +728,11 @@ export function BotBuilderEditor({ initialFlow, onSave, bot }: BotBuilderEditorP
 
   // ── Load example flow ───────────────────────────────────────────────
   const handleLoadExample = async () => {
-    const ok = await confirm({ title: 'Load the example "AI Assistant" bot?', message: 'It will replace the current canvas. You still need to Save to persist.', confirmLabel: 'Load Example' })
-    if (!ok) return
+    // No confirmation dialog — loading the example is non-destructive (the
+    // user still needs to click Save to persist it, and they can undo by
+    // navigating away without saving). The previous confirm() call caused
+    // a bug where the dialog stayed open after navigating away from the
+    // bot builder, because the Promise never resolved.
     const flow = EXAMPLE_BOT_FLOW
     setNodes(flow.nodes.map((n) => ({
       id: n.id,
