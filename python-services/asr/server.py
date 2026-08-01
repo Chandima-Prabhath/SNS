@@ -41,7 +41,7 @@ Environment variables
 ---------------------
 - MOONSHINE_MODEL       — 'moonshine/tiny' (default) or 'moonshine/base'
 - MOONSHINE_PRECISION   — 'float' (default) or 'quantized' (smaller, ~3% WER penalty)
-- ASR_HOST              — default '0.0.0.0'
+- ASR_HOST              — default '127.0.0.1' (localhost only for security)
 - ASR_PORT              — default '8001'
 - OMP_NUM_THREADS       — recommended set to 2-4 to avoid CPU contention with Node
 """
@@ -284,7 +284,7 @@ app = FastAPI(
 # Allow the Next.js server (and dev tools) to call us
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['*'],  # We're behind a private network; auth happens at Next.js layer
+    allow_origins=['http://localhost:3090'],  # Only allow the app server
     allow_methods=['GET', 'POST'],
     allow_headers=['*'],
 )
@@ -410,7 +410,7 @@ async def root():
 if __name__ == '__main__':
     import uvicorn
 
-    host = os.environ.get('ASR_HOST', '0.0.0.0')
+    host = os.environ.get('ASR_HOST', '127.0.0.1')
     port = int(os.environ.get('ASR_PORT', '8001'))
 
     log.info(f'━' * 60)

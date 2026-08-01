@@ -32,6 +32,10 @@ model User {
   // role
   role            String   @default("member") // owner | admin | member
 
+  // session security — incrementing this invalidates all existing JWTs for
+  // the user. Used by the "Sign out everywhere" feature.
+  tokenVersion    Int      @default(0)
+
   // privacy prefs (per-user)
   readReceiptsEnabled   Boolean @default(true)
   typingIndicatorsEnabled Boolean @default(true)
@@ -56,6 +60,7 @@ model User {
   hostedMusicRooms MusicRoom[]     @relation("MusicRoomHost")
   musicRoomMemberships MusicRoomMember[] @relation("MusicRoomMembers")
   settings        UserSetting[]
+  userSessions    UserSession[]
   likedSongs      LikedSong[]
   playlists       Playlist[]
   sessions        Session[]
@@ -91,6 +96,22 @@ model UserSetting {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, key])
+  @@index([userId])
+}
+
+// ─── Session management (device tracking) ──────────────────────────────────
+// Tracks each active session per user so they can see which devices are
+// logged in and revoke them. The tokenVersion on User is the master
+// "invalidate all" switch; this table is for per-device revocation.
+model UserSession {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userAgent   String?  // browser + OS string
+  ip          String?  // last known IP
+  createdAt   DateTime @default(now())
+  lastActiveAt DateTime @updatedAt
+
   @@index([userId])
 }
 

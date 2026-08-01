@@ -2,17 +2,11 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 /**
- * Rate limiting middleware — in-memory token bucket per IP+path tier.
+ * Middleware — rate limiting + security headers.
  *
- * Tiers:
- *   - auth:    5 req/min  (login, register — bcrypt is CPU-heavy)
- *   - ai:      5 req/min  (ASR, TTS — each spawns ffmpeg/Python processes)
- *   - upload:  10 req/min (file uploads — disk I/O)
- *   - default: 100 req/min (general API)
- *
- * On a 2vCPU/1GB VM, these limits prevent OOM and CPU exhaustion.
- * The in-memory map is fine for single-instance deploys. If the app ever
- * scales to multiple instances, switch to Redis-backed rate limiting.
+ * Runs on ALL requests (matcher: '/:path*').
+ * - API routes: rate limiting + security headers
+ * - Non-API routes: security headers only
  */
 
 interface Bucket {
@@ -21,13 +15,12 @@ interface Bucket {
 }
 
 const RATE_LIMITS: Record<string, { maxTokens: number; refillRate: number }> = {
-  auth: { maxTokens: 5, refillRate: 5 / 60 },     // 5 per minute
-  ai: { maxTokens: 5, refillRate: 5 / 60 },       // 5 per minute
-  upload: { maxTokens: 10, refillRate: 10 / 60 },  // 10 per minute
-  default: { maxTokens: 100, refillRate: 100 / 60 }, // 100 per minute
+  auth: { maxTokens: 5, refillRate: 5 / 60 },
+  ai: { maxTokens: 5, refillRate: 5 / 60 },
+  upload: { maxTokens: 10, refillRate: 10 / 60 },
+  default: { maxTokens: 100, refillRate: 100 / 60 },
 }
 
-// Use globalThis so the map survives hot-reloads in dev mode
 const globalForRateLimit = globalThis as unknown as { __adoo_rateLimit?: Map<string, Bucket> }
 const buckets: Map<string, Bucket> = globalForRateLimit.__adoo_rateLimit || new Map()
 globalForRateLimit.__adoo_rateLimit = buckets
@@ -47,18 +40,32 @@ function getClientIP(request: NextRequest): string {
   return 'unknown'
 }
 
+/** Add security headers to any response */
+function addSecurityHeaders(response: NextResponse): NextResponse {
+  response.headers.set('X-Content-Type-Options', 'nosniff')
+  response.headers.set('X-Frame-Options', 'DENY')
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+  response.headers.set('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()')
+  if (process.env.NODE_ENV === 'production') {
+    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  }
+  return response
+}
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
+  const isApi = pathname.startsWith('/api/')
 
-  // Only rate-limit API routes
-  if (!pathname.startsWith('/api/')) {
-    return NextResponse.next()
+  // ── Security headers on ALL routes ──────────────────────────────
+  if (!isApi) {
+    // Non-API route — just add security headers, no rate limiting
+    return addSecurityHeaders(NextResponse.next())
   }
 
+  // ── Rate limiting on API routes ─────────────────────────────────
   // Skip rate limiting for non-mutating GET requests on general API
-  // (reading channels/messages is frequent and cheap)
   if (request.method === 'GET' && getTier(pathname) === 'default') {
-    return NextResponse.next()
+    return addSecurityHeaders(NextResponse.next())
   }
 
   const tier = getTier(pathname)
@@ -74,15 +81,13 @@ export function middleware(request: NextRequest) {
     buckets.set(key, bucket)
   }
 
-  // Refill tokens based on time elapsed
   const elapsed = (now - bucket.lastRefill) / 1000
   bucket.tokens = Math.min(limit.maxTokens, bucket.tokens + elapsed * limit.refillRate)
   bucket.lastRefill = now
 
   if (bucket.tokens < 1) {
-    // Rate limited — return 429
     const retryAfter = Math.ceil(1 / limit.refillRate)
-    return NextResponse.json(
+    return addSecurityHeaders(NextResponse.json(
       { error: 'Too many requests. Please slow down.' },
       {
         status: 429,
@@ -92,18 +97,17 @@ export function middleware(request: NextRequest) {
           'X-RateLimit-Remaining': '0',
         },
       }
-    )
+    ))
   }
 
-  // Consume a token
   bucket.tokens -= 1
 
   const response = NextResponse.next()
   response.headers.set('X-RateLimit-Limit', String(limit.maxTokens))
   response.headers.set('X-RateLimit-Remaining', String(Math.floor(bucket.tokens)))
-  return response
+  return addSecurityHeaders(response)
 }
 
 export const config = {
-  matcher: '/api/:path*',
+  matcher: '/:path*',
 }
