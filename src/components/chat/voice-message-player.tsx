@@ -214,7 +214,7 @@ export function VoiceMessagePlayer({
       <audio
         ref={audioRef}
         src={src}
-        preload="metadata"
+        preload="none"
         className="hidden"
       />
 
