@@ -803,10 +803,10 @@ function MessageItem(props: MessageItemProps) {
             <span className={cn(
               'inline-flex items-center gap-0.5',
               (m.readReceipts?.length ?? 0) > 0
-                ? 'text-blue-400'
+                ? 'text-cyan-300'
                 : m.deliveredAt
-                  ? 'text-primary-foreground/70'
-                  : 'text-primary-foreground/40'
+                  ? 'text-white/90'
+                  : 'text-white/50'
             )}>
               {(m.readReceipts?.length ?? 0) > 0 ? (
                 <CheckCheck className="w-4 h-4" strokeWidth={2.5} />
