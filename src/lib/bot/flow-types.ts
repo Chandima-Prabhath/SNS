@@ -1621,7 +1621,7 @@ export function defaultNodeData(type: NodeType): FlowNodeData {
         label: 'AI Route',
         aiRoutePrompt: 'What does the user want to do?',
         aiRouteSystemPrompt: 'You are a routing assistant. Pick the best intent based on the user\'s message.',
-        aiRouteModel: 'gemma3:270m',
+        aiRouteModel: 'functiongemma',
         aiRouteIntents: ['play_music', 'tell_joke', 'ask_question'],
       }
     case 'music_play':

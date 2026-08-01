@@ -580,11 +580,32 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       position: number
       videoId?: string
       trackInfo?: any
+      queue?: { videoId: string }[]
     }) => {
       io.to(`music:${payload.roomId}`).emit('music:sync', {
         ...payload,
         serverTimestamp: Date.now(),
       })
+
+      // ── Server-side proactive preloading ────────────────────────────
+      // When the host broadcasts a playing state, proactively preload the
+      // current track + the next 2 tracks in the queue. This runs on the
+      // SERVER's event loop, completely independent of client tab throttling.
+      // By the time the song ends, the next track is already on disk.
+      if (payload.state === 'playing' && payload.videoId) {
+        import('@/lib/ytdlp-download').then(({ getOrCreateDownload }) => {
+          // Current track
+          getOrCreateDownload(payload.videoId!).catch(() => {})
+          // Next 2 tracks in the queue
+          if (payload.queue && payload.queue.length > 0) {
+            for (const track of payload.queue.slice(0, 2)) {
+              if (track.videoId) {
+                getOrCreateDownload(track.videoId).catch(() => {})
+              }
+            }
+          }
+        }).catch(() => {})
+      }
     })
 
     // Request sync — a member who just joined asks the host for the current

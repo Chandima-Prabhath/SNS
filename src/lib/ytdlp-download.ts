@@ -101,6 +101,54 @@ export function isCached(videoId: string): boolean {
   return existsSync(filePath) && statSync(filePath).size > 1000
 }
 
+// ─── Shared in-flight download tracker ──────────────────────────────────────
+// Prevents duplicate concurrent downloads of the same videoId. Shared across
+// the stream route, predownload route, and the server-side music:sync preload
+// hook. Uses globalThis so it survives hot-reloads in dev mode.
+const globalForDownloads = globalThis as unknown as {
+  __adoo_downloadInFlight?: Map<string, Promise<void>>
+}
+const inFlight: Map<string, Promise<void>> =
+  globalForDownloads.__adoo_downloadInFlight || new Map()
+globalForDownloads.__adoo_downloadInFlight = inFlight
+
+/** Check if a download is currently in progress for this videoId. */
+export function isDownloading(videoId: string): boolean {
+  return inFlight.has(videoId)
+}
+
+/**
+ * Get an existing download promise, or start a new one.
+ *
+ * This is the single entry point for downloading audio — used by:
+ *   - /api/music/stream/[videoId] (serves the audio)
+ *   - /api/music/predownload/[videoId] (client-triggered prefetch)
+ *   - realtime-server.ts music:sync hook (server-side proactive preload)
+ *
+ * Deduplicates concurrent downloads of the same videoId — if two callers
+ * request the same video, only one yt-dlp process runs; both await the
+ * same promise.
+ *
+ * @returns A Promise that resolves when the download is complete (or
+ *          immediately if already cached). The promise REJECTS on failure.
+ */
+export function getOrCreateDownload(videoId: string): Promise<void> {
+  // Already cached — resolve immediately
+  if (isCached(videoId)) return Promise.resolve()
+
+  // Already downloading — return the existing promise
+  if (inFlight.has(videoId)) return inFlight.get(videoId)!
+
+  // Start a new download
+  ensureCacheDir()
+  const filePath = path.join(CACHE_DIR, `${videoId}.mp3`)
+  const downloadPromise = downloadAudio(videoId, filePath)
+    .finally(() => inFlight.delete(videoId))
+
+  inFlight.set(videoId, downloadPromise)
+  return downloadPromise
+}
+
 /**
  * Download audio from YouTube using yt-dlp.
  *

@@ -1,15 +1,10 @@
 import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { downloadAudio, ensureCacheDir, isCached, CACHE_DIR } from '@/lib/ytdlp-download'
-import path from 'path'
+import { getOrCreateDownload, isDownloading, isCached } from '@/lib/ytdlp-download'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-
-// Track in-flight downloads to avoid duplicate work when the client fires
-// multiple predownload requests for the same video (e.g. on queue changes)
-const inFlight = new Map<string, Promise<void>>()
 
 /**
  * POST /api/music/predownload/[videoId]
@@ -22,10 +17,11 @@ const inFlight = new Map<string, Promise<void>>()
  * wait 10-30 seconds for yt-dlp to finish, and the download continues even
  * if the client navigates away or the connection drops.
  *
- * Deduplicates concurrent requests for the same videoId via an in-flight map.
- * If the same video is requested again while a download is in progress, the
- * second request returns 202 immediately (the in-flight download will serve
- * both).
+ * Uses the shared getOrCreateDownload() from ytdlp-download.ts, which
+ * deduplicates concurrent downloads of the same videoId across ALL callers
+ * (stream route, predownload route, and the server-side music:sync preload
+ * hook). If the same video is requested again while a download is in
+ * progress, the second request returns 202 immediately.
  */
 export async function POST(
   _req: Request,
@@ -47,28 +43,16 @@ export async function POST(
   }
 
   // Check if download is already in flight
-  if (inFlight.has(videoId)) {
+  if (isDownloading(videoId)) {
     // Already downloading — return 202, don't start a duplicate
     return NextResponse.json({ cached: false, videoId, status: 'downloading' }, { status: 202 })
   }
 
   // Start the download in the background (fire-and-forget)
-  ensureCacheDir()
-  const filePath = path.join(CACHE_DIR, `${videoId}.mp3`)
   console.log(`[predownload] starting background download for ${videoId}`)
-
-  const downloadPromise = downloadAudio(videoId, filePath)
-    .then(() => {
-      console.log(`[predownload] ✓ download complete for ${videoId}`)
-    })
-    .catch((e: any) => {
-      console.error(`[predownload] ✗ failed for ${videoId}:`, e?.message || e)
-    })
-    .finally(() => {
-      inFlight.delete(videoId)
-    })
-
-  inFlight.set(videoId, downloadPromise)
+  getOrCreateDownload(videoId)
+    .then(() => console.log(`[predownload] ✓ download complete for ${videoId}`))
+    .catch((e: any) => console.error(`[predownload] ✗ failed for ${videoId}:`, e?.message || e))
 
   // Return 202 immediately — the download continues in the background
   return NextResponse.json({ cached: false, videoId, status: 'downloading' }, { status: 202 })
@@ -81,8 +65,6 @@ export async function POST(
  *   - { cached: true } if the file is on disk and ready to play
  *   - { cached: false, downloading: true } if currently downloading
  *   - { cached: false, downloading: false } if not downloading (failed or never started)
- *
- * The client can poll this to check if a predownload finished.
  */
 export async function GET(
   _req: Request,
@@ -103,6 +85,6 @@ export async function GET(
   return NextResponse.json({
     cached: false,
     videoId,
-    downloading: inFlight.has(videoId),
+    downloading: isDownloading(videoId),
   })
 }

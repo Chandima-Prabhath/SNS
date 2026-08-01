@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { createReadStream, statSync, existsSync } from 'fs'
 import { Readable } from 'stream'
 import path from 'path'
-import { downloadAudio, ensureCacheDir, CACHE_DIR } from '@/lib/ytdlp-download'
+import { getOrCreateDownload, isDownloading, isCached, ensureCacheDir, CACHE_DIR } from '@/lib/ytdlp-download'
 
 /**
  * GET /api/music/stream/[videoId]
@@ -12,8 +12,9 @@ import { downloadAudio, ensureCacheDir, CACHE_DIR } from '@/lib/ytdlp-download'
  * Streams audio from YouTube. Cache-first: if the file is already on disk,
  * serve it directly. Otherwise, download with yt-dlp and cache it.
  *
- * The download logic is shared with /api/music/predownload via
- * src/lib/ytdlp-download.ts to avoid code duplication.
+ * If a download is already in progress (started by the predownload route or
+ * the server-side music:sync preload hook), returns 202 + Retry-After so the
+ * client's <audio> element can retry instead of holding a connection open.
  */
 export async function GET(
   req: Request,
@@ -37,8 +38,22 @@ export async function GET(
 
   // Download the file if not cached
   if (!existsSync(filePath)) {
+    // If a download is already in progress, tell the client to retry in 2s.
+    // This prevents blocking the HTTP connection for 10-30s while yt-dlp runs.
+    if (isDownloading(videoId)) {
+      return new NextResponse(null, {
+        status: 202,
+        headers: {
+          'Retry-After': '2',
+          'Content-Type': 'audio/mpeg',
+          'Cache-Control': 'no-store',
+        },
+      })
+    }
+
+    // Not cached, not downloading — start the download and await it
     try {
-      await downloadAudio(videoId, filePath)
+      await getOrCreateDownload(videoId)
     } catch (e: any) {
       console.error(`[music/stream] download failed for ${videoId}:`, e?.message || e)
       const errorMsg = e?.message || 'unknown error'

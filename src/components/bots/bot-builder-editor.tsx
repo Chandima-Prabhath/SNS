@@ -2394,13 +2394,12 @@ function NodeInspectorBody({
         </div>
         <div className="space-y-2">
           <Label className="text-white/60 text-xs">Model</Label>
-          <Input
+          <ModelPicker
             value={data.aiRouteModel || ''}
-            onChange={(e) => onUpdate({ aiRouteModel: e.target.value })}
-            placeholder="gemma3:270m"
-            className={cn(inputCls, 'font-mono')}
+            onChange={(v) => onUpdate({ aiRouteModel: v })}
+            inputCls={inputCls}
           />
-          <p className="text-xs text-white/40">Uses Ollama structured JSON output — works even with small models.</p>
+          <p className="text-xs text-white/40">Uses Ollama structured JSON output — works even with small models. Use <code className="px-1 py-0.5 rounded bg-white/5">functiongemma</code> for best routing.</p>
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between">
@@ -2556,6 +2555,72 @@ function SwitchCaseInspector({
   )
 }
 
+// ─── Reusable Ollama model picker ───────────────────────────────────────────
+// Fetches available models from /api/llm/models and shows a dropdown.
+// Used by both ai_generate and ai_route inspectors.
+function ModelPicker({
+  value,
+  onChange,
+  inputCls,
+}: {
+  value: string
+  onChange: (model: string) => void
+  inputCls: string
+}) {
+  const { data: modelsData, isLoading } = useQuery({
+    queryKey: ['ollama-models'],
+    queryFn: async () => {
+      const res = await fetch('/api/llm/models')
+      if (!res.ok) throw new Error('failed')
+      return res.json()
+    },
+    staleTime: 60_000,
+  })
+  const models: { name: string; details?: any }[] = modelsData?.models || []
+  const online: boolean = modelsData?.online ?? false
+
+  if (online) {
+    return (
+      <Select value={value || 'gemma3:270m'} onValueChange={onChange}>
+        <SelectTrigger className={inputCls}>
+          <SelectValue placeholder={isLoading ? 'Loading…' : 'Select model'} />
+        </SelectTrigger>
+        <SelectContent>
+          {models.length === 0 && !isLoading ? (
+            <SelectItem value={value || 'gemma3:270m'} disabled>
+              No models found — run `ollama pull gemma3:270m`
+            </SelectItem>
+          ) : (
+            models.map((m) => (
+              <SelectItem key={m.name} value={m.name}>
+                {m.name}
+                {m.details?.parameterSize ? (
+                  <span className="text-white/40 ml-2 text-xs">({m.details.parameterSize})</span>
+                ) : null}
+              </SelectItem>
+            ))
+          )}
+        </SelectContent>
+      </Select>
+    )
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <Input
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="gemma3:270m"
+        className={inputCls + ' font-mono'}
+      />
+      <p className="text-xs text-amber-400/80 flex items-center gap-1">
+        <AlertTriangle className="w-3 h-3" />
+        Ollama offline — using manual model name
+      </p>
+    </div>
+  )
+}
+
 // ─── AI Generate inspector (separate component — uses useQuery) ──────────────
 function AiGenerateInspector({
   data,
@@ -2566,63 +2631,16 @@ function AiGenerateInspector({
 }) {
   const inputCls = 'bg-[#1e1f22] border-white/10 text-white placeholder:text-white/30'
 
-  // Fetch available Ollama models (3s timeout handled server-side)
-  const { data: modelsData, isLoading } = useQuery({
-    queryKey: ['ollama-models'],
-    queryFn: async () => {
-      const res = await fetch('/api/llm/models')
-      if (!res.ok) throw new Error('failed')
-      return res.json()
-    },
-    staleTime: 60_000, // models don't change often
-  })
-  const models: { name: string; details?: any }[] = modelsData?.models || []
-  const online: boolean = modelsData?.online ?? false
-
   return (
     <div className="space-y-4">
       {/* Model picker */}
       <div className="space-y-2">
         <Label className="text-white/60 text-xs">Model</Label>
-        {online ? (
-          <Select
-            value={data.aiModel || 'gemma3:270m'}
-            onValueChange={(v) => onUpdate({ aiModel: v })}
-          >
-            <SelectTrigger className={inputCls}>
-              <SelectValue placeholder={isLoading ? 'Loading…' : 'Select model'} />
-            </SelectTrigger>
-            <SelectContent>
-              {models.length === 0 && !isLoading ? (
-                <SelectItem value={data.aiModel || 'gemma3:270m'} disabled>
-                  No models found — run `ollama pull gemma3:270m`
-                </SelectItem>
-              ) : (
-                models.map((m) => (
-                  <SelectItem key={m.name} value={m.name}>
-                    {m.name}
-                    {m.details?.parameterSize ? (
-                      <span className="text-white/40 ml-2 text-xs">({m.details.parameterSize})</span>
-                    ) : null}
-                  </SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
-        ) : (
-          <div className="space-y-1.5">
-            <Input
-              value={data.aiModel || ''}
-              onChange={(e) => onUpdate({ aiModel: e.target.value })}
-              placeholder="gemma3:270m"
-              className={inputCls + ' font-mono'}
-            />
-            <p className="text-xs text-amber-400/80 flex items-center gap-1">
-              <AlertTriangle className="w-3 h-3" />
-              Ollama offline — using manual model name
-            </p>
-          </div>
-        )}
+        <ModelPicker
+          value={data.aiModel || ''}
+          onChange={(v) => onUpdate({ aiModel: v })}
+          inputCls={inputCls}
+        />
         <p className="text-xs text-white/40">
           Local model from <code className="text-white/60">ollama pull &lt;name&gt;</code>
         </p>
