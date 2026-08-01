@@ -3,11 +3,20 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
 
-// List members of a channel
+// List members of a channel — requires membership
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const userId = (session.user as any).id
   const { id: channelId } = await params
+
+  // Verify the caller is a member of this channel
+  const membership = await db.channelMember.findUnique({
+    where: { channelId_userId: { channelId, userId } },
+  })
+  if (!membership) {
+    return NextResponse.json({ error: 'not a member of this channel' }, { status: 403 })
+  }
 
   const members = await db.channelMember.findMany({
     where: { channelId },

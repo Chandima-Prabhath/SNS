@@ -32,6 +32,22 @@ const PORT = parseInt(process.env.PORT || '3090', 10)
 const DEV = process.env.NODE_ENV !== 'production'
 const HOSTNAME = process.env.HOSTNAME || '0.0.0.0'
 
+// ── Fail-fast on missing required environment variables ──────────────────
+// Missing NEXTAUTH_SECRET causes cryptic runtime errors (JWT signing fails,
+// socket auth fails). Missing DATABASE_URL crashes Prisma on first query.
+// Check early so the user gets a clear message instead of a stack trace.
+const REQUIRED_ENV = ['DATABASE_URL', 'NEXTAUTH_SECRET', 'NEXTAUTH_URL'] as const
+const MISSING_ENV = REQUIRED_ENV.filter((key) => !process.env[key])
+if (MISSING_ENV.length > 0) {
+  console.error('\n[SNS] FATAL: Missing required environment variables:')
+  for (const key of MISSING_ENV) {
+    console.error(`  - ${key}`)
+  }
+  console.error('\nAdd them to your .env file. See .env.example for all options.')
+  console.error('')
+  process.exit(1)
+}
+
 const app = next({ dev: DEV, hostname: HOSTNAME, port: PORT })
 const handle = app.getRequestHandler()
 

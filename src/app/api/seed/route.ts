@@ -6,7 +6,11 @@ import { db } from '@/lib/db'
 /**
  * Seed the database with sensible defaults:
  *   - One group "Friends" with 3 channels: general, memes, voice-hangout
- *   - The first registered user becomes the owner of that group
+ *
+ * Owner promotion is NO LONGER done here — it was a privilege escalation
+ * vulnerability (any user who called /api/seed first became owner).
+ * Owner promotion is now done via the CLI script:
+ *   bunx tsx scripts/promote-owner.ts <username>
  *
  * Idempotent — running twice won't duplicate anything.
  */
@@ -15,20 +19,18 @@ export async function POST() {
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const userId = (session.user as any).id
 
-  // Promote first user to owner if no owner exists yet
-  const ownerCount = await db.user.count({ where: { role: 'owner' } })
-  if (ownerCount === 0) {
-    await db.user.update({ where: { id: userId }, data: { role: 'owner' } })
-  }
-
   // Check for default group
   let group = await db.group.findFirst({ where: { name: 'Friends', isDm: false }, include: { channels: true } })
   if (!group) {
+    // Use the first admin/owner as the group owner, or the current user
+    const admin = await db.user.findFirst({ where: { role: { in: ['owner', 'admin'] } }, select: { id: true } })
+    const groupOwnerId = admin?.id || userId
+
     group = await db.group.create({
       data: {
         name: 'Friends',
         description: 'The main hangout spot',
-        ownerId: userId,
+        ownerId: groupOwnerId,
         isDm: false,
         channels: {
           create: [
@@ -47,7 +49,7 @@ export async function POST() {
     await db.channelMember
       .upsert({
         where: { channelId_userId: { channelId: ch.id, userId } },
-        create: { channelId: ch.id, userId, role: 'owner' },
+        create: { channelId: ch.id, userId, role: 'member' },
         update: {},
       })
       .catch(() => {})
@@ -56,6 +58,6 @@ export async function POST() {
   return NextResponse.json({
     ok: true,
     group,
-    message: 'Seed complete. You are now the owner of the "Friends" group.',
+    message: 'Seed complete. You are now a member of the "Friends" group.',
   })
 }

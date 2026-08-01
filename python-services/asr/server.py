@@ -320,7 +320,7 @@ async def models():
 
 
 @app.post('/asr')
-async def transcribe(
+def transcribe(
     audio: UploadFile = File(...),
     language: Optional[str] = Form(default='en'),
 ):
@@ -339,7 +339,9 @@ async def transcribe(
     # Read uploaded file to a temp file on disk — Moonshine needs a path
     suffix = Path(audio.filename or 'audio.wav').suffix or '.wav'
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        content = await audio.read()
+        # Sync read — the endpoint is now `def` (not `async def`) so
+        # FastAPI runs it in a threadpool, freeing the event loop.
+        content = audio.file.read()
         tmp.write(content)
         tmp_path = tmp.name
 

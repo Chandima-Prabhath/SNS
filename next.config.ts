@@ -2,12 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
-  reactStrictMode: false,
-  // No standalone output — we run from the project root with bun,
-  // which has access to all node_modules. Standalone is only needed
-  // for serverless deployments where you want a minimal bundle.
+  reactStrictMode: true,
   allowedDevOrigins: [
     "sns.1911915.xyz",
     "https://sns.1911915.xyz",

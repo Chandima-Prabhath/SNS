@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { readFile, stat } from 'fs/promises'
-import { existsSync } from 'fs'
+import { createReadStream, statSync, existsSync } from 'fs'
+import { Readable } from 'stream'
 import path from 'path'
 
 // Force dynamic Node.js route — we read from disk on every request.
@@ -93,7 +93,7 @@ export async function GET(
       return new NextResponse('Not found', { status: 404 })
     }
 
-    const fileStat = await stat(filePath)
+    const fileStat = statSync(filePath)
     if (fileStat.size === 0) {
       console.warn(`[uploads] file is 0 bytes: ${filename}`)
       return new NextResponse('File is empty', { status: 500 })
@@ -104,7 +104,6 @@ export async function GET(
     // Check for Range header (audio/video seeking)
     const rangeHeader = req.headers.get('range')
     if (rangeHeader) {
-      // Parse "bytes=start-end"
       const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader)
       if (match) {
         const start = match[1] ? parseInt(match[1], 10) : 0
@@ -113,19 +112,17 @@ export async function GET(
         if (start >= fileStat.size || end >= fileStat.size || start > end) {
           return new NextResponse('Range not satisfiable', {
             status: 416,
-            headers: {
-              'Content-Range': `bytes */${fileStat.size}`,
-            },
+            headers: { 'Content-Range': `bytes */${fileStat.size}` },
           })
         }
 
         const chunkSize = end - start + 1
-        const buffer = await readFile(filePath)
-        const chunk = buffer.subarray(start, end + 1)
+        // STREAM instead of buffering — avoids loading entire file into RAM.
+        // On a 1GB VM, buffering a 50MB video would consume 50MB of heap.
+        const stream = createReadStream(filePath, { start, end })
+        const webStream = Readable.toWeb(stream) as ReadableStream
 
-        console.log(`[uploads] serving ${filename} range ${start}-${end}/${fileStat.size} (${chunkSize} bytes, ${contentType})`)
-
-        return new NextResponse(chunk, {
+        return new Response(webStream, {
           status: 206,
           headers: {
             'Content-Type': contentType,
@@ -138,12 +135,11 @@ export async function GET(
       }
     }
 
-    // No range — serve the full file
-    const buffer = await readFile(filePath)
-    console.log(`[uploads] serving ${filename} (${fileStat.size} bytes, ${contentType})`)
+    // No range — serve the full file as a stream
+    const stream = createReadStream(filePath)
+    const webStream = Readable.toWeb(stream) as ReadableStream
 
-    return new NextResponse(buffer, {
-      status: 200,
+    return new Response(webStream, {
       headers: {
         'Content-Type': contentType,
         'Content-Length': String(fileStat.size),
