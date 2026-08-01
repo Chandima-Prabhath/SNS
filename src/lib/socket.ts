@@ -36,7 +36,7 @@ export function getSocket(): Promise<Socket> {
       resolve(instance)
     })
     instance.on('connect_error', (err) => {
-      console.error('[socket] connect_error:', err.message, '| type:', err.type || 'unknown')
+      console.error('[socket] connect_error:', err.message, '| type:', (err as any).type || 'unknown')
       if (!socket) reject(err)
     })
 

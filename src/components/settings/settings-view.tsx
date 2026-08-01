@@ -675,20 +675,24 @@ function AdminGroups() {
             </Button>
           </div>
 
-          {newChannel?.groupId === g.id && (
-            <div className="flex gap-2 mb-3">
-              <Input
-                placeholder="channel-name"
-                value={newChannel.name}
-                onChange={(e) => setNewChannel({ ...newChannel, name: e.target.value })}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && newChannel.name.trim()) createChannel.mutate(newChannel)
-                }}
-              />
-              <Button size="sm" onClick={() => createChannel.mutate(newChannel)} disabled={!newChannel.name.trim()}>Add</Button>
-              <Button size="sm" variant="ghost" onClick={() => setNewChannel(null)}>Cancel</Button>
-            </div>
-          )}
+          {newChannel?.groupId === g.id && (() => {
+            const nc = newChannel
+            if (!nc) return null
+            return (
+              <div className="flex gap-2 mb-3">
+                <Input
+                  placeholder="channel-name"
+                  value={nc.name}
+                  onChange={(e) => setNewChannel({ ...nc, name: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && nc.name.trim()) createChannel.mutate(nc)
+                  }}
+                />
+                <Button size="sm" onClick={() => createChannel.mutate(nc)} disabled={!nc.name.trim()}>Add</Button>
+                <Button size="sm" variant="ghost" onClick={() => setNewChannel(null)}>Cancel</Button>
+              </div>
+            )
+          })()}
 
           <div className="space-y-0.5">
             {g.channels.map((ch: any) => (

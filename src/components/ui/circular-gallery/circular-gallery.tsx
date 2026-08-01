@@ -403,8 +403,8 @@ class App {
   screen: any
   viewport: any
   planeGeometry: any
-  mediasImages: any[]
-  medias: Media[]
+  mediasImages: any[] = []
+  medias: Media[] = []
   raf: number = 0
   isDown = false
   start = 0

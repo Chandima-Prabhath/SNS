@@ -51,7 +51,6 @@ export async function POST(req: Request) {
   if (existingMembers.length > 0) {
     await db.channelMember.createMany({
       data: existingMembers.map((m) => ({ channelId: channel.id, userId: m.userId, role: m.role })),
-      skipDuplicates: true,
     })
   }
 

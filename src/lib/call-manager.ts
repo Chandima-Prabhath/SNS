@@ -188,7 +188,7 @@ export class CallManager {
   getLocalStream() { return this.localStream }
   isMuted() { return this.userMuted }
   isVideoEnabled() { return this.videoEnabled }
-  isVideoCall() { return this.isVideoCall }
+  getIsVideoCall() { return this.isVideoCall }
 
   getParticipants(): CallParticipant[] {
     return Array.from(this.peers.entries()).map(([peerId, p]) => ({
@@ -280,10 +280,10 @@ export class CallManager {
       const wasmBuffer = await wasmResponse.arrayBuffer()
       const wasmModule = await WebAssembly.compile(wasmBuffer)
 
-      await this.audioContext.audioWorklet.addModule('/rnnoise.worklet.js')
+      await this.audioContext!.audioWorklet.addModule('/rnnoise.worklet.js')
       console.log('[call] RNNoise worklet loaded')
 
-      const source = this.audioContext.createMediaStreamSource(
+      const source = this.audioContext!.createMediaStreamSource(
         new MediaStream([this.sourceAudioTrack!])
       )
       this.rnnoiseNode = new (window as any).AudioWorkletNode(this.audioContext, 'rnnoise', {
@@ -296,10 +296,10 @@ export class CallManager {
         processorOptions: { module: wasmModule },
       })
       // Gain node for muting — set to 0 to mute, 1 to unmute
-      this.gainNode = this.audioContext.createGain()
+      this.gainNode = this.audioContext!.createGain()
       this.gainNode.gain.value = 1
 
-      const destination = this.audioContext.createMediaStreamDestination()
+      const destination = this.audioContext!.createMediaStreamDestination()
 
       source.connect(this.rnnoiseNode)
       this.rnnoiseNode.connect(this.gainNode)

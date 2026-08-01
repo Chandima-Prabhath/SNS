@@ -45,7 +45,7 @@ export async function GET(req: Request) {
 
     const output = await pipeline.toBuffer()
 
-    return new NextResponse(output, {
+    return new NextResponse(new Uint8Array(output), {
       headers: {
         'Content-Type': ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg',
         'Cache-Control': 'public, max-age=31536000, immutable',

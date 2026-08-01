@@ -62,9 +62,19 @@ export function sendMusicCommand(
   command: { action: 'play' | 'pause' | 'skip' | 'queue' | 'stop'; query?: string }
 ): void {
   const io = getIO()
-  if (!io) return
+  if (!io) {
+    console.warn('[sendMusicCommand] io is null — socket.io not initialized')
+    return
+  }
   const target = presence.get(targetUserId)
-  if (!target) return
+  if (!target) {
+    console.warn(`[sendMusicCommand] target user ${targetUserId} not found in presence map (size=${presence.size})`)
+    // Fallback: broadcast to all sockets. Not ideal for production but
+    // ensures the command reaches the user even if presence tracking is off.
+    io.emit('music:bot-command', command)
+    return
+  }
+  console.log(`[sendMusicCommand] sending ${command.action} to ${targetUserId} (${target.socketIds.size} sockets)`)
   for (const sid of target.socketIds) {
     io.to(sid).emit('music:bot-command', command)
   }
@@ -217,7 +227,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
     socket.on('channel:join', async (channelId: string) => {
       // Verify membership before joining the socket room (C8 fix)
       const membership = await db.channelMember.findUnique({
-        where: { channelId_userId: { channelId, userId: socket.userId } },
+        where: { channelId_userId: { channelId, userId } },
       }).catch(() => null)
       if (membership) {
         socket.join(`channel:${channelId}`)
@@ -505,7 +515,7 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       const callerSockets = presence.get(payload.byUserId)
       if (callerSockets) {
         for (const sid of callerSockets.socketIds) {
-          io.to(sid).emit('call:accept', { callId: payload.callId, byUserId })
+          io.to(sid).emit('call:accept', { callId: payload.callId, byUserId: userId })
         }
       }
     })

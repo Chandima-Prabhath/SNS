@@ -155,7 +155,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           botId,
           channelId,
           senderId: userId,
-          senderName: session.user.username || session.user.email || 'user',
+          senderName: (session.user as any).username || (session.user as any).email || 'user',
           messageId: message.id,
           body: text,
           replyToId,

@@ -234,7 +234,7 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
             Calling…
           </div>
         )}
-        {status === 'disconnected' && (
+        {status === 'reconnecting' && (
           <span className="text-xs text-yellow-400 font-medium">Reconnecting…</span>
         )}
         {status === 'connected' && (

@@ -23,31 +23,32 @@ export async function GET() {
     for (const shelf of explore.sections || []) {
       const sectionTitle = shelf.header?.title?.toString() || ''
       for (const item of shelf.contents || []) {
-        if (item.is?.('MusicTwoRowItem')) {
+        const node = item as any
+        if (node.is?.('MusicTwoRowItem')) {
           tracks.push({
-            videoId: item.id,
-            title: item.title?.toString() || 'Unknown',
-            artist: item.subtitle?.toString() || 'Unknown',
-            thumbnail: item.thumbnail?.[0]?.url || null,
+            videoId: node.id,
+            title: node.title?.toString() || 'Unknown',
+            artist: node.subtitle?.toString() || 'Unknown',
+            thumbnail: node.thumbnail?.[0]?.url || null,
             durationSeconds: null,
             section: sectionTitle,
           })
-        } else if (item.is?.('MusicResponsiveListItem')) {
+        } else if (node.is?.('MusicResponsiveListItem')) {
           tracks.push({
-            videoId: item.id,
-            title: item.title || 'Unknown',
-            artist: item.artists?.map((a: any) => a.name).join(', ') || 'Unknown',
-            thumbnail: item.thumbnail?.contents?.[0]?.url || null,
-            durationSeconds: item.duration?.seconds || null,
+            videoId: node.id,
+            title: node.title || 'Unknown',
+            artist: node.artists?.map((a: any) => a.name).join(', ') || 'Unknown',
+            thumbnail: node.thumbnail?.contents?.[0]?.url || null,
+            durationSeconds: node.duration?.seconds || null,
             section: sectionTitle,
           })
-        } else if (item.id) {
+        } else if (node.id) {
           tracks.push({
-            videoId: item.id,
-            title: item.title?.toString?.() || item.title || 'Unknown',
-            artist: item.subtitle?.toString?.() || item.artists?.map?.((a: any) => a.name).join(', ') || 'Unknown',
-            thumbnail: item.thumbnail?.[0]?.url || item.thumbnail?.contents?.[0]?.url || null,
-            durationSeconds: item.duration?.seconds || null,
+            videoId: node.id,
+            title: node.title?.toString?.() || node.title || 'Unknown',
+            artist: node.subtitle?.toString?.() || node.artists?.map?.((a: any) => a.name).join(', ') || 'Unknown',
+            thumbnail: node.thumbnail?.[0]?.url || node.thumbnail?.contents?.[0]?.url || null,
+            durationSeconds: node.duration?.seconds || null,
             section: sectionTitle,
           })
         }

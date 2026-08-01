@@ -251,7 +251,7 @@ export function MessageList({ channelId }: MessageListProps) {
                     setReplyTo({ id: m.id, body: m.body, senderName })
                   }
                   onDelete={(m) => remove(m.id)}
-                  onEditSubmit={async (messageId, text) => edit(messageId, text)}
+                  onEditSubmit={async (messageId, text) => edit({ messageId, body: text })}
                   onCallback={async (messageId, callbackData) => sendCallback(messageId, callbackData)}
                 />
               </div>

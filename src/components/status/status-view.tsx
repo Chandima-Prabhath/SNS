@@ -119,7 +119,7 @@ function UploadStoryCard() {
       // re-encode as JPEG at 82% quality — typically a 5-10x size reduction.
       const isImage = file.type.startsWith('image/')
       const isVideo = file.type.startsWith('video/')
-      let uploadFile: File = file
+      let uploadFile: File | Blob = file
       if (isImage) {
         const originalSize = formatBytes(file.size)
         uploadFile = await compressImage(file, { maxDimension: 1280, quality: 0.82 })

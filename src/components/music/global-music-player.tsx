@@ -619,6 +619,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       action: 'play' | 'pause' | 'skip' | 'queue' | 'stop'
       query?: string
     }) => {
+      console.log('[music:bot-command] received:', cmd)
       const state = useMusicStore.getState()
 
       try {

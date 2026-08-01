@@ -75,7 +75,7 @@ async function registerPushSubscription() {
     // Subscribe
     subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: convertedKey,
+      applicationServerKey: convertedKey as BufferSource,
     })
 
     // Send to server

@@ -460,7 +460,7 @@ function ChannelsTab({ groupId, channels }: { groupId: string; channels: any[] }
   )
 }
 
-function MembersTab({ groupId, myRole }: { groupId: string; myRole: 'owner' | 'admin' }) {
+function MembersTab({ groupId, myRole }: { groupId: string; myRole: 'owner' | 'admin' | 'member' }) {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const { data: members } = useQuery({
