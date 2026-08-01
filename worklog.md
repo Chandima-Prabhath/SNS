@@ -301,3 +301,291 @@ Stage Summary:
 - TO DEPLOY: `./scripts/deploy.sh` (first time) or `bun run deploy` (subsequent).
 - TO ENABLE BOOT STARTUP (one-time): `pm2 startup systemd` then run the printed command, then `pm2 save`.
 - The TTS 0-length audio issue should now be resolved because: (1) Node.js handles streaming responses correctly, (2) force-dynamic prevents Next.js from buffering, (3) PM2 ensures the process stays up and restarts cleanly on deploy.
+
+---
+Task ID: 3-api-audit
+Agent: API Audit Sub-Agent
+Task: Audit ALL 64 API route files under src/app/api/**/route.ts for bugs, security issues, race conditions, missing validation, N+1 queries, IDOR, path traversal, SSRF, etc.
+
+Audit Methodology:
+- Read worklog.md tail (previous fixes), src/lib/auth.ts (NextAuth + tokenVersion pattern), src/lib/db.ts (Prisma singleton), prisma/schema.prisma (full data model).
+- Read every route.ts file (64 total).
+- Cross-checked client-side fetch references to verify endpoints exist and match contracts.
+- Checked git history for files that should exist but don't.
+
+Top 10 Most Critical Issues Found:
+
+1. **CRITICAL — /api/upload route is MISSING entirely** (not in audit scope but discovered via client refs). The file `src/app/api/upload/route.ts` was deleted in commit 3b2b9db ("refactor: eliminate 80 session.user 'as any' casts") and never restored. Git history shows this file has been deleted/restored at least 8 times. Status uploads, voice messages, TTS audio uploads, and avatar uploads all POST to /api/upload and currently get 404. The shared `saveUpload()` helper in src/lib/media.ts is dead code. RESTORE THIS FILE from git history (git show 3b2b9db^:src/app/api/upload/route.ts).
+
+2. **CRITICAL — /api/calls/route.ts POST (lines 16-81): IDOR.** No verification that the caller is a member of the channel or DM group before creating/joining a call. Any authenticated user can start a call in ANY channel by guessing the channelId, or ring any DM group by guessing dmGroupId. Fix: add `channelMember.findUnique({ where: { channelId_userId }})` check; for DMs, verify the user is one of the two DM members via DmLink.
+
+3. **CRITICAL — /api/calls/[id]/route.ts POST+DELETE (lines 7-52): IDOR.** Same issue — any authenticated user can join any call by ID, and can trigger call "ended" status by leaving. Fix: verify the user has access to the call's channel or DM group before allowing join.
+
+4. **CRITICAL — /api/tts/voices/route.ts POST (lines 45-66): Path traversal via audioUrl.** `audioUrl` from request body is passed unsanitized to `path.join(process.cwd(), 'public', normalizedUrl)` in `exportSafetensors()` (line 82). An attacker can supply `audioUrl=../../etc/passwd` (or any path) — ffmpeg will attempt to read arbitrary files, and error messages may leak file existence. Also stored in DB without validation. Fix: validate `audioUrl` starts with `/api/uploads/` or `/uploads/`, then sanitize with the same regex used in `/api/uploads/[filename]`.
+
+5. **CRITICAL — /api/img/route.ts (lines 44-46): Fragile path traversal protection.** `safePath = normalizedSrc.replace(/\.\./g, '').replace(/^\//, '')` is regex-based and doesn't verify the resolved path is within `public/uploads/`. An attacker can pass `src=/cache/...` or any other path inside `public/`. Replace with `path.resolve()` + `startsWith(UPLOAD_DIR)` check, mirroring the pattern in /api/uploads/[filename].
+
+6. **CRITICAL — /api/push/subscribe/route.ts POST (lines 17-38): SSRF via endpoint.** The push `endpoint` from the request body is stored verbatim with no URL validation. Later, `sendPushNotification()` makes HTTP POST requests to these endpoints. An attacker can register an internal URL (e.g. `http://169.254.169.254/...` or `http://localhost:11434/api/...`) as their push endpoint — when any notification is sent, the server will faithfully POST to that internal service. Fix: validate endpoint is `https://` and matches known push service hosts (fcm.googleapis.com, *.push.apple.com, etc.).
+
+7. **CRITICAL — /api/channels/[id]/read/route.ts POST (lines 7-27): IDOR.** No channel membership check before marking messages as read. The `messageReadReceipt.upsert` (line 14) creates a read receipt for any messageId the caller supplies, even if the caller is not in the message's channel. The `channelMember.update` (line 21) is wrapped in `.catch(() => {})` so it silently succeeds even for non-members. This leaks the caller's identity to senders via read receipts and corrupts read-state. Fix: verify channel membership before upserting.
+
+8. **CRITICAL — /api/stories/[id]/route.ts POST (lines 7-20): IDOR on story views.** Anyone can mark ANY story as viewed by guessing the storyId, even stories they shouldn't have access to (audience='exclude' lists them, or audience='include' without them in the list). The owner sees them in the viewers list — leaks the user's existence/identity to a story owner who excluded them. Fix: load the story, verify the caller passes the audience filter before upserting StoryViewer.
+
+9. **HIGH — /api/auth/register/route.ts POST: Missing rate limiting + TOCTOU + auto-join to arbitrary group.** (a) No rate limiting allows mass account creation / username enumeration. (b) `existing` check (line 39) then `create` (line 49) is a TOCTOU race — concurrent registrations with same username both pass the check; the unique constraint catches it but returns an unhandled P2002 → 500 instead of 409. (c) Line 59 auto-joins the user to "first non-DM group" which could be a private group; should restrict to a configured default group ID.
+
+10. **HIGH — /api/channels/[id]/messages/route.ts PATCH (line 297): Crash on bad input.** `body.slice(0, 5000)` throws "Cannot read property 'slice' of undefined" if `body` is missing or not a string. No Zod validation on the PATCH body. Wrapped in no try/catch so returns 500. Fix: validate `body` is a non-empty string with max length before slicing; wrap in try/catch.
+
+Additional Significant Findings (not in top 10):
+- /api/groups/[id]/members/route.ts GET (line 21): Returns group members for ANY groupId without verifying caller membership — IDOR leaking usernames, avatars, status, lastSeenAt.
+- /api/channels/[id]/messages/route.ts GET (line 26): `id: { lt: before }` uses string comparison on cuid IDs for pagination — doesn't guarantee chronological order, can skip/duplicate messages.
+- /api/channels/[id]/commands/route.ts (line 54): Fetches ALL enabled bots from DB just to build a Set, instead of filtering to channel members. N+1 / over-fetching.
+- /api/groups/[id]/channels/route.ts POST (lines 54-64): N+1 — sequential `await db.channelMember.create()` per group member instead of `createMany`.
+- /api/music/history/route.ts POST (lines 56-86): Race condition — deleteMany + create + count + findMany + deleteMany without a transaction. Concurrent POSTs can duplicate history entries.
+- /api/music/playlists/[playlistId]/songs/route.ts POST (lines 39-51): Race condition on `order` field — findFirst(maxOrder) then upsert; concurrent calls compute same nextOrder.
+- /api/music/rooms/[id]/route.ts PATCH (lines 63-92): No validation of `position` (could be huge number) or `queue` (could be multi-MB array) — DoS vector.
+- /api/admin/users/route.ts PATCH (lines 40-54): Admins can promote any user to 'owner' (including themselves). Owner promotion should be restricted to current owners.
+- /api/bots/[id]/route.ts PATCH (lines 22-34): `module` not validated against known module list; `config`/`flow` JSON have no size limit — DB bloat / DoS.
+- /api/invites/route.ts POST: No verification caller has access to the call/room referenced by targetId; no rate limiting.
+- /api/asr/route.ts (line 110), /api/tts/route.ts (line 154), /api/music/search/route.ts (line 49): All return `e?.message` to client — information leak.
+- /api/channels/[id]/messages/[messageId]/callback/route.ts (line 163): Returns raw error message to client; lots of console.log statements leak callbackData.
+- /api/auth/sessions/route.ts DELETE (single session): Only deletes UserSession row, doesn't bump tokenVersion. The JWT for that device remains valid until expiry/refresh — "revoke this device" doesn't immediately sign out the device.
+- /api/uploads/[filename]/route.ts and /api/music/stream/[videoId]/route.ts: Use synchronous `statSync`/`existsSync` — blocks event loop. The music stream route also has naive Range header parsing that doesn't handle suffix ranges (`bytes=-500`) — would crash with NaN start.
+- /api/stories/route.ts POST (line 89-104): No validation of `mediaUrl` (could be any URL), `audience` (could be any string), `mediaType`, or `audienceUserIds` (could be non-array).
+- /api/groups/route.ts POST (line 24): `channels` array not validated — could create a group with 10000 channels or empty channel names.
+
+Stage Summary:
+- Audited all 64 API route files.
+- Found 1 critical missing-route bug (/api/upload deleted from disk).
+- Found 8 critical security issues (IDOR, path traversal, SSRF, missing rate limiting on auth).
+- Found ~30 high/medium issues (race conditions, N+1 queries, missing validation, info leaks).
+- Top 10 critical findings documented above with file:line refs and fix suggestions.
+- No code changes made — audit only (per task description). Fixes to be applied in follow-up task.
+
+---
+Task ID: 4-music-audit
+Agent: Music Audit Sub-Agent
+Task: Verify that GlobalMusicPlayer correctly consumes the new server-authoritative music room socket events (music:state, music:position-report, music:ready, etc.). Migration plan noted this as a TODO.
+
+Audit Methodology:
+- Read worklog.md tail (musical-and-tts-safetensors, 3-api-audit entries).
+- Read src/lib/music-room-state.ts (server state machine: RoomState, getExpectedPosition, updatePlayback, changeTrack, markMemberReady, removeMember, getStateSnapshot).
+- Read src/lib/realtime-server.ts lines 609-731 (music:join / play / pause / seek / next / queue:add / queue:remove / ready / transfer-host / position-report handlers + disconnect handler) and broadcastRoomState (lines 89-99).
+- Read src/components/music/global-music-player.tsx (1037 lines — full client: socket effect, onState handler, playTrack/togglePlay/handleSeek/playNext actions, audio event listeners, buffering retry, bot-command listener, PlayerBar UI).
+- Read src/components/music/music-view.tsx (1660 lines — RoomCard, queue UI, browse UI).
+- Read src/stores/useMusicStore.ts (Zustand store — no host/members fields).
+- Read src/app/api/music/rooms/[id]/route.ts and src/app/api/music/stream/[videoId]/route.ts.
+- Read src/hooks/useSocket.ts and src/lib/socket.ts (reconnect behavior).
+- Searched for `music:sync` (old event name) — only appears in stale code comments referring to a server-side preload hook, never as an actual socket event. No event-name mismatch on that count.
+- Searched for `music:ready` — server handler exists at realtime-server.ts:689, but the client NEVER emits it. Dead code.
+
+Top 10 Most Critical Issues Found:
+
+1. **CRITICAL — Resume after pause restarts the track from 0.** src/lib/realtime-server.ts:648: `updatePlayback(payload.roomId, 'playing', 0)` always passes `0` as the position, even when the host is just resuming a paused track. `updatePlayback` (music-room-state.ts:99) sets `room.positionSec = positionSec ?? getExpectedPosition(room)` — passing `0` overrides the frozen paused position. The server then broadcasts `music:state` with `positionSec=0`. The host's onState handler (global-music-player.tsx:500-504) computes `drift = |audio.currentTime - 0|` which is >1.5s, seeks `audio.currentTime = 0`, and the song restarts. Repro: host plays track, pauses at 1:30, presses play → track jumps to 0:00. Fix: `updatePlayback(payload.roomId, 'playing')` (omit third arg) when `payload.videoId` is absent — `getExpectedPosition` will return the frozen paused position.
+
+2. **CRITICAL — `music:ready` handshake is dead code; client never emits it.** The server defines `music:ready` (realtime-server.ts:689-695) and `markMemberReady` (music-room-state.ts:176) to gate the playing→ready transition. But the client's audio listeners (global-music-player.tsx:334-378) never `socket.emit('music:ready', roomId)` after `canplay`/`loadeddata`. Worse, `music:play` (realtime-server.ts:639-650) calls `changeTrack` (sets state='paused') immediately followed by `updatePlayback('playing', 0)` (overrides to 'playing') — bypassing the ready gate entirely. Result: the server immediately declares 'playing' before any client has loaded audio. Late joiners and slow connections start playback late and never catch up. Fix: in `music:play` with videoId, leave state='paused' and wait for `music:ready` from all members; add a 5s timeout fallback to force-play.
+
+3. **CRITICAL — Multiple tabs of the same user cause premature room abandonment.** realtime-server.ts:718-731 disconnect handler iterates all rooms and calls `removeMember(roomId, userId)` whenever the user is in `room.members` — without checking whether the user has other still-connected sockets. `room.members` is a Set of userIds (dedupes), so when tab 1 of user U closes, U is removed from members even though tab 2 is still connected. After 30s the empty room is deleted (music-room-state.ts:215-222). Tab 2 stops receiving `music:state` events. Same issue affects host migration: if U was the host, the room loses its host even though U is still online in another tab. Fix: in the disconnect handler, check `presence.get(userId)?.socketIds.size > 0` before calling `removeMember`; track music room membership per-socket, not per-user.
+
+4. **CRITICAL — No rejoin after socket reconnect.** src/components/music/global-music-player.tsx:444-568 effect depends on `[socket, activeRoomId, ...]`. The `socket` reference (from useSocket.ts) is the SAME Socket.io instance across disconnect/reconnect — `reconnection: true` in lib/socket.ts reuses the instance. So when the network blips and reconnects, the effect doesn't re-run, `socket.emit('music:join', activeRoomId)` is never re-sent, and the new server-side socket (different `socket.id` after reconnect) is never added to the `music:${roomId}` Socket.io room. Client stops receiving `music:state` events silently. Fix: add a `connect` listener inside the effect that re-emits `music:join`.
+
+5. **CRITICAL — Queue desync: client pops locally but server's queue is never popped.** global-music-player.tsx:343-345 (`onEnded` → `playNext` → `playTrack(nextTrack)`) sends `music:play` with the new videoId, NOT `music:next`. The server's `music:play` handler (realtime-server.ts:641-647) calls `changeTrack` but does NOT call `popNextFromQueue`. The server-side `music:next` event (realtime-server.ts:665-671) that DOES pop the queue is never invoked by the client. Result: server's `room.queue` retains tracks that have already been played. Late joiners receive a snapshot (getStateSnapshot) with a stale queue — they see "Up Next" tracks that were already played. Fix: in `playNext`, emit `music:next` instead of (or in addition to) `music:play`; or have the server's `music:play` handler auto-pop the matching queue item.
+
+6. **HIGH — Position drift compensation is broken: `positionAnchor` is received but never used.** The server sends `positionAnchor` (the server timestamp when positionSec was set) in every `music:state` event (realtime-server.ts:96, 626, 711). The music-room-state.ts:8 comment explicitly says: "expectedPos = positionSec + (serverNow - positionAnchor) / 1000". But the client's onState handler (global-music-player.tsx:498-504) just uses `data.positionSec` directly: `const drift = Math.abs(audio.currentTime - data.positionSec)` and `audio.currentTime = data.positionSec`. No clock-offset correction. Network latency (50-300ms per broadcast) compounds: every state update seeks to a slightly stale position. Fix: compute `const expected = data.positionSec + (Date.now() - data.positionAnchor) / 1000` and use `expected` for drift check and seek.
+
+7. **HIGH — Non-host `onEnded` triggers local `playNext`, desyncing from host.** global-music-player.tsx:343-345 `onEnded = () => void playNext()` runs on EVERY client, not just the host. `playNext` (line 218) pops from the LOCAL queue and calls `playTrack`, which sends `music:play` — the server silently ignores it for non-hosts (isHost check at realtime-server.ts:640). But the non-host's local `<audio>` element loads and starts playing the next track anyway, diverging from the host. When the host's `onEnded` fires (potentially seconds later) and broadcasts `music:state` with the new track, the non-host's onState may reload the same track from 0 (if videoId matches but drift>1.5s) or skip ahead. Fix: in `onEnded`, check if the current user is the host before calling `playNext`; non-hosts should wait for the server's `music:state` to advance the track.
+
+8. **HIGH — No host-privilege UI feedback: non-host controls appear enabled but silently no-op.** The server's `music:play`/`pause`/`seek`/`next`/`transfer-host` handlers all start with `if (!isHost(...)) return` (realtime-server.ts:640, 653, 659, 666, 698). The client receives `hostUserId` and `members` in `music:state` (global-music-player.tsx:452, 459) but discards them — they're not stored in useMusicStore (confirmed: no `host`/`members`/`isHost` fields in the store) and not used to disable buttons. Non-hosts click play/pause/seek/skip, the socket event fires, the server ignores it, and the UI shows no error. Fix: store `hostUserId` and `currentUserId` (from useSession) in the music store; pass an `isHost` boolean to PlayerBar; disable controls and show a "Only the host can control playback" tooltip for non-hosts.
+
+9. **HIGH — Late-joiner seek is a 200ms setTimeout hack; `pendingSeekRef` is dead code.** global-music-player.tsx:484-497 sets `audio.src` then `setTimeout(() => { audio.currentTime = data.positionSec; ... }, 200)`. If the audio hasn't buffered to `positionSec` within 200ms (slow connection, long track, cold cache), the seek silently fails — `audio.currentTime = pos` either throws (caught by `try/catch {}` with empty catch) or is clamped to the buffered range. The audio then plays from 0, out of sync. The `pendingSeekRef` (line 120) is set to `data.positionSec` (line 479) but NEVER READ — it was clearly intended to be consumed by `onCanPlay` (line 360-362), but `onCanPlay` only does `setIsLoading(false)`. Fix: in `onCanPlay` (or `onLoadedMetadata`), check `pendingSeekRef.current !== null`, seek to it, then clear it; only call `audio.play()` after the seek succeeds.
+
+10. **HIGH — `playTrack` buffering retry only triggers on `NotSupportedError`/`MediaError`; stalls hang forever.** global-music-player.tsx:177-211 catch block checks `e?.name === 'NotSupportedError' || e?.name === 'MediaError'` to start the 202-retry loop. But a stalled stream (server returns 200 but the connection hangs, or audio element fires `waiting` indefinitely) never produces a MediaError — `audio.play()` resolves successfully, then `waiting` fires (line 354 sets isLoading=true) and never recovers. The user sees an infinite spinner. Fix: add a timeout — if `canplay` doesn't fire within N seconds of `play()`, abort and retry the stream URL; surface the error to the user via toast.
+
+Additional Significant Findings (not in top 10):
+
+- **Stuck state (theoretical): no force-play override.** If the `music:ready` handshake were enabled (it currently isn't — see #2), a member who never sends `ready` (network error, tab backgrounded, audio blocked) would block playback indefinitely. `markMemberReady` (music-room-state.ts:176-182) has no timeout, and there's no "force play" command for the host. `removeMember` (music-room-state.ts:197-225) doesn't recheck `allReady` after a non-ready member leaves — the room stays paused. Fix: add a 5s timeout in `changeTrack` that force-transitions to 'playing' if not all members are ready; recompute `allReady` in `removeMember`.
+
+- **`music:position-report` interval too coarse (10s).** global-music-player.tsx:543-551 sends position reports every 10s. With 0.5% client clock drift, that's up to 50ms of accumulated drift per cycle before correction. Should be 3-5s for tighter sync. Also, the server's drift threshold is 1.5s (realtime-server.ts:707) — at 10s intervals, drift can reach ~1.5s before any correction, which is audible.
+
+- **Position report doesn't account for one-way network latency.** realtime-server.ts:703-715 compares `payload.position` (client's currentTime at send time, 50-300ms ago) against `getExpectedPosition(room)` (server's computed position at receive time). False positives: a client that's actually in sync can be flagged as drift >1.5s if the network is slow. Fix: include a client-side timestamp in the report; server computes drift as `payload.position - (getExpectedPosition(room) - networkLatency/2)`.
+
+- **`music:state` broadcast includes the originator.** broadcastRoomState (realtime-server.ts:93) emits to `music:${roomId}` which includes the socket that just sent `music:play`/`pause`/`seek`. The originator's local state is already updated optimistically; the broadcast triggers a redundant drift check (global-music-player.tsx:500). Usually `drift < 1.5s` so no-op, but tiny drifts (e.g., 100ms seek + 50ms latency) can cause unnecessary re-seeks. Fix: use `socket.to(room)` (broadcasts to everyone EXCEPT the sender) for `music:play`/`pause`/`seek`; keep `io.to(room)` for `music:join` snapshot.
+
+- **Bot music commands bypass host check.** global-music-player.tsx:577-653 `onBotCommand` directly calls `playTrack`/`audio.pause()`/`state.stop()` on the client. `playTrack` sends `music:play` to the server, which is silently ignored if the bot target isn't the host. Bot music commands only work when the target user is the host of the active room — undocumented and confusing. Also, `music:bot-command` listener doesn't check `activeRoomId` — commands arrive even when the user isn't in any music room, starting playback without room context.
+
+- **`music:seek`/`music:queue:add` don't validate payload.** realtime-server.ts:658-681 — `position` could be `Number.MAX_SAFE_INTEGER` (host seeks to year 9999, audio element hangs), `track` could be a multi-MB object (memory bloat in `room.queue`). The HTTP PATCH route (rooms/[id]/route.ts:63-92) has the same issue (already noted in 3-api-audit). Fix: validate `position` is a finite number in [0, 86400]; validate `track` shape and limit queue length to ~200.
+
+- **`music:transfer-host` doesn't validate the new host is online.** realtime-server.ts:697-701 — `transferHost` (music-room-state.ts:230-236) checks `room.members.has(newHostUserId)` but not that the user has any connected sockets. A host could transfer to a member who went offline (still in `members` Set due to multi-tab bug #3 or stale state), locking the room. Fix: check `presence.has(newHostUserId) && presence.get(newHostUserId)!.socketIds.size > 0`.
+
+- **Volume is per-client (correct), but not persisted.** useMusicStore.ts:66 defaults `volume: 0.8`. Reload resets volume. Should persist to localStorage. (Per-client volume is the correct design — volume is a personal preference, not a room state.)
+
+- **`audio.play()` errors swallowed in many places.** global-music-player.tsx:268, 491, 506 — `.catch(() => {})` silently eats autoplay-block errors. Browser autoplay policies (Chrome's "AudioContext was not allowed to start") will reject `play()` until the user interacts with the page. The unlock-on-first-gesture handler (useSocket.ts:62-77) calls `unlockAudio()` for the call manager, but NOT for the music audio element. A user who opens the app, navigates to Music, and clicks play on a track may get silently blocked. Fix: catch the rejection, show a toast "Click again to play" (the second click counts as a user gesture), or call `audio.play()` inside the click handler chain.
+
+- **`markMemberReady` uses `>=` instead of `===`.** music-room-state.ts:180: `room.readyMembers.size >= room.members.size`. Should be `===` for correctness (readyMembers should never exceed members). Currently not exploitable since readyMembers is cleared on state change, but fragile if the invariant is ever broken.
+
+- **Predownload effect over-fires.** global-music-player.tsx:387-402 triggers predownload for the first 2 queue items on every `currentTrack` or `queue` change. Minor queue reorders (e.g., drag-and-drop) re-fire predownload requests for tracks already cached. Should debounce or check `isCached(videoId)` before requesting.
+
+- **`music:queue:update` is broadcast on `music:queue:add`/`music:queue:remove` AND `music:state` includes the queue.** This means after a queue:add, clients receive both `music:queue:update` (line 680/686) and potentially `music:state` (if broadcastRoomState were called — it isn't for queue ops, so this is fine). But `onState` also calls `setQueue(data.queue)` (line 523-525) — so if a state broadcast arrives after a queue:update, the queue is set twice. Redundant but not buggy.
+
+- **`audio.currentTime = pos` in try/catch with empty catch.** global-music-player.tsx:490, 502 — silent failures. Should at least `console.warn` in dev mode to aid debugging.
+
+- **Stale comments reference `music:sync` event.** src/lib/ytdlp-download.ts:106,126 and src/app/api/music/predownload/[videoId]/route.ts:22 and src/app/api/music/stream/[videoId]/route.ts:16 all reference a "music:sync preload hook" that doesn't exist as a socket event. The actual preload is triggered by the client's predownload fetch (global-music-player.tsx:396). Comments are misleading — should be updated.
+
+- **`removeFromQueue` sends `music:queue:remove` with videoId, but the server removes ALL matching videoIds.** realtime-server.ts:683-687 + music-room-state.ts:156-160 `removeFromQueue` filters by `videoId`, removing all entries with that videoId. If the queue has the same track twice, removing by index on the client removes one, but the server removes both. Client/server queue states diverge. Fix: server should remove by index, or client should send the index.
+
+Stage Summary:
+- Audited the full music sync system: server state machine (music-room-state.ts), socket handlers (realtime-server.ts), client player (global-music-player.tsx), music view (music-view.tsx), store (useMusicStore.ts), API routes (rooms/[id], stream/[videoId]).
+- Good news: the client correctly uses `music:state` (new event name) — no leftover `music:sync` event-name mismatch. The `music:position-report` event name also matches.
+- Bad news: 4 critical bugs break core sync functionality: (1) resume restarts track from 0, (2) ready handshake is dead code, (3) multi-tab causes room abandonment, (4) no rejoin on reconnect. Plus 6 high-severity issues (queue desync, position-anchor ignored, non-host onEnded desync, no host-privilege UI, racy late-joiner seek, infinite-spinner on stall).
+- The `positionAnchor` field — the entire point of the server-authoritative drift-compensation design — is received by the client but never read. The drift math (`expectedPos = positionSec + (now - anchor)/1000`) is implemented server-side in `getExpectedPosition` but not client-side.
+- The `pendingSeekRef` is similarly dead code — set but never consumed by `onCanPlay`.
+- No code changes made — audit only (per task description). Fixes to be applied in follow-up task. Recommended order: #1 (resume restart), #6 (positionAnchor), #4 (reconnect rejoin), #3 (multi-tab), #2 (ready handshake + timeout), #5 (queue pop), #7 (non-host onEnded), #8 (host UI), #9 (pendingSeek), #10 (stall timeout).
+
+---
+Task ID: 5-bot-audit
+Agent: Bot Framework Audit Sub-Agent
+Task: Audit the bot framework in src/lib/bot/, src/app/api/bots/, src/app/api/channels/[id]/commands/route.ts, src/app/api/channels/[id]/messages/route.ts, src/app/api/channels/[id]/messages/[messageId]/callback/route.ts, and src/components/bots/bot-builder-editor.tsx for bugs, edge cases, race conditions, security issues, and incorrect logic.
+
+Audit Methodology:
+- Read worklog.md tail (prior fixes including the 3-api-audit findings).
+- Read framework.ts, flow-types.ts (1645 lines — full execution engine), flow-validation.ts, flow-debug.ts, example-flow.ts, index.ts, and all 5 bot modules (echo, help, poll, remind, visual).
+- Read api/bots/route.ts, api/bots/[id]/route.ts, api/channels/[id]/commands/route.ts, api/channels/[id]/messages/route.ts, and the callback route.
+- Read bot-builder-editor.tsx (2828 lines — ReactFlow editor + inspector panels + debug runner).
+- Cross-checked Prisma schema (Bot, ConversationSession, Message models) and chat-utils.canPostInChannel.
+- Verified socket dispatch path via realtime-server.ts sendMusicCommand and asr.ts transcribeMediaUrl.
+
+Top Critical Issues Found:
+
+1. CRITICAL — src/lib/bot/flow-types.ts:1025-1055 (api_call node): SSRF. The URL is interpolated from variables and fetched with no host validation. A bot owner can target internal services (AWS metadata 169.254.169.254, Ollama localhost:11434, ASR localhost:8001, Redis, etc.). Worse: if the URL field is set to `{{body}}`, ANY user in the channel can supply an arbitrary URL by typing it, turning this into a user-exploitable SSRF. Fix: validate URL host against an allowlist (or block private/loopback IPs).
+
+2. CRITICAL — src/lib/bot/framework.ts:317 + prisma/schema.prisma:397-409 (ConversationSession): Per-user state is keyed by (botId, userId) ONLY — not by channelId. If the same bot is a member of two channels and a user has a paused visual flow (or active poll) in channel A, then sends any message in channel B, the bot in channel B resumes/uses channel A's state. Poll bot will treat channel B messages as answers to channel A's poll. Visual bot will resume a paused flow against the wrong channel. Fix: add channelId to ConversationSession unique constraint, or scope state by `${channelId}:${botId}:${userId}`.
+
+3. CRITICAL — src/lib/bot/framework.ts:24-40 (editedMessageIds Set): Process-wide singleton Set shared across ALL concurrent HTTP requests. When two users trigger bots in parallel that edit messages (visual bot wait_choice re-prompt), both writes land in the same Set. The first request that calls getAndClearEditedMessages() drains the entire Set — its response includes the OTHER user's edited message IDs. The second request gets an empty Set. Also leaks memory if a request crashes before calling getAndClearEditedMessages. Fix: return edited IDs from dispatchBotUpdate/dispatchBotCallback as a return value, or use AsyncLocalStorage / per-request Map.
+
+Top High-Severity Issues:
+
+4. HIGH — src/lib/bot/bots/visual.ts:240-242: Counter variables wiped on flow completion. persistSession() does `setState({ pausedAt: null, variables: {} })` when the flow ends — nuking ALL variables, including persistent counters. The counter node is documented as persistent ("Increments {{count}} by N each time this node runs") but actually resets to startValue on every completed run. Counters only persist across pauses, not across runs. Fix: preserve counter variables (or a designated subset) on completion, or persist counters separately.
+
+5. HIGH — src/lib/bot/flow-types.ts:362-384 (interpolate): Variable name injected into RegExp without escaping. `new RegExp(`\\{\\{${k}\\}\\}`, 'g')` — if a set_var/condition variable name contains regex metacharacters (e.g. `count.`, `(.*)`, `a+b`), the RegExp constructor either throws (SyntaxError) or matches unexpected text. The set_var inspector (bot-builder-editor.tsx:1755-1783) does NOT validate the variable name input — only VariableNameField validates (line 2746), and set_var uses a plain Input. Fix: escape regex metacharacters in `k` before building the RegExp, OR use string .replaceAll() instead of regex.
+
+6. HIGH — src/app/api/channels/[id]/messages/route.ts:199-212 (botReplies query): Uses `createdAt: { gte: message.createdAt }` to find bot replies for THIS dispatch. If two users post in the same channel concurrently, User B's request (slightly later) returns ALL bot replies created since User A's message.createdAt — including User A's replies. Bot replies are not properly attributed. Fix: filter by `replyToId: message.id` (which the framework sets at framework.ts:192), or track reply message IDs returned from dispatchBotUpdate.
+
+7. HIGH — src/lib/bot/framework.ts:532-545 (dispatchBotCallback): Runs `mod.onMessage` AND then iterates `mod.callbacks` without early return. For visual bots (only onMessage), fine. But any future bot with both onMessage and callbacks would fire BOTH handlers per click. Also: `new RegExp(`^${cb.pattern}$`)` for string patterns — pattern `"yes|no"` becomes `/^yes|no$/` which matches "yes" anywhere (NOT anchored) due to regex precedence. Fix: return after onMessage for visual bots; wrap string patterns as `^(?:${pattern})$`.
+
+8. HIGH — src/lib/bot/framework.ts:319-329 + visual.ts:54: Read-modify-write race on ConversationSession. State is loaded once at dispatch start, mutated in memory, written once at end. Two concurrent dispatches for the same (botId, userId) — e.g. user double-sends a message, or two parallel mentions of the same bot — both load the same state, both modify, last write wins. First writer's variable changes silently lost. Fix: use optimistic locking (updatedAt CAS) or per-(botId,userId) mutex.
+
+9. HIGH — src/app/api/channels/[id]/messages/[messageId]/callback/route.ts:84-116: Same botReplies race as #6 — `dispatchStart = new Date()` then queries `createdAt: { gte: dispatchStart }`. Any concurrent callback dispatch in the same channel returns others' bot replies to this caller.
+
+10. HIGH — src/components/bots/bot-builder-editor.tsx:1755-1783 (set_var inspector): Variable name input has NO character validation. User can enter `count`, `user.name`, `(.*)`, `a+b`, etc. Combined with #5, this causes RegExp errors at interpolation time. Other inspectors use VariableNameField (which sanitizes to [a-zA-Z0-9_]) but set_var uses a plain Input. Fix: use VariableNameField for set_var's variable name too.
+
+Medium / Low Issues:
+- src/app/api/channels/[id]/messages/route.ts:163-174: `transcript` field never passed to dispatchBotUpdate, even though framework.ts:415 supports it. `__transcript` variable is always empty string — dead code. Auto-transcription results are invisible to bots unless they use an asr_transcribe node.
+- src/lib/bot/framework.ts:511-518 (dispatchBotCallback): doesn't set ctx.message.mediaUrl/mediaType/transcript. Visual bot resume path has no access to original message media.
+- src/lib/bot/flow-types.ts:612, 813, 827: User-supplied regex patterns (condition regex_match, regex_extract) compiled with `new RegExp()` — no ReDoS protection. Self-DoS only (bot owner can edit flow), but can hang event loop affecting all users.
+- src/lib/bot/flow-types.ts:1032: `JSON.parse(currentNode.data.headers)` not in try/catch inside api_call node — outer catch (line 1290) catches it but reply includes raw error.
+- src/lib/bot/bots/remind.ts:13, 41-58: setTimeout-based reminders held in module-level Map. Lost on server restart (documented). Also `timerKey` uses Date.now() — two reminders set in same millisecond collide. No cleanup if bot is deleted.
+- src/lib/bot/bots/poll.ts:91-108: state.votes/state.voters race — concurrent votes by different users both load state, both push to voters array, both increment — last write wins, losing one vote. Should use atomic DB operations.
+- src/lib/bot/framework.ts:165, 289-298: typingTimers Map keyed by bot.id only. Multiple channels sharing a bot interfere — second dispatch's setTyping clears first's interval. Not cleared when bot is deleted (memory leak).
+- src/lib/bot/framework.ts:447-452: "Unknown command: /<cmd>" reply includes the raw command text — minor info leak (echoes user input back to channel).
+- src/lib/bot/flow-types.ts:1285-1287 (default case): Unknown node type returns error but doesn't include the offending type in the user-facing error message — only in trace.
+- src/app/api/bots/[id]/route.ts:22-34 (PATCH): No size limit on config/flow JSON. DoS vector — attacker (bot owner) can POST 100MB flow. Also `module` field not validated against registered modules list.
+- src/app/api/bots/[id]/route.ts:62: `db.user.deleteMany({ where: { id: bot.id } }).catch(() => {})` — swallows all errors silently.
+- src/app/api/bots/route.ts:62-71: Bot's User row created with `passwordHash: 'bot-no-login'` sentinel. Safe only because bcrypt.compare rejects non-hash inputs; relies on credentials provider never changing.
+- src/lib/bot/flow-debug.ts:81-95: Dead code — comments say setTimeout is patched but the actual patching is commented out. `delaysCapped` flag is set but never read.
+- src/lib/bot/flow-validation.ts:105-386: Per-node switch has no default case — new node types added to NodeType union would silently pass validation.
+- src/lib/bot/flow-types.ts:1312-1316: MAX_STEPS=50 may be too low for legitimately long flows. Reply on max-steps could fail silently if DB is down.
+- src/components/bots/bot-builder-editor.tsx:471-482 (addNode): Uses `Date.now()` for node ID — collision if two nodes added in same millisecond.
+- src/components/bots/bot-builder-editor.tsx:744 (handleImport): Validates nodes/edges are arrays but not that each node has a `type` field — engine crashes at runtime on malformed imports.
+- src/components/bots/bot-builder-editor.tsx:688-702 (handleSave): No validation that flow has a trigger before saving — user can save an invalid flow.
+
+Stage Summary:
+- Audited 11 bot framework files (~3500 LOC) + 2 API routes + 2 channel routes + 1 component (2828 LOC).
+- Found 3 critical issues: SSRF via api_call node, per-user state not isolated by channelId (cross-channel leak), and process-wide editedMessageIds Set race condition.
+- Found 7 high-severity issues: counter variables wiped on flow completion, regex injection in variable interpolation, bot reply attribution race, dispatchBotCallback dual-handler bug, ConversationSession read-modify-write race, callback route same race, and unvalidated set_var variable names.
+- Found ~20 medium/low issues: dead __transcript code, missing ReDoS protection, setTimeout-based reminder brittleness, poll vote race, typing timer leak, missing validation on import/save, etc.
+- No code changes made — audit only. Top critical fixes should be: (1) validate api_call URL host, (2) add channelId to ConversationSession key, (3) replace module-global editedMessageIds Set with per-dispatch return value or AsyncLocalStorage, (4) preserve counter variables on flow completion, (5) escape regex metacharacters in interpolate(), (6) filter botReplies by replyToId instead of createdAt.
+
+---
+Task ID: 7-client-audit
+Agent: Client Audit Sub-Agent
+Task: Audit client-side React components in src/components/, src/hooks/, and src/stores/ for memory leaks, race conditions, stale closures, missing cleanup, accessibility issues, and incorrect React patterns.
+
+Audit Methodology:
+- Read worklog.md tail to understand prior fixes (TTS race fix, PM2 migration, prior API audit).
+- Read all 13 files in src/hooks/ (useSocket, useCall, useChannel, usePresence, useStories, useBots, useGlobalTyping, useUnreadCounts, useOfflineSession, usePermissionManager, useConfirm, use-toast, use-mobile, useNotifications).
+- Read all 4 files in src/stores/ (useAppStore, useCallStore, useMusicStore, useTypingStore).
+- Spot-checked the 8 largest .tsx files (bot-builder-editor, music-view, message-composer, cinema-view, global-music-player, chat-list, settings-view, message-list) plus channel-list, status-view, voice-view, active-call-screen, incoming-call-overlay, call-controller, voice-message-player, chat-autocomplete, chat-info-panel, chat-view, context-menu-provider, command-palette, offline-banner, update-banner, confirm-dialog.
+
+Top 10 Most Critical Issues Found:
+
+1. CRITICAL — src/components/chat/message-composer.tsx (lines 1064-1095): `CustomVoicesTab.startRecording` stores `MediaRecorder` and `audioChunks` in `useState` (not `useRef`), and `stream.getTracks().forEach(t => t.stop())` is only called inside the recorder's `onstop` callback. If the user closes the dialog (or navigates away) mid-recording, `mediaRecorder.stop()` is never called → the `MediaStream` microphone tracks stay active forever (browser mic indicator stays lit, mic hardware remains captured). Also `useState` for the recorder means React re-renders on every chunk via `setAudioChunks`. Fix: store recorder/stream/chunks in refs; add a `useEffect` cleanup that calls `recorder.stop()` and stops all tracks when the component unmounts or the dialog closes.
+
+2. CRITICAL — src/components/chat/message-composer.tsx (lines 644-728): `TtsDialog.handleGenerate` creates an `AudioContext` (`new AudioContext({ latencyHint: 'playback' })`) inside the streaming reader loop, schedules `source.start(startTime)` for every chunk, and NEVER closes the context. If the user closes the dialog mid-generation, the audio context stays open, scheduled PCM buffers keep playing, and the reader keeps consuming the network stream (no AbortController on the `fetch` either). Web Audio contexts are limited (~6 per tab) — repeated generations leak them. Fix: track `audioCtx` in a ref, call `audioCtx.close()` and `reader.cancel()` in a cleanup effect, and pass an `AbortController` to the `fetch`.
+
+3. CRITICAL — src/components/voice/incoming-call-overlay.tsx (lines 34-72): The `useEffect` registers four `window` event listeners and plays `CallSounds.startIncoming()` on incoming-call, but the cleanup function only removes the listeners — it does NOT call `CallSounds.stop()`. If the parent unmounts the overlay while a ring tone is playing (e.g., session expires, app navigates, HMR), the ring tone plays indefinitely. `handleAccept`/`handleReject` stop the sound, but unmount-without-action does not. Fix: add `CallSounds.stop()` to the effect's return cleanup.
+
+4. CRITICAL — src/components/ui/context-menu-provider.tsx (lines 111-137): `useLongPress` uses `useState` (not `useRef`) for the timer ref — `const timeoutRef = useState<ReturnType<typeof setTimeout> | null>(null)`. Each touch causes a re-render, the `[0]/[1]` destructuring pattern is fragile, and there's NO cleanup on unmount. If the user lifts their finger after the component unmounts, `clearTimeout` is called on a stale closure. More importantly, if the user navigates away during the 500ms long-press window, the timer fires `callback()` on an unmounted component. Fix: use `useRef` for the timer and add a `useEffect` cleanup that clears any pending timer on unmount.
+
+5. CRITICAL — src/components/voice/active-call-screen.tsx (lines 81-85): `handleSpeaker` does `document.querySelectorAll('audio').forEach(el => { el.volume = newSpeakerOn ? 1.0 : 0.0 })`. This mutates EVERY `<audio>` element in the entire app — including the persistent `<audio>` in GlobalMusicPlayer, hidden voice-message players, and any TTS preview. Toggling speaker off mutes the entire app's audio, not just call audio. Toggling it back on sets everyone's volume to 1.0 even if they were intentionally lowered. Fix: only adjust the audio elements owned by the CallManager (remote peer streams via `audioRef`/participant `audio` elements), not a global querySelector.
+
+6. CRITICAL — src/components/voice/active-call-screen.tsx (lines 44-50): The `localVideoRef.current.srcObject = localStream` effect only runs when `localStream` is truthy — there is no cleanup that sets `srcObject = null` when `localStream` becomes null (i.e., when the call ends and `useCallStore.reset()` clears it). The `<video>` element retains a reference to the old `MediaStream`, preventing GC of the camera tracks even after `CallManager.endCall()` stops them. Fix: in the effect, add an else-branch (or a separate cleanup) that sets `localVideoRef.current.srcObject = null` when localStream is null.
+
+7. HIGH — src/hooks/useChannel.ts (lines 150-161): The typing-indicator auto-clear uses `setTimeout(() => setTyping(...), 4000)` inside the `channel:typing` socket handler, but the timeout is NEVER cleared in the effect cleanup, and the closure captures the `channelId` from when the handler was registered. If the user switches channels within 4s of a typing pulse, the timeout fires on the new channelId's `setTyping` state — adding/removing typers from the wrong channel. Also accumulates one timeout per typing pulse (no dedup). Fix: track pending timeouts in a ref keyed by userId, clear them all on unmount/channelId-change.
+
+8. HIGH — src/hooks/useCall.ts (line 48): `const isScreenSharing = getCallManager().isScreenSharing()` is called during render but reads from a non-reactive singleton. When screen-share starts or stops, no Zustand state changes, so React doesn't re-render — the `isScreenSharing` prop in `ActiveCallScreen` stays stale until something else triggers a render. The screen-share button's active state and label won't update. Fix: add `isScreenSharing` to `useCallStore` and have the CallManager call `setIsScreenSharing` in its callbacks (matching the pattern used for mute/video).
+
+9. HIGH — src/components/music/global-music-player.tsx (lines 184-209): The `playTrack` retry logic uses a recursive `setTimeout(retry, 2000)` chain (up to 3 retries) with no cleanup tracking. If the user switches tracks or unmounts the player mid-retry, `audioRef.current.load()` and `audioRef.current.play()` fire on the (possibly destroyed) audio element, and `loadedVideoIdRef.current === videoId` check passes for the new track if it has the same videoId. Fix: track the retry timer in a ref and clear it in `playTrack`'s next invocation and in the component's unmount cleanup; also abort the HEAD `fetch` if a new play request comes in.
+
+10. HIGH — src/components/chat/chat-list.tsx (lines 455-478): Mobile long-press handler creates a `setTimeout` and registers one-time `touchend`/`touchmove`/`touchcancel` listeners on `e.currentTarget` to cancel it — but the timer is stored in `dataset.longPressTimer` as a String and never read back. If the row unmounts before the 500ms elapses (e.g., list refetches and the row is replaced), the timer still fires `showChatContextMenu(...)` on the stale `row` object. Also `navigator.vibrate(50)` is called unconditionally — `navigator.vibrate` is not available on iOS Safari and throws in some browsers if called without user gesture (here it's inside a timer, so it's not in a gesture context). Fix: store timer in a ref keyed by row id, clear on unmount; guard `navigator.vibrate` with `typeof` check.
+
+Additional Significant Findings:
+
+- src/components/chat/message-list.tsx (lines 158-216, esp. 183): `markRead(lastMsg.id)` is called inside the auto-scroll `useEffect` for EVERY new message — even when the user is scrolled up (`shouldScroll === false`) and hasn't seen the message. This marks messages as read that the user hasn't actually seen, defeating the unread-count badge logic. Move `markRead` to only fire when `shouldScroll === true`.
+
+- src/components/voice/call-controller.tsx (lines 88-122): The pending-call `fetch('/api/calls/pending')` on socket reconnect has no `mounted` flag. If the user logs out (or the socket disconnects again) before the fetch resolves, the `.then()` callback still dispatches `sns:incoming-call` and calls `CallSounds.startIncoming()` on an unauthenticated session. Fix: track `mounted` with a ref (or use an AbortController) and bail in the `.then()` if unmounted.
+
+- src/components/layout/update-banner.tsx (lines 99-123): The `visibilitychange` handler calls both `navigator.serviceWorker.getRegistration()` AND `fetch('/api/version')` every time the tab becomes visible — no debounce. Rapid tab-switching spams the server. Also the version-poll interval is 30s (not 60s as the comment says). Fix: debounce visibility-driven checks to ~5s, or only check if last check was >30s ago.
+
+- src/hooks/use-toast.ts (lines 174-185): `useToast`'s `useEffect` has dep array `[state]`, causing the listeners array to be spliced and re-pushed on every toast state change. Wasteful (O(n) array splice on every notification) but not broken. Fix: change dep to `[]` — the listener pattern works fine with a stable subscription.
+
+- src/hooks/use-toast.ts (line 12): `TOAST_REMOVE_DELAY = 1000000` (~16 minutes) — dismissed toasts linger in the module-level `toastTimeouts` Map and the reducer state until this timer fires. Should be ~5s after dismissal.
+
+- src/hooks/useOfflineSession.ts (lines 37-44): The `handleOffline` function body is empty — the comment says "AppShell will check the cache" but the handler does nothing. Either remove the effect (dead code) or implement the offline-mode logic.
+
+- src/hooks/usePermissionManager.ts (lines 13-42): `Notification.requestPermission()` and `navigator.permissions.query(...)` Promises have no cancellation. If the user logs out before the 3-second `setTimeout` fires or before the Promise resolves, `registerPushSubscription()` still runs and POSTs a push subscription for the now-unauthenticated session (server may create an orphan PushSubscription row). Fix: track `mounted` and bail in the `.then()` callbacks.
+
+- src/components/music/music-view.tsx (lines 371-408): The debounced search uses `searchTimeoutRef` and `searchAbortRef` — the AbortController cancels in-flight fetches, but the timeout itself is not cleared on unmount. If the user navigates away mid-debounce, `setSearching(true)` and `setSearchResults(...)` fire on the unmounted component, and the fetch races with unmount. Fix: clear the timeout in a `useEffect` cleanup; check `mounted` in the `.then()`.
+
+- src/components/music/music-view.tsx (lines 136-152): The hash-change listener has deps `[queue.length, upNextTracks.length]` — the effect re-subscribes on every queue change. The initial `checkHash()` runs on every re-subscribe, potentially calling `setTab('queue')` and `window.location.hash = ''` at unexpected times (e.g., user adds a track to queue while on the Browse tab and the hash effect overwrites their tab). Fix: use a stable dep array `[]` and read `queue.length`/`upNextTracks.length` from refs inside the handler.
+
+- src/components/music/global-music-player.tsx (lines 387-439): The predownload and radio-prefetch effects fire `fetch` for every track in `queue.slice(0, 2)` on every `currentTrack`/`queue` change — no dedup against already-predownloaded tracks. If the queue rapidly changes (e.g., user adds/removes tracks), the same videoId gets predownloaded multiple times. Fix: track predownloaded IDs in a ref Set and skip if already requested.
+
+- src/components/voice/active-call-screen.tsx (lines 52-67): `audioLevels` and `connectionTypes` state objects never prune disconnected peers — every peer that ever joined (even briefly) stays in the map for the entire call. Small but unbounded growth in long-running group calls. Fix: prune peers not in `participants` on each `participants` change.
+
+- src/components/bots/bot-builder-editor.tsx (lines 807-809): `setTimeout(() => fitView(...), 50)` has no cleanup — if the user navigates away within 50ms, `fitView` is called on a destroyed ReactFlow instance. Minor since ReactFlow's `fitView` is nullipotent when unmounted, but should be cleared.
+
+- src/components/chat/channel-list.tsx (lines 254, 587): Two `setTimeout(() => setCopied(false), ...)` calls with no cleanup. If the dialog closes within 2s/1.5s, `setCopied` fires on an unmounted component. Minor (React 18+ silent), but should be tracked in a ref.
+
+- src/components/status/status-view.tsx StoryViewer (lines 346-494): The full-screen story viewer is a `motion.div`, not a Dialog — no focus trap, no Esc-to-close, no `role="dialog"`/`aria-modal`. Keyboard users can't close it without clicking the X button (which is small and in the corner). Also no `aria-label` on the nav tap-zones (lines 472-490). Fix: add a `keydown` listener for Escape that calls `onClose`, set `role="dialog"` and `aria-modal="true"`, and add `aria-label`s to the nav buttons.
+
+- src/components/voice/voice-view.tsx (line 242): `otherActiveCalls.length > 0 && otherActiveCalls.length > 0` — duplicate condition (copy-paste bug). Harmless but indicates the line was edited without review. Fix: remove the duplicate.
+
+- src/components/chat/message-list.tsx and many other components: `<img src={avatarUrl} alt="" className="..." />` — most avatars use `<AvatarImage>` (good), but inline `<img>` for media (message-list line 704, status-view line 196, etc.) lack `loading="lazy"` and `width`/`height` attributes — causes layout shift and unnecessary below-the-fold loads. Fix: add `loading="lazy"` and explicit `width`/`height` (or use `aspect-ratio` CSS) to all below-the-fold images.
+
+- src/components/chat/voice-message-player.tsx (lines 249-256): The waveform seek bar has `role="slider"` and `aria-valuenow`/`aria-valuemin`/`aria-valuemax`, but no `tabIndex` and no `onKeyDown` handler — keyboard users can't focus or operate it. Fix: add `tabIndex={0}` and handle ArrowLeft/ArrowRight to seek by 5s.
+
+- src/components/voice/incoming-call-overlay.tsx (lines 163-188): Accept/Decline buttons are `<button>` elements whose visible labels are in sibling `<span>` elements (outside the button). Screen readers announce only the icon (no text). Fix: move the `<span>` inside the `<button>`, or add `aria-label="Accept call"` / `aria-label="Decline call"`.
+
+- src/components/ui/context-menu-provider.tsx (lines 87-98): Context-menu items are `<button>` elements with `key={i}` (array index) — if items are reordered or removed between renders, React may reuse the wrong DOM node. Fix: use a stable key (item.label or a generated id).
+
+- src/components/music/global-music-player.tsx (lines 918-945, 987-994): Volume and seek sliders are `<input type="range">` without `aria-label` — screen readers announce "slider" with no context. Fix: add `aria-label="Seek"` / `aria-label="Volume"`.
+
+- src/components/layout/command-palette.tsx (line 103): `useEffect(() => setSelectedIndex(0), [query])` only resets when query changes — doesn't reset when results change due to refetch (e.g., cache invalidation brings new results for the same query). Also `flatResults[selectedIndex]` could be undefined if results shrink. Fix: reset on `data` change, and guard `flatResults[selectedIndex]` access.
+
+- src/stores/useAppStore.ts (line 50): `setActiveChannel: (id) => set({ activeChannelId: id, chatInfoOpen: false })` silently closes the chat info panel whenever the active channel changes. This is intentional but undocumented — callers like `useNotifications` (line 80) call `setActiveChannel(channelId)` to navigate, which unexpectedly closes the info panel if it was open. Minor UX surprise.
+
+Stage Summary:
+- Audited 13 hooks, 4 stores, and ~20 component files.
+- Found 6 critical issues (MediaStream leak in custom-voice recording, AudioContext leak in TTS streaming, ring-tone leak in incoming-call overlay, long-press timer leak, global audio mutation in speaker toggle, video srcObject leak on call end).
+- Found ~15 high-severity issues (stale typing-timeout closures, non-reactive isScreenSharing, retry-timer leaks, markRead on unseen messages, unmounted setState in fetch chains, etc.).
+- Found ~15 medium/low issues (a11y gaps, image lazy-loading, duplicate conditions, dead code, info panel side effect).
+- No code changes made — audit only (per task description). Fixes to be applied in follow-up task.

@@ -18,6 +18,7 @@ import {
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useSocket } from '@/hooks/useSocket'
+import { useSession } from 'next-auth/react'
 import { useMusicStore, type Track } from '@/stores/useMusicStore'
 import { useAppStore } from '@/stores/useAppStore'
 
@@ -100,6 +101,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
   const shuffle = useMusicStore((s) => s.shuffle)
   const repeat = useMusicStore((s) => s.repeat)
   const activeRoomId = useMusicStore((s) => s.activeRoomId)
+  const hostUserId = useMusicStore((s) => s.hostUserId)
 
   // ─── Store actions ────────────────────────────────────────────────────
   const setCurrentTrack = useMusicStore((s) => s.setCurrentTrack)
@@ -110,6 +112,8 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
   const storeAddToQueue = useMusicStore((s) => s.addToQueue)
   const storeRemoveFromQueue = useMusicStore((s) => s.removeFromQueue)
   const storeClearQueue = useMusicStore((s) => s.clearQueue)
+  const setHostUserId = useMusicStore((s) => s.setHostUserId)
+  const setPositionAnchor = useMusicStore((s) => s.setPositionAnchor)
 
   // ─── Refs for cross-render coordination ───────────────────────────────
   // The videoId currently loaded into the <audio> element. Used to detect
@@ -132,6 +136,14 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     [activeRoomId, socket],
   )
 
+  // True if the current user is the room host (or no room — solo mode).
+  // Non-hosts cannot play/pause/seek/skip; their commands are silently
+  // dropped by the server. We compute this reactively so the UI can
+  // disable controls appropriately.
+  const { data: session } = useSession()
+  const sessionUserId = (session?.user as any)?.id as string | undefined
+  const isHost = !activeRoomId || !hostUserId || hostUserId === sessionUserId
+
   // ─── Action: play a track ─────────────────────────────────────────────
   const playTrack = useCallback(
     async (track: Track, addToQueue = false) => {
@@ -153,16 +165,20 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
 
       // Notify server (server-authoritative — server will broadcast to all members)
       if (activeRoomId) {
-        sendRoomCommand('music:play', {
-          roomId: activeRoomId,
-          videoId: track.videoId,
-          trackInfo: {
-            title: track.title,
-            artist: track.artist,
-            thumbnail: track.thumbnail,
-            durationSeconds: track.durationSeconds,
-          },
-        })
+        // Non-hosts in a synced room: do NOT send music:play (server would reject).
+        // They just play locally — the server will sync them via music:state.
+        if (isHost) {
+          sendRoomCommand('music:play', {
+            roomId: activeRoomId,
+            videoId: track.videoId,
+            trackInfo: {
+              title: track.title,
+              artist: track.artist,
+              thumbnail: track.thumbnail,
+              durationSeconds: track.durationSeconds,
+            },
+          })
+        }
       }
 
       // Load + play the audio
@@ -217,6 +233,20 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
   // ─── Action: play next track ──────────────────────────────────────────
   const playNext = useCallback(async () => {
     const state = useMusicStore.getState()
+
+    // In a synced room, ONLY the host advances the queue. Non-hosts' audio
+    // elements will naturally end, but they should NOT call playTrack locally
+    // — the server's music:next broadcast will sync them to the new track.
+    // For non-hosts in a room, we just stop the local audio and wait.
+    if (activeRoomId && !isHost) {
+      if (audioRef.current) {
+        audioRef.current.pause()
+      }
+      setIsPlaying(false)
+      return
+    }
+
+    // Host (or solo mode): pop next track and play it.
     let nextTrack: Track | null = state.popNextFromQueue()
 
     // If main queue is empty, try the radio queue (prefetched autoplay tracks)
@@ -245,6 +275,13 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     }
 
     if (nextTrack) {
+      // In a synced room, tell the server to advance the queue. The server
+      // will pop from its queue and broadcast the new track to everyone.
+      // We still call playTrack locally for instant feedback — the server's
+      // broadcast will catch up and re-sync if needed.
+      if (activeRoomId && isHost) {
+        sendRoomCommand('music:next', activeRoomId)
+      }
       await playTrack(nextTrack)
     } else if (state.repeat && state.currentTrack) {
       await playTrack(state.currentTrack)
@@ -252,13 +289,20 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       setIsPlaying(false)
       setPosition(0)
     }
-  }, [playTrack, setIsPlaying, setPosition])
+  }, [playTrack, setIsPlaying, setPosition, activeRoomId, isHost, sendRoomCommand])
 
   // ─── Action: toggle play / pause ──────────────────────────────────────
   const togglePlay = useCallback(() => {
     const audio = audioRef.current
     const state = useMusicStore.getState()
     if (!audio || !state.currentTrack) return
+
+    // In a synced room, non-hosts cannot toggle. The host's toggle is
+    // broadcast via music:state and non-hosts' audio follows.
+    if (activeRoomId && !isHost) {
+      toast.info('Only the host can control playback')
+      return
+    }
 
     if (state.isPlaying) {
       audio.pause()
@@ -267,9 +311,10 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     } else {
       audio.play().catch(() => {})
       setIsPlaying(true)
+      // Resume (no videoId) — server keeps current position.
       sendRoomCommand('music:play', { roomId: activeRoomId })
     }
-  }, [sendRoomCommand, setIsPlaying, activeRoomId])
+  }, [sendRoomCommand, setIsPlaying, activeRoomId, isHost])
 
   // ─── Action: seek ─────────────────────────────────────────────────────
   const handleSeek = useCallback(
@@ -277,11 +322,13 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       const audio = audioRef.current
       const state = useMusicStore.getState()
       if (!audio) return
+      // Non-hosts in a synced room can't seek — would fight with the host.
+      if (activeRoomId && !isHost) return
       audio.currentTime = pos
       setPosition(pos)
       sendRoomCommand('music:seek', { roomId: activeRoomId, position: pos })
     },
-    [sendRoomCommand, setPosition, activeRoomId],
+    [sendRoomCommand, setPosition, activeRoomId, isHost],
   )
 
   // ─── Action: stop playback entirely ───────────────────────────────────
@@ -359,6 +406,24 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     }
     const onCanPlay = () => {
       useMusicStore.getState().setIsLoading(false)
+      // If we have a pending seek (from a remote state update that changed
+      // the track), apply it now that the audio is buffered enough.
+      if (pendingSeekRef.current !== null && audioRef.current) {
+        try { audioRef.current.currentTime = pendingSeekRef.current } catch {}
+        const state = useMusicStore.getState()
+        if (state.isPlaying) {
+          audioRef.current.play().catch(() => {})
+        }
+        pendingSeekRef.current = null
+      }
+      // Tell the server we're ready (buffered). The server waits for all
+      // members (or just the host) to be ready before flipping state
+      // from 'paused' → 'playing' — this prevents the "one person hears
+      // the song 3s before everyone else" problem.
+      const rid = useMusicStore.getState().activeRoomId
+      if (rid && socket) {
+        socket.emit('music:ready', rid)
+      }
     }
 
     audio.addEventListener('timeupdate', onTimeUpdate)
@@ -375,7 +440,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       audio.removeEventListener('playing', onPlaying)
       audio.removeEventListener('canplay', onCanPlay)
     }
-  }, [playNext, setPosition])
+  }, [playNext, setPosition, socket])
 
   // ─── Effect: Pre-download upcoming queue tracks ───────────────────────
   // When a track starts playing, pre-download the next 2 tracks in the queue
@@ -446,6 +511,16 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
 
     socket.emit('music:join', activeRoomId)
 
+    // Re-join on reconnect (Socket.io reuses the same socket object across
+    // reconnects, so the original emit doesn't fire again). Without this,
+    // a brief network blip silently desyncs the client from the room.
+    const onReconnect = () => {
+      if (useMusicStore.getState().activeRoomId === activeRoomId) {
+        socket.emit('music:join', activeRoomId)
+      }
+    }
+    socket.on('connect', onReconnect)
+
     // ── Incoming state from the server ──
     const onState = (data: {
       roomId: string
@@ -463,6 +538,10 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       applyingRemoteRef.current = true
       const store = useMusicStore.getState()
       const audio = audioRef.current
+
+      // Track host + anchor for drift correction
+      setHostUserId(data.hostUserId)
+      setPositionAnchor(data.positionAnchor)
 
       // Track changed → load the new stream
       if (
@@ -485,22 +564,27 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
           audio.src = `/api/music/stream/${data.currentVideoId}`
           audio.volume = store.volume
           loadedVideoIdRef.current = data.currentVideoId
-          setTimeout(() => {
-            if (audioRef.current) {
-              try { audioRef.current.currentTime = data.positionSec } catch {}
-              if (data.state === 'playing') audioRef.current.play().catch(() => {})
-            }
-            applyingRemoteRef.current = false
-          }, 200)
+          // Don't force a seek/play here — wait for the audio element's
+          // 'canplay' event (handled in the listener effect below). That
+          // fires the seek + emits 'music:ready' so the server knows we're
+          // buffered and can flip state from 'paused' → 'playing' for all
+          // members at once.
+          applyingRemoteRef.current = false
         } else {
           applyingRemoteRef.current = false
         }
       } else if (audio && store.currentTrack) {
         // Same track — sync position + play/pause state only
-        const drift = Math.abs(audio.currentTime - data.positionSec)
+        // Use server-reported anchor to compute the expected position
+        // (handles clock drift between client and server).
+        const serverElapsed = data.state === 'playing'
+          ? (Date.now() - data.positionAnchor) / 1000
+          : 0
+        const expectedPos = data.positionSec + serverElapsed
+        const drift = Math.abs(audio.currentTime - expectedPos)
         if (drift > 1.5) {
-          try { audio.currentTime = data.positionSec } catch {}
-          setPosition(data.positionSec)
+          try { audio.currentTime = expectedPos } catch {}
+          setPosition(expectedPos)
         }
         if (data.state === 'playing' && !store.isPlaying) {
           audio.play().catch(() => {})
@@ -538,6 +622,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     socket.on('music:state', onState)
     socket.on('music:queue:update', onQueueUpdate)
     socket.on('music:host-changed', onHostChanged)
+    socket.on('connect', onReconnect)
 
     // Position report for drift correction (every 10s while playing)
     const positionReportInterval = setInterval(() => {
@@ -555,6 +640,7 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       socket.off('music:state', onState)
       socket.off('music:queue:update', onQueueUpdate)
       socket.off('music:host-changed', onHostChanged)
+      socket.off('connect', onReconnect)
       socket.emit('music:leave', activeRoomId)
       applyingRemoteRef.current = false
     }
@@ -565,6 +651,8 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     setIsPlaying,
     setPosition,
     setQueue,
+    setHostUserId,
+    setPositionAnchor,
   ])
 
   // ─── Bot music control listener ───────────────────────────────────────

@@ -582,6 +582,54 @@ function TtsDialog({
   const [sending, setSending] = useState(false)
   const qc = useQueryClient()
 
+  // Refs for resources that must be cleaned up if the dialog closes mid-
+  // generation. Without these, closing the dialog while a TTS stream is in
+  // flight would (a) leak an AudioContext (max ~6/tab), (b) keep consuming
+  // the network stream, (c) leave the reader pending forever.
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null)
+
+  // Cleanup effect — runs when dialog closes OR component unmounts.
+  // Stops the stream reader, aborts the fetch, and closes the AudioContext.
+  useEffect(() => {
+    if (open) return
+    // Dialog just closed (or wasn't open) — clean up any in-flight resources.
+    if (readerRef.current) {
+      readerRef.current.cancel().catch(() => {})
+      readerRef.current = null
+    }
+    if (abortRef.current) {
+      abortRef.current.abort()
+      abortRef.current = null
+    }
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {})
+      audioCtxRef.current = null
+    }
+    setIsStreaming(false)
+    setGenerating(false)
+  }, [open])
+
+  // Also clean up on unmount (component itself going away, e.g. composer
+  // unmounting while dialog is open).
+  useEffect(() => {
+    return () => {
+      if (readerRef.current) {
+        readerRef.current.cancel().catch(() => {})
+        readerRef.current = null
+      }
+      if (abortRef.current) {
+        abortRef.current.abort()
+        abortRef.current = null
+      }
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {})
+        audioCtxRef.current = null
+      }
+    }
+  }, [])
+
   // Fetch built-in voices from the API (single source of truth for labels)
   const { data: builtinVoicesData } = useQuery({
     queryKey: ['tts-builtin-voices'],
@@ -615,6 +663,11 @@ function TtsDialog({
     setPreviewUrl(null)
     setPreviewBlob(null)
     setIsStreaming(true)
+
+    // Set up abort controller so closing the dialog cancels the fetch
+    const abort = new AbortController()
+    abortRef.current = abort
+
     try {
       const body: any = { text }
       if (selectedCustomVoiceId) {
@@ -626,6 +679,7 @@ function TtsDialog({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: abort.signal,
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Generation failed' }))
@@ -642,7 +696,7 @@ function TtsDialog({
       // where a background server-side save hadn't finished before the
       // message URL was accessed (which caused 0-length audio in production).
       const reader = res.body!.getReader()
-      let audioCtx: AudioContext | null = null
+      readerRef.current = reader
       let headerParsed = false
       let headerBuf = new Uint8Array(44)
       let headerBytes = 0
@@ -651,7 +705,15 @@ function TtsDialog({
       let nextStartTime = 0
       const collectedChunks: Uint8Array[] = []
 
+      const ensureAudioCtx = () => {
+        if (!audioCtxRef.current) {
+          audioCtxRef.current = new AudioContext({ latencyHint: 'playback' })
+        }
+        return audioCtxRef.current
+      }
+
       const playChunk = (data: Uint8Array) => {
+        const audioCtx = audioCtxRef.current
         if (!audioCtx) return
         const samples = Math.floor(data.length / 2)
         if (samples === 0) return
@@ -685,9 +747,7 @@ function TtsDialog({
               const view = new DataView(headerBuf.buffer)
               sampleRate = view.getUint32(24, true)
               headerParsed = true
-              if (!audioCtx) {
-                audioCtx = new AudioContext({ latencyHint: 'playback' })
-              }
+              ensureAudioCtx()
               if (value.length > copy) {
                 pcmBuffer = new Uint8Array(value.slice(copy))
               }
@@ -721,10 +781,17 @@ function TtsDialog({
       setIsStreaming(false)
       toast.success('Voice generated — preview and send')
     } catch (e: any) {
+      // Aborted (dialog closed) — don't show error toast
+      if (e?.name === 'AbortError') return
       setIsStreaming(false)
       toast.error(e.message || 'Failed to generate voice')
     } finally {
       setGenerating(false)
+      // Clear refs — the AudioContext is closed by the cleanup effect when
+      // the dialog closes. We don't close it here because the user might
+      // still be listening to the preview's tail.
+      readerRef.current = null
+      abortRef.current = null
     }
   }
 

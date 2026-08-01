@@ -424,20 +424,12 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       checkCallEnd(callId)
     })
 
-    // Also handle disconnect — user might close the tab
-    socket.on('disconnect', () => {
-      // Find all calls this socket was in and check if they should end
-      for (const room of socket.rooms) {
-        if (room.startsWith('call:')) {
-          const callId = room.substring(5)
-          socket.to(room).emit('call:peer-left', {
-            peerId: socket.id,
-            userId,
-          })
-          checkCallEnd(callId)
-        }
-      }
-    })
+    // NOTE: The call:ring handler below used to register a SECOND
+    // 'disconnect' listener per ring (memory leak: N rings → N listeners,
+    // all firing on disconnect). We now track retry intervals in a per-socket
+    // Set and clear them all from the single disconnect handler at the bottom.
+    // ── Per-socket cleanup registry (cleared in the single disconnect handler) ──
+    const socketCleanups: Array<() => void> = []
 
     socket.on('call:offer', (payload: { to: string; sdp: any }) => {
       io.to(payload.to).emit('call:offer', { from: socket.id, sdp: payload.sdp })
@@ -516,14 +508,12 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
             return
           }
           sendIncoming()
-          
         }
       }, 5000)
 
-      // Clean up interval when caller disconnects
-      socket.on('disconnect', () => {
-        clearInterval(retryInterval)
-      })
+      // Register interval cleanup for this socket — fires from the single
+      // disconnect handler below. Prevents the per-ring listener leak.
+      socketCleanups.push(() => clearInterval(retryInterval))
     })
 
     socket.on('call:accept', (payload: { callId: string; byUserId: string }) => {
@@ -639,14 +629,30 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
     socket.on('music:play', (payload: { roomId: string; videoId?: string; trackInfo?: any }) => {
       if (!isHost(payload.roomId, userId)) return
       if (payload.videoId) {
+        // New track: changeTrack resets position to 0 and sets state='paused'
+        // (waiting for ready handshake). updatePlayback(playing, 0) is then
+        // called by the ready handler when all members have buffered.
         changeTrack(payload.roomId, payload.videoId, {
           videoId: payload.videoId, title: payload.trackInfo?.title || 'Unknown',
           artist: payload.trackInfo?.artist || 'Unknown', thumbnail: payload.trackInfo?.thumbnail || null,
           durationSeconds: payload.trackInfo?.durationSeconds || null, addedByUserId: userId, addedAt: Date.now(),
         })
+        broadcastRoomState(io, payload.roomId)
+        // Safety net: if no member sends 'ready' within 8s (network error,
+        // abandoned tab, broken audio element), force-play anyway.
+        setTimeout(() => {
+          const r = getRoom(payload.roomId)
+          if (r && r.state === 'paused' && r.currentVideoId === payload.videoId) {
+            updatePlayback(payload.roomId, 'playing', 0)
+            broadcastRoomState(io, payload.roomId)
+          }
+        }, 8_000)
+      } else {
+        // Resume: keep current position. updatePlayback with no positionSec
+        // arg derives it from the previous anchor + elapsed time.
+        updatePlayback(payload.roomId, 'playing')
+        broadcastRoomState(io, payload.roomId)
       }
-      updatePlayback(payload.roomId, 'playing', 0)
-      broadcastRoomState(io, payload.roomId)
     })
 
     socket.on('music:pause', (roomId: string) => {
@@ -688,7 +694,10 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
 
     socket.on('music:ready', (roomId: string) => {
       const { allReady, room } = markMemberReady(roomId, userId)
-      if (allReady && room && room.state === 'paused') {
+      // Start playback when EITHER all members are ready OR the host is ready
+      // (host-ready is sufficient — others will catch up via drift correction).
+      const hostIsReady = room?.readyMembers.has(room.hostUserId) === true
+      if (room && room.state === 'paused' && (allReady || hostIsReady)) {
         updatePlayback(roomId, 'playing', 0)
         broadcastRoomState(io, roomId)
       }
@@ -715,17 +724,44 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
     })
 
 
+    // ── Single disconnect handler — runs ALL cleanup for this socket ────
+    // Previously we had two disconnect handlers (one for calls, one added per
+    // call:ring event) — both fired on disconnect, the ring one accumulated.
+    // Now we run all cleanup here, including the registered socketCleanups.
     socket.on('disconnect', () => {
+      // 1. Run registered cleanups (call:ring retry intervals, etc.)
+      for (const cleanup of socketCleanups) {
+        try { cleanup() } catch {}
+      }
+      socketCleanups.length = 0
+
+      // 2. Find all calls this socket was in and check if they should end
+      for (const room of socket.rooms) {
+        if (room.startsWith('call:')) {
+          const callId = room.substring(5)
+          socket.to(room).emit('call:peer-left', { peerId: socket.id, userId })
+          checkCallEnd(callId)
+        }
+      }
+
+      // 3. Remove from presence (only if no other socket for this user)
       removeSocket(userId, socket.id)
 
-      // Remove from all music rooms + handle host migration
-      for (const [roomId, room] of rooms.entries()) {
-        if (room.members.has(userId)) {
-          const { newHost } = removeMember(roomId, userId)
-          if (newHost) {
-            io.to(`music:${roomId}`).emit('music:host-changed', { roomId, newHostUserId: newHost })
+      // 4. Remove from all music rooms + handle host migration.
+      // Multi-tab fix: only remove the user from the room if they have no
+      // other connected sockets. Otherwise the still-open tab would lose
+      // its membership and the room could be GC'd out from under it.
+      const userPresence = presence.get(userId)
+      const userHasOtherSockets = userPresence && userPresence.socketIds.size > 0
+      if (!userHasOtherSockets) {
+        for (const [roomId, room] of rooms.entries()) {
+          if (room.members.has(userId)) {
+            const { newHost } = removeMember(roomId, userId)
+            if (newHost) {
+              io.to(`music:${roomId}`).emit('music:host-changed', { roomId, newHostUserId: newHost })
+            }
+            socket.to(`music:${roomId}`).emit('music:member-left', { roomId, userId })
           }
-          socket.to(`music:${roomId}`).emit('music:member-left', { roomId, userId })
         }
       }
     })

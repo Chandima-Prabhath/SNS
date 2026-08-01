@@ -31,6 +31,13 @@ interface MusicState {
 
   // ─── Synced-room state ─────────────────────────────────────────────────
   activeRoomId: string | null
+  /** Server-reported host userId for the active room. Used by the UI to
+   *  enable/disable play/pause/seek/skip controls for non-hosts. */
+  hostUserId: string | null
+  /** Server-reported position anchor (server-side ms timestamp) for drift
+   *  compensation. Used together with positionSec to compute the expected
+   *  playback position on the client. */
+  positionAnchor: number
 
   // ─── Setters (state only — no socket side-effects) ────────────────────
   setCurrentTrack: (t: Track | null) => void
@@ -48,6 +55,8 @@ interface MusicState {
   setShuffle: (b: boolean) => void
   setRepeat: (b: boolean) => void
   setActiveRoomId: (id: string | null) => void
+  setHostUserId: (id: string | null) => void
+  setPositionAnchor: (ts: number) => void
   stop: () => void
 
   /**
@@ -70,6 +79,8 @@ export const useMusicStore = create<MusicState>((set, get) => ({
   shuffle: false,
   repeat: false,
   activeRoomId: null,
+  hostUserId: null,
+  positionAnchor: 0,
 
   setCurrentTrack: (currentTrack) => set({ currentTrack }),
   setIsPlaying: (isPlaying) => set({ isPlaying }),
@@ -92,6 +103,8 @@ export const useMusicStore = create<MusicState>((set, get) => ({
   setShuffle: (shuffle) => set({ shuffle }),
   setRepeat: (repeat) => set({ repeat }),
   setActiveRoomId: (activeRoomId) => set({ activeRoomId }),
+  setHostUserId: (hostUserId) => set({ hostUserId }),
+  setPositionAnchor: (positionAnchor) => set({ positionAnchor }),
 
   stop: () => set({ currentTrack: null, isPlaying: false, position: 0 }),
 
