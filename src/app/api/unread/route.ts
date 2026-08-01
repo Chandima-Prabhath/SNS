@@ -45,8 +45,9 @@ export async function GET() {
   const unread: Record<string, number> = {}
   let total = 0
   for (const row of rows) {
-    unread[row.channelId] = row.unreadCount
-    total += row.unreadCount
+    const count = Number(row.unreadCount)
+    unread[row.channelId] = count
+    total += count
   }
 
   return NextResponse.json({ unread, total })
