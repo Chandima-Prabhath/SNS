@@ -43,6 +43,28 @@ export function getIO(): IOServer | null {
   return globalForIo.__adoo_io || null
 }
 
+/**
+ * Send a music bot command to a specific user's sockets via the presence map.
+ * Used by the bot framework's controlMusic helper — the server-side bot code
+ * calls this to tell the user's client to play/pause/skip/stop music.
+ *
+ * This is the correct path for server→client music control. The old approach
+ * (io.emit to ALL sockets) sent the wrong payload shape and broadcast to
+ * everyone instead of just the target user.
+ */
+export function sendMusicCommand(
+  targetUserId: string,
+  command: { action: 'play' | 'pause' | 'skip' | 'queue' | 'stop'; query?: string }
+): void {
+  const io = getIO()
+  if (!io) return
+  const target = presence.get(targetUserId)
+  if (!target) return
+  for (const sid of target.socketIds) {
+    io.to(sid).emit('music:bot-command', command)
+  }
+}
+
 export function attachRealtime(httpServer: HTTPServer): IOServer {
   if (globalForIo.__adoo_io) return globalForIo.__adoo_io
 

@@ -13,7 +13,7 @@
 import { db } from '@/lib/db'
 import { writeFile, mkdir } from 'fs/promises'
 import { existsSync } from 'fs'
-import { getIO } from '@/lib/realtime-server'
+import { getIO, sendMusicCommand } from '@/lib/realtime-server'
 import path from 'path'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -354,10 +354,11 @@ export async function dispatchBotUpdate(params: {
     query?: string
   }) => {
     try {
-      const io = getIO()
-      if (!io) return
-      // Emit to the target user's sockets via the presence map
-      io.emit('music:bot-command', { targetUserId, command })
+      // Use sendMusicCommand which looks up the target user's sockets via
+      // the presence map and emits the correct payload shape ({ action, query })
+      // directly to those sockets. The old io.emit approach broadcast to ALL
+      // sockets with the wrong payload shape ({ targetUserId, command }).
+      sendMusicCommand(targetUserId, command)
     } catch (e: any) {
       console.warn('[bot:music] failed:', e?.message || e)
     }
