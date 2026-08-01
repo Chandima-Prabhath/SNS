@@ -5,10 +5,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useChannel } from '@/hooks/useChannel'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { EmojiPicker } from '@/components/chat/emoji-picker'
 import {
   Reply, X, Send, Image as ImageIcon, Loader2, AudioLines, Sparkles,
-  Mic, Plus, Trash2, User, Smile,
+  Mic, Plus, Trash2, User,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -164,15 +164,6 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
     // Fall through: plain-text paste (incl. URLs) behaves normally
   }
 
-  // Common emoji set for the desktop picker (no library needed)
-  const EMOJI_SET = '😀 😂 ❤️ 👍 🙏 🔥 😎 🥳 🤔 😴 😭 😡 🎉 💀 🤝 👀 🥺 😘 💕 😅 😬 🤯 😇 🙃 😮 😌 🥰 😋 🤗 ✅ ❌ ⚠️ 🔔 📌 💡 🎁 📷 🎬 🎵 ⏰ ⭐ 🌟 ⚡ 🚀 💪 👏 🫡 🤙 👋 💯 🎊 🥂 🍻 🎂 🌈 ☀️ 🌙 ⛄ 🌸 🌹 🍕 🍔 🍟 🥗 🍣 🍦 ☕ 🍺 🎮 🎧 📚 ✈️ 🚗 ⚽ 🏀 🎯 🏆 🎨'.split(' ')
-
-  const handleEmojiPick = (emoji: string) => {
-    setText((t) => t + emoji)
-    // Keep focus in the textarea so the user can continue typing
-    requestAnimationFrame(() => textareaRef.current?.focus())
-  }
-
   return (
     <div className="border-t border-border/60 bg-muted/50 backdrop-blur-2xl px-3 md:px-6 pt-3 pb-3 pb-safe relative z-20 shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.25)]">
       {/* Reply banner */}
@@ -239,29 +230,12 @@ export function MessageComposer({ channelId }: MessageComposerProps) {
           </label>
 
           {/* Emoji picker (desktop only — mobile users have native keyboards) */}
-          <Popover>
-            <PopoverTrigger asChild>
-              <button
-                className="hidden md:flex w-10 h-10 items-center justify-center rounded-full transition-all shrink-0 text-muted-foreground hover:bg-primary/10 hover:text-primary active:scale-90"
-                title="Emoji"
-              >
-                <Smile className="w-[22px] h-[22px] transition-colors" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-80 p-2" side="top" align="start">
-              <div className="grid grid-cols-8 gap-0.5 text-2xl max-h-64 overflow-y-auto">
-                {EMOJI_SET.map((e, i) => (
-                  <button
-                    key={i}
-                    onClick={() => handleEmojiPick(e)}
-                    className="hover:bg-accent rounded p-1 transition-colors text-center leading-none"
-                  >
-                    {e}
-                  </button>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
+          <EmojiPicker
+            onEmojiSelect={(emoji) => {
+              setText((t) => t + emoji)
+              requestAnimationFrame(() => textareaRef.current?.focus())
+            }}
+          />
 
           <button
             onClick={() => setTtsOpen(true)}

@@ -746,24 +746,25 @@ function MessageItem(props: MessageItemProps) {
         )}
 
         {/* Read receipt checkmarks — only on the LAST own message in a group.
-            - No checkmark = sending / not yet delivered
-            - Single Check (gray) = delivered to recipient's device
-            - Double CheckCheck (blue) = read by at least one recipient
-            Matches WhatsApp/Telegram convention. */}
+            - Faded Check = sent (not yet delivered)
+            - Solid Check = delivered to recipient's device
+            - Blue CheckCheck = read by at least one recipient
+            Matches WhatsApp/Telegram convention.
+            Sized at w-4 h-4 (16px) for visibility against the gradient bubble. */}
         {isMine && isLastOfGroup && m.senderType === 'user' && (
-          <div className="flex justify-end mt-0.5">
+          <div className="flex justify-end mt-1">
             <span className={cn(
-              'text-[10px] inline-flex items-center',
+              'inline-flex items-center gap-0.5',
               (m.readReceipts?.length ?? 0) > 0
-                ? 'text-blue-400'
-                : 'text-foreground/50'
+                ? 'text-blue-500'
+                : m.deliveredAt
+                  ? 'text-white/80'
+                  : 'text-white/40'
             )}>
               {(m.readReceipts?.length ?? 0) > 0 ? (
-                <CheckCheck className="w-3.5 h-3.5" />
-              ) : m.deliveredAt ? (
-                <Check className="w-3.5 h-3.5" />
+                <CheckCheck className="w-4 h-4" strokeWidth={2.5} />
               ) : (
-                <Check className="w-3.5 h-3.5 opacity-50" />
+                <Check className="w-4 h-4" strokeWidth={2.5} />
               )}
             </span>
           </div>
