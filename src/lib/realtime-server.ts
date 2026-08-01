@@ -18,6 +18,12 @@
  */
 import type { Server as HTTPServer } from 'http'
 import { Server as IOServer } from 'socket.io'
+import {
+  getRoom, createRoom, addMember, removeMember, updatePlayback, changeTrack,
+  addToQueue, removeFromQueue, popNextFromQueue, markMemberReady, transferHost,
+  getStateSnapshot, getExpectedPosition, isHost,
+} from './music-room-state'
+import { rooms } from './music-room-state'
 import jwt from 'next-auth/jwt'
 import type { NextApiRequest } from 'next'
 import { db } from '@/lib/db'
@@ -78,6 +84,18 @@ export function sendMusicCommand(
   for (const sid of target.socketIds) {
     io.to(sid).emit('music:bot-command', command)
   }
+}
+
+/** Broadcast the current room state to all members */
+function broadcastRoomState(io: IOServer, roomId: string) {
+  const room = getRoom(roomId)
+  if (!room) return
+  io.to(`music:${roomId}`).emit('music:state', {
+    roomId: room.roomId, hostUserId: room.hostUserId, state: room.state,
+    currentVideoId: room.currentVideoId, currentTrackInfo: room.currentTrackInfo,
+    positionSec: getExpectedPosition(room), positionAnchor: room.positionAnchor,
+    queue: room.queue, members: Array.from(room.members),
+  })
 }
 
 export function attachRealtime(httpServer: HTTPServer): IOServer {
@@ -588,73 +606,128 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       socket.emit('presence:update', list)
     })
 
-    // ─── Music room sync ────────────────────────────────────────────────
-    // Host-authoritative: the host broadcasts playback state changes to all
-    // room members. Members apply the state with drift compensation.
+    // ─── Music room sync (server-authoritative) ─────────────────────────
+    // The server holds canonical playback state. Clients send commands
+    // (play, pause, seek, next, queue:add), the server updates state and
+    // broadcasts to all members. See src/lib/music-room-state.ts.
+
     socket.on('music:join', (roomId: string) => {
       socket.join(`music:${roomId}`)
-      // Notify the room that someone joined — the host should respond with
-      // a sync broadcast so the new member gets the current state.
-      socket.to(`music:${roomId}`).emit('music:member-joined', {
-        roomId,
-        userId,
-        username,
-      })
+      const room = getRoom(roomId) || createRoom(roomId, userId)
+      addMember(roomId, userId)
+      // Send full state snapshot to the new member (late joiner sync)
+      const snapshot = getStateSnapshot(roomId)
+      if (snapshot) {
+        io.to(socket.id).emit('music:state', {
+          roomId: snapshot.roomId, hostUserId: snapshot.hostUserId,
+          state: snapshot.state, currentVideoId: snapshot.currentVideoId,
+          currentTrackInfo: snapshot.currentTrackInfo,
+          positionSec: snapshot.positionSec, positionAnchor: snapshot.positionAnchor,
+          queue: snapshot.queue, members: Array.from(snapshot.members),
+        })
+      }
+      socket.to(`music:${roomId}`).emit('music:member-joined', { roomId, userId, username })
     })
 
     socket.on('music:leave', (roomId: string) => {
       socket.leave(`music:${roomId}`)
+      const { newHost } = removeMember(roomId, userId)
+      if (newHost) io.to(`music:${roomId}`).emit('music:host-changed', { roomId, newHostUserId: newHost })
+      socket.to(`music:${roomId}`).emit('music:member-left', { roomId, userId })
     })
 
-    // Broadcast sync events to all room members.
-    // The host sends: { roomId, state, position, videoId?, trackInfo? }
-    // We include the server's receive timestamp for drift compensation.
-    socket.on('music:sync', (payload: {
-      roomId: string
-      state: string
-      position: number
-      videoId?: string
-      trackInfo?: any
-      queue?: { videoId: string }[]
-    }) => {
-      io.to(`music:${payload.roomId}`).emit('music:sync', {
-        ...payload,
-        serverTimestamp: Date.now(),
-      })
+    socket.on('music:play', (payload: { roomId: string; videoId?: string; trackInfo?: any }) => {
+      if (!isHost(payload.roomId, userId)) return
+      if (payload.videoId) {
+        changeTrack(payload.roomId, payload.videoId, {
+          videoId: payload.videoId, title: payload.trackInfo?.title || 'Unknown',
+          artist: payload.trackInfo?.artist || 'Unknown', thumbnail: payload.trackInfo?.thumbnail || null,
+          durationSeconds: payload.trackInfo?.durationSeconds || null, addedByUserId: userId, addedAt: Date.now(),
+        })
+      }
+      updatePlayback(payload.roomId, 'playing', 0)
+      broadcastRoomState(io, payload.roomId)
+    })
 
-      // ── Server-side proactive preloading ────────────────────────────
-      // When the host broadcasts a playing state, proactively preload the
-      // current track + the next 2 tracks in the queue. This runs on the
-      // SERVER's event loop, completely independent of client tab throttling.
-      // By the time the song ends, the next track is already on disk.
-      if (payload.state === 'playing' && payload.videoId) {
-        import('@/lib/ytdlp-download').then(({ getOrCreateDownload }) => {
-          // Current track
-          getOrCreateDownload(payload.videoId!).catch(() => {})
-          // Next 2 tracks in the queue
-          if (payload.queue && payload.queue.length > 0) {
-            for (const track of payload.queue.slice(0, 2)) {
-              if (track.videoId) {
-                getOrCreateDownload(track.videoId).catch(() => {})
-              }
-            }
-          }
-        }).catch(() => {})
+    socket.on('music:pause', (roomId: string) => {
+      if (!isHost(roomId, userId)) return
+      updatePlayback(roomId, 'paused')
+      broadcastRoomState(io, roomId)
+    })
+
+    socket.on('music:seek', (payload: { roomId: string; position: number }) => {
+      if (!isHost(payload.roomId, userId)) return
+      const room = getRoom(payload.roomId)
+      updatePlayback(payload.roomId, room?.state === 'playing' ? 'playing' : 'paused', payload.position)
+      broadcastRoomState(io, payload.roomId)
+    })
+
+    socket.on('music:next', (roomId: string) => {
+      if (!isHost(roomId, userId)) return
+      const next = popNextFromQueue(roomId)
+      if (next) changeTrack(roomId, next.videoId, next)
+      else updatePlayback(roomId, 'stopped')
+      broadcastRoomState(io, roomId)
+    })
+
+    socket.on('music:queue:add', (payload: { roomId: string; track: any }) => {
+      addToQueue(payload.roomId, {
+        videoId: payload.track.videoId, title: payload.track.title || 'Unknown',
+        artist: payload.track.artist || 'Unknown', thumbnail: payload.track.thumbnail || null,
+        durationSeconds: payload.track.durationSeconds || null, addedByUserId: userId, addedAt: Date.now(),
+      })
+      const room = getRoom(payload.roomId)
+      if (room) io.to(`music:${payload.roomId}`).emit('music:queue:update', { roomId: payload.roomId, queue: room.queue })
+    })
+
+    socket.on('music:queue:remove', (payload: { roomId: string; videoId: string }) => {
+      removeFromQueue(payload.roomId, payload.videoId)
+      const room = getRoom(payload.roomId)
+      if (room) io.to(`music:${payload.roomId}`).emit('music:queue:update', { roomId: payload.roomId, queue: room.queue })
+    })
+
+    socket.on('music:ready', (roomId: string) => {
+      const { allReady, room } = markMemberReady(roomId, userId)
+      if (allReady && room && room.state === 'paused') {
+        updatePlayback(roomId, 'playing', 0)
+        broadcastRoomState(io, roomId)
       }
     })
 
-    // Request sync — a member who just joined asks the host for the current
-    // state. The host should respond with a music:sync broadcast.
-    socket.on('music:request-sync', (roomId: string) => {
-      socket.to(`music:${roomId}`).emit('music:request-sync', {
-        roomId,
-        fromUserId: userId,
-      })
+    socket.on('music:transfer-host', (payload: { roomId: string; newHostUserId: string }) => {
+      if (!isHost(payload.roomId, userId)) return
+      transferHost(payload.roomId, payload.newHostUserId)
+      io.to(`music:${payload.roomId}`).emit('music:host-changed', { roomId: payload.roomId, newHostUserId: payload.newHostUserId })
     })
+
+    socket.on('music:position-report', (payload: { roomId: string; position: number }) => {
+      const room = getRoom(payload.roomId)
+      if (!room || room.state !== 'playing') return
+      const expected = getExpectedPosition(room)
+      if (Math.abs(payload.position - expected) > 1.5) {
+        io.to(socket.id).emit('music:state', {
+          roomId: room.roomId, hostUserId: room.hostUserId, state: room.state,
+          currentVideoId: room.currentVideoId, currentTrackInfo: room.currentTrackInfo,
+          positionSec: expected, positionAnchor: room.positionAnchor,
+          queue: room.queue, members: Array.from(room.members),
+        })
+      }
+    })
+
 
     socket.on('disconnect', () => {
       removeSocket(userId, socket.id)
-      
+
+      // Remove from all music rooms + handle host migration
+      for (const [roomId, room] of rooms.entries()) {
+        if (room.members.has(userId)) {
+          const { newHost } = removeMember(roomId, userId)
+          if (newHost) {
+            io.to(`music:${roomId}`).emit('music:host-changed', { roomId, newHostUserId: newHost })
+          }
+          socket.to(`music:${roomId}`).emit('music:member-left', { roomId, userId })
+        }
+      }
     })
 
     socket.on('error', (err: any) => {
