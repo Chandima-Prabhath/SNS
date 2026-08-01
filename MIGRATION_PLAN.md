@@ -299,7 +299,49 @@
 - [ ] 6.4 Fix bot music commands not pausing/stopping the actual `<audio>` element (only Zustand state was updated) — FIXED in this commit, verify after pull.
 - [ ] 6.5 Rework the entire CDN/media pipeline for tight integration — currently uploads, music streaming, TTS, and ASR all have separate file-handling patterns. Unify into a single media service layer with consistent caching, streaming, and cleanup.
 
-### Phase 7: Voice Messages & Upload Rework (Day 7)
-- [ ] 7.1 Fix `/api/upload` route disappearing — it keeps getting deleted by git mode changes. Make it permanent (git add -f, or restructure the route path).
-- [ ] 7.2 Rework the upload pipeline to be a proper media service (shared between voice messages, images, videos, TTS audio, ASR audio) with consistent validation, storage, and serving.
-- [ ] 7.3 Add upload retry logic on the client — if the upload fails, show a retry button on the message instead of just a toast.
+### Phase 7: Music Rooms Rework (Day 7-8)
+> Based on research of Spotify Jam, Discord Listen Along, Syncplay/Jellyfin SyncPlay.
+> Full research doc: `MUSIC_ROOM_SYNC_RESEARCH.md`
+
+- [ ] 7.1 Switch from host-authoritative dumb-relay → server-authoritative state machine
+  - Server holds in-memory `Map<roomId, RoomState>` (<1KB per room)
+  - Mirror to SQLite only on state transitions (play/pause/skip/track change) — never on position ticks
+  - Position is derived, not polled: `expectedPos = positionSec + (serverNow - positionAnchor) / 1000`
+  - Server never "plays" anything — clients seek their own audio elements to the derived position
+- [ ] 7.2 New Prisma models for persistent room state
+  - `MusicRoom` (id, name, hostUserId, state: playing|paused, currentVideoId, positionSec, positionAnchor, createdAt)
+  - `MusicRoomMember` (roomId, userId, joinedAt, role: host|member)
+  - `MusicQueueItem` (id, roomId, videoId, title, artist, thumbnail, durationSeconds, addedByUserId, addedAt, position)
+  - `MusicHistory` (id, roomId, videoId, title, playedAt, playedByUserId)
+- [ ] 7.3 Implement full socket event protocol (16 client→server + 12 server→client)
+  - Client→server: join, leave, play, pause, seek, next, prev, queue:add, queue:remove, queue:reorder, vote:skip, transfer:host, request-sync, ready, set-volume
+  - Server→client: state:sync, state:update, queue:update, member:joined, member:left, host:changed, track:change, kick
+- [ ] 7.4 Drift correction (Cristian's algorithm + SkipToSync)
+  - Client sends position reports every 10s
+  - Server calculates clock offset (3-sample median)
+  - If drift > 1.5s, server sends `state:sync` with corrected position
+  - Client does SkipToSync (hard seek) — not SpeedToSync (too complex for small app)
+- [ ] 7.5 Host migration on disconnect
+  - Auto-promote longest-joined member when host disconnects
+  - 30s grace period (host might be reconnecting)
+  - Explicit host transfer (`transfer:host` event)
+  - Room is preserved even when empty (DB-persisted)
+- [ ] 7.6 Queue management
+  - Everyone can add tracks (no permission gate for small friend group)
+  - Skip requires host OR majority vote (configurable)
+  - Queue persisted in DB (MusicQueueItem) + cached in-memory
+  - Server proactively preloads next 2 tracks for ALL members via `getOrCreateDownload`
+- [ ] 7.7 "Ready" state for buffering
+  - When a track changes, server sets state to `buffering`
+  - All members must send `ready` event after their audio loads
+  - Server waits for all ready OR 5s timeout, then sets state to `playing`
+  - Prevents the "one person hears the song 3s before everyone else" problem
+- [ ] 7.8 Late joiner sync
+  - New member joins → server immediately sends full state snapshot
+  - Client seeks to derived position + starts playing
+  - No need for "request-sync" round-trip to host
+
+### Phase 8: Voice Messages & Upload Rework (Day 8)
+- [ ] 8.1 Fix `/api/upload` route disappearing — it keeps getting deleted by git mode changes. Make it permanent (git add -f, or restructure the route path).
+- [ ] 8.2 Rework the upload pipeline to be a proper media service (shared between voice messages, images, videos, TTS audio, ASR audio) with consistent validation, storage, and serving.
+- [ ] 8.3 Add upload retry logic on the client — if the upload fails, show a retry button on the message instead of just a toast.
