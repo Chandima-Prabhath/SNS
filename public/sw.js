@@ -14,8 +14,8 @@
  *   requests (sending messages, etc.) will fail gracefully.
  */
 
-const CACHE_NAME = 'adoo-v13'
-const API_CACHE = 'adoo-api-v13'
+const CACHE_NAME = 'adoo-v14'
+const API_CACHE = 'adoo-api-v14'
 const APP_SHELL = ['/', '/manifest.json', '/icon.svg']
 
 self.addEventListener('install', (event) => {
@@ -89,14 +89,16 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.includes('/uploads/')) {
     event.respondWith(
       fetch(req).then((res) => {
-        // Only cache successful responses with actual content
-        if (res.ok && res.headers.get('content-length') !== '0') {
+        // Only cache full (200) responses — NOT 206 partial/range responses.
+        // The Cache API doesn't support partial responses and throws:
+        // "Failed to execute 'put' on 'Cache': Partial response (status code 206) is unsupported"
+        if (res.status === 200 && res.headers.get('content-length') !== '0') {
           const copy = res.clone()
           caches.open(CACHE_NAME).then((cache) => cache.put(req, copy))
         }
         return res
       }).catch(() => {
-        // Offline — serve from cache
+        // Offline — serve from cache (but only if we have a full 200 cached)
         return caches.match(req).then((r) => r || new Response('Offline', { status: 503 }))
       })
     )
@@ -148,8 +150,8 @@ self.addEventListener('fetch', (event) => {
         try {
           // Try network first
           const res = await fetch(req)
-          // Cache successful JSON responses for offline use
-          if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+          // Cache successful FULL (200) JSON responses only — not 206 partials
+          if (res.status === 200 && res.headers.get('content-type')?.includes('application/json')) {
             const copy = res.clone()
             cache.put(req, copy)
             // ── LRU eviction: keep cache under MAX_ENTRIES ──

@@ -63,8 +63,10 @@ export function middleware(request: NextRequest) {
   }
 
   // ── Rate limiting on API routes ─────────────────────────────────
-  // Skip rate limiting for non-mutating GET requests on general API
-  if (request.method === 'GET' && getTier(pathname) === 'default') {
+  // Skip rate limiting for GET requests on default tier OR file serving
+  // (reading channels/messages/uploads is frequent and cheap — file serving
+  // shouldn't be rate-limited because chat lists load many voice/images at once)
+  if (request.method === 'GET' && (getTier(pathname) === 'default' || pathname.includes('/api/uploads/'))) {
     return addSecurityHeaders(NextResponse.next())
   }
 
