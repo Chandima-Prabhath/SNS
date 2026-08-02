@@ -548,13 +548,16 @@ model MusicRoom {
   hostId      String
   host        User     @relation("MusicRoomHost", fields: [hostId], references: [id], onDelete: Cascade)
 
-  // Current playback state
+  // Current playback state — persisted to DB so late-joiners always get
+  // the correct state even after a server restart or module re-instantiation.
   currentVideoId String?  // YouTube video ID of the current track
-  currentState   String   @default("paused") // playing | paused
-  currentPosition Float   @default(0) // seconds into the track
+  currentTrackInfo String? // JSON: { title, artist, thumbnail, durationSeconds }
+  currentState   String   @default("paused") // playing | paused | stopped
+  currentPosition Float   @default(0) // seconds into the track when state last changed
+  positionAnchor  DateTime @default(now()) // when currentPosition was set (for derived position)
   lastSyncAt     DateTime @default(now()) // when the state was last updated
 
-  // Queue of upcoming tracks (JSON array of video IDs)
+  // Queue of upcoming tracks (JSON array of full track objects)
   queue       String   @default("[]")
 
   createdAt   DateTime @default(now())

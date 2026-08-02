@@ -558,6 +558,49 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
 
     socket.emit('music:join', activeRoomId)
 
+    // REST FALLBACK: also fetch the room state directly from the DB via the
+    // API. This is the "belt and suspenders" approach — if the socket state
+    // snapshot is empty/missing/stale for any reason, the REST response
+    // from the DB is guaranteed to have the correct state. We merge it
+    // only if the socket state hasn't arrived yet (or has no currentVideoId).
+    fetch(`/api/music/rooms/${activeRoomId}`)
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (!data?.room) return
+        const room = data.room
+        const store = useMusicStore.getState()
+        // Only apply if we don't already have a current track from the
+        // socket state (socket is faster and has fresher position).
+        if (!store.currentTrack && room.currentVideoId) {
+          let trackInfo: any = null
+          try { if (room.currentTrackInfo) trackInfo = JSON.parse(room.currentTrackInfo) } catch {}
+          let queue: any[] = []
+          try { queue = JSON.parse(room.queue || '[]') } catch {}
+          const track: Track = {
+            videoId: room.currentVideoId,
+            title: trackInfo?.title || 'Now Playing',
+            artist: trackInfo?.artist || '',
+            thumbnail: trackInfo?.thumbnail || null,
+            durationSeconds: trackInfo?.durationSeconds || null,
+          }
+          pendingSeekRef.current = room.currentPosition || 0
+          pendingPlayRef.current = room.currentState === 'playing'
+          setCurrentTrack(track)
+          setIsPlaying(room.currentState === 'playing')
+          setPosition(room.currentPosition || 0)
+          setHostUserId(room.hostId)
+          if (queue.length > 0) setQueue(queue)
+          // Load the audio
+          if (audioRef.current) {
+            audioRef.current.src = `/api/music/stream/${room.currentVideoId}`
+            audioRef.current.volume = store.volume
+            audioRef.current.load()
+            loadedVideoIdRef.current = room.currentVideoId
+          }
+        }
+      })
+      .catch(() => {})
+
     // Re-join on reconnect (Socket.io reuses the same socket object across
     // reconnects, so the original emit doesn't fire again). Without this,
     // a brief network blip silently desyncs the client from the room.

@@ -21,9 +21,8 @@ import { Server as IOServer } from 'socket.io'
 import {
   getRoom, createRoom, addMember, removeMember, updatePlayback, changeTrack,
   addToQueue, removeFromQueue, popNextFromQueue, markMemberReady, transferHost,
-  getStateSnapshot, getExpectedPosition, isHost,
+  getStateSnapshot, getExpectedPosition, isHost, getCachedRooms,
 } from './music-room-state'
-import { rooms } from './music-room-state'
 import jwt from 'next-auth/jwt'
 import type { NextApiRequest } from 'next'
 import { db } from '@/lib/db'
@@ -87,8 +86,8 @@ export function sendMusicCommand(
 }
 
 /** Broadcast the current room state to all members */
-function broadcastRoomState(io: IOServer, roomId: string) {
-  const room = getRoom(roomId)
+async function broadcastRoomState(io: IOServer, roomId: string) {
+  const room = await getRoom(roomId)
   if (!room) return
   io.to(`music:${roomId}`).emit('music:state', {
     roomId: room.roomId, hostUserId: room.hostUserId, state: room.state,
@@ -601,114 +600,114 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
     // (play, pause, seek, next, queue:add), the server updates state and
     // broadcasts to all members. See src/lib/music-room-state.ts.
 
-    socket.on('music:join', (roomId: string) => {
+    socket.on('music:join', async (roomId: string) => {
       socket.join(`music:${roomId}`)
-      const room = getRoom(roomId) || createRoom(roomId, userId)
-      addMember(roomId, userId)
-      // Send full state snapshot to the new member (late joiner sync)
-      const snapshot = getStateSnapshot(roomId)
+      // DB-backed: load from DB if not in cache. createRoom only if the
+      // room doesn't exist in the DB either (shouldn't happen for rooms
+      // created via the API, but handles the edge case).
+      let room = await getRoom(roomId)
+      if (!room) {
+        room = await createRoom(roomId, userId)
+      }
+      await addMember(roomId, userId)
+      // Send full state snapshot to the new member (late joiner sync).
+      // This reads from DB-backed cache — guaranteed to have the host's
+      // current track + queue even if the server just restarted.
+      const snapshot = await getStateSnapshot(roomId)
       if (snapshot) {
         io.to(socket.id).emit('music:state', {
           roomId: snapshot.roomId, hostUserId: snapshot.hostUserId,
           state: snapshot.state, currentVideoId: snapshot.currentVideoId,
           currentTrackInfo: snapshot.currentTrackInfo,
-          positionSec: snapshot.positionSec, positionAnchor: snapshot.positionAnchor,
+          positionSec: getExpectedPosition(snapshot), positionAnchor: snapshot.positionAnchor,
           queue: snapshot.queue, members: Array.from(snapshot.members),
         })
       }
       socket.to(`music:${roomId}`).emit('music:member-joined', { roomId, userId, username })
     })
 
-    socket.on('music:leave', (roomId: string) => {
+    socket.on('music:leave', async (roomId: string) => {
       socket.leave(`music:${roomId}`)
-      const { newHost } = removeMember(roomId, userId)
+      const { newHost } = await removeMember(roomId, userId)
       if (newHost) io.to(`music:${roomId}`).emit('music:host-changed', { roomId, newHostUserId: newHost })
       socket.to(`music:${roomId}`).emit('music:member-left', { roomId, userId })
     })
 
-    socket.on('music:play', (payload: { roomId: string; videoId?: string; trackInfo?: any }) => {
-      if (!isHost(payload.roomId, userId)) return
+    socket.on('music:play', async (payload: { roomId: string; videoId?: string; trackInfo?: any }) => {
+      if (!await isHost(payload.roomId, userId)) return
       if (payload.videoId) {
         // New track: changeTrack resets position to 0 and sets state='paused'
         // (waiting for ready handshake). updatePlayback(playing, 0) is then
         // called by the ready handler when all members have buffered.
-        changeTrack(payload.roomId, payload.videoId, {
+        await changeTrack(payload.roomId, payload.videoId, {
           videoId: payload.videoId, title: payload.trackInfo?.title || 'Unknown',
           artist: payload.trackInfo?.artist || 'Unknown', thumbnail: payload.trackInfo?.thumbnail || null,
           durationSeconds: payload.trackInfo?.durationSeconds || null, addedByUserId: userId, addedAt: Date.now(),
         })
-        broadcastRoomState(io, payload.roomId)
-        // Safety net: if no member sends 'ready' within 8s (network error,
-        // abandoned tab, broken audio element), force-play anyway.
-        setTimeout(() => {
-          const r = getRoom(payload.roomId)
+        await broadcastRoomState(io, payload.roomId)
+        // Safety net: if no member sends 'ready' within 8s, force-play.
+        setTimeout(async () => {
+          const r = await getRoom(payload.roomId)
           if (r && r.state === 'paused' && r.currentVideoId === payload.videoId) {
-            updatePlayback(payload.roomId, 'playing', 0)
-            broadcastRoomState(io, payload.roomId)
+            await updatePlayback(payload.roomId, 'playing', 0)
+            await broadcastRoomState(io, payload.roomId)
           }
         }, 8_000)
       } else {
         // Resume: keep current position. updatePlayback with no positionSec
         // arg derives it from the previous anchor + elapsed time.
-        updatePlayback(payload.roomId, 'playing')
-        broadcastRoomState(io, payload.roomId)
+        await updatePlayback(payload.roomId, 'playing')
+        await broadcastRoomState(io, payload.roomId)
       }
     })
 
-    socket.on('music:pause', (roomId: string) => {
-      if (!isHost(roomId, userId)) return
-      updatePlayback(roomId, 'paused')
-      broadcastRoomState(io, roomId)
+    socket.on('music:pause', async (roomId: string) => {
+      if (!await isHost(roomId, userId)) return
+      await updatePlayback(roomId, 'paused')
+      await broadcastRoomState(io, roomId)
     })
 
-    socket.on('music:seek', (payload: { roomId: string; position: number }) => {
-      if (!isHost(payload.roomId, userId)) return
-      const room = getRoom(payload.roomId)
-      updatePlayback(payload.roomId, room?.state === 'playing' ? 'playing' : 'paused', payload.position)
-      broadcastRoomState(io, payload.roomId)
+    socket.on('music:seek', async (payload: { roomId: string; position: number }) => {
+      if (!await isHost(payload.roomId, userId)) return
+      const room = await getRoom(payload.roomId)
+      await updatePlayback(payload.roomId, room?.state === 'playing' ? 'playing' : 'paused', payload.position)
+      await broadcastRoomState(io, payload.roomId)
     })
 
-    socket.on('music:next', (roomId: string) => {
-      if (!isHost(roomId, userId)) return
-      const next = popNextFromQueue(roomId)
-      if (next) changeTrack(roomId, next.videoId, next)
-      else updatePlayback(roomId, 'stopped')
-      broadcastRoomState(io, roomId)
+    socket.on('music:next', async (roomId: string) => {
+      if (!await isHost(roomId, userId)) return
+      const next = await popNextFromQueue(roomId)
+      if (next) await changeTrack(roomId, next.videoId, next)
+      else await updatePlayback(roomId, 'stopped')
+      await broadcastRoomState(io, roomId)
     })
 
-    socket.on('music:queue:add', (payload: { roomId: string; track: any }) => {
-      addToQueue(payload.roomId, {
+    socket.on('music:queue:add', async (payload: { roomId: string; track: any }) => {
+      await addToQueue(payload.roomId, {
         videoId: payload.track.videoId, title: payload.track.title || 'Unknown',
         artist: payload.track.artist || 'Unknown', thumbnail: payload.track.thumbnail || null,
         durationSeconds: payload.track.durationSeconds || null, addedByUserId: userId, addedAt: Date.now(),
       })
-      const room = getRoom(payload.roomId)
+      const room = await getRoom(payload.roomId)
       if (room) io.to(`music:${payload.roomId}`).emit('music:queue:update', { roomId: payload.roomId, queue: room.queue })
     })
 
-    socket.on('music:queue:remove', (payload: { roomId: string; videoId: string }) => {
-      removeFromQueue(payload.roomId, payload.videoId)
-      const room = getRoom(payload.roomId)
+    socket.on('music:queue:remove', async (payload: { roomId: string; videoId: string }) => {
+      await removeFromQueue(payload.roomId, payload.videoId)
+      const room = await getRoom(payload.roomId)
       if (room) io.to(`music:${payload.roomId}`).emit('music:queue:update', { roomId: payload.roomId, queue: room.queue })
     })
 
-    socket.on('music:ready', (roomId: string) => {
-      const { allReady, room } = markMemberReady(roomId, userId)
+    socket.on('music:ready', async (roomId: string) => {
+      const { allReady, room } = await markMemberReady(roomId, userId)
       if (!room) return
-      // Start playback when EITHER all members are ready OR the host is ready
-      // (host-ready is sufficient — others will catch up via drift correction).
       const hostIsReady = room.readyMembers.has(room.hostUserId) === true
       if (room.state === 'paused' && (allReady || hostIsReady)) {
-        updatePlayback(roomId, 'playing', 0)
-        broadcastRoomState(io, roomId)
+        await updatePlayback(roomId, 'playing', 0)
+        await broadcastRoomState(io, roomId)
       } else if (room.state === 'playing') {
-        // Late-joiner sent ready while the room is ALREADY playing. Don't
-        // re-broadcast to everyone (would force a re-seek), but send a
-        // targeted state update to just THIS socket so its client knows it
-        // should now be playing. Without this, the late-joiner's audio
-        // loads but never starts (the canplay handler in the client only
-        // plays if state.isPlaying is true, but the server's state hasn't
-        // changed so no new music:state event was sent).
+        // Late-joiner sent ready while the room is ALREADY playing. Send a
+        // targeted state update so the client knows to start playback.
         io.to(socket.id).emit('music:state', {
           roomId: room.roomId, hostUserId: room.hostUserId, state: room.state,
           currentVideoId: room.currentVideoId, currentTrackInfo: room.currentTrackInfo,
@@ -718,14 +717,14 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       }
     })
 
-    socket.on('music:transfer-host', (payload: { roomId: string; newHostUserId: string }) => {
-      if (!isHost(payload.roomId, userId)) return
-      transferHost(payload.roomId, payload.newHostUserId)
+    socket.on('music:transfer-host', async (payload: { roomId: string; newHostUserId: string }) => {
+      if (!await isHost(payload.roomId, userId)) return
+      await transferHost(payload.roomId, payload.newHostUserId)
       io.to(`music:${payload.roomId}`).emit('music:host-changed', { roomId: payload.roomId, newHostUserId: payload.newHostUserId })
     })
 
-    socket.on('music:position-report', (payload: { roomId: string; position: number }) => {
-      const room = getRoom(payload.roomId)
+    socket.on('music:position-report', async (payload: { roomId: string; position: number }) => {
+      const room = await getRoom(payload.roomId)
       if (!room || room.state !== 'playing') return
       const expected = getExpectedPosition(room)
       if (Math.abs(payload.position - expected) > 1.5) {
@@ -769,13 +768,18 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
       const userPresence = presence.get(userId)
       const userHasOtherSockets = userPresence && userPresence.socketIds.size > 0
       if (!userHasOtherSockets) {
-        for (const [roomId, room] of rooms.entries()) {
+        // Use the in-memory cache for a quick scan — no DB reads needed
+        // here since we only need to know which rooms the user is in.
+        const cachedRooms = getCachedRooms()
+        for (const [roomId, room] of cachedRooms.entries()) {
           if (room.members.has(userId)) {
-            const { newHost } = removeMember(roomId, userId)
-            if (newHost) {
-              io.to(`music:${roomId}`).emit('music:host-changed', { roomId, newHostUserId: newHost })
-            }
-            socket.to(`music:${roomId}`).emit('music:member-left', { roomId, userId })
+            ;(async () => {
+              const { newHost } = await removeMember(roomId, userId)
+              if (newHost) {
+                io.to(`music:${roomId}`).emit('music:host-changed', { roomId, newHostUserId: newHost })
+              }
+              socket.to(`music:${roomId}`).emit('music:member-left', { roomId, userId })
+            })()
           }
         }
       }
