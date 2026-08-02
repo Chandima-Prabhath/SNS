@@ -11,6 +11,7 @@ import { Hash, Copy, Check, X } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { UserProfileSheet } from '@/components/ui/user-profile-sheet'
 
 interface ChatInfoPanelProps {
   channel: any
@@ -19,6 +20,7 @@ interface ChatInfoPanelProps {
 export function ChatInfoPanel({ channel }: ChatInfoPanelProps) {
   const chatInfoOpen = useAppStore((s) => s.chatInfoOpen)
   const setChatInfoOpen = useAppStore((s) => s.setChatInfoOpen)
+  const setProfileUserId = useAppStore((s) => s.setProfileUserId)
   const presence = usePresence()
 
   // Track viewport — only render the desktop inline panel on lg+
@@ -110,9 +112,10 @@ export function ChatInfoPanel({ channel }: ChatInfoPanelProps) {
             {members?.map((m) => {
               const status = presence[m.id]?.status || m.status || 'offline'
               return (
-                <div
+                <button
                   key={m.id}
-                  className="flex items-center gap-3 p-2 rounded-lg hover:bg-accent/50"
+                  onClick={() => setProfileUserId(m.id)}
+                  className="flex items-center gap-3 p-2 rounded-lg hover:bg-accent/50 w-full text-left transition-colors"
                 >
                   <div className="relative shrink-0">
                     <Avatar className="w-9 h-9">
@@ -136,12 +139,15 @@ export function ChatInfoPanel({ channel }: ChatInfoPanelProps) {
                   {m.role === 'owner' && (
                     <span className="text-[10px] uppercase font-bold text-primary">Owner</span>
                   )}
-                </div>
+                </button>
               )
             })}
           </div>
         </div>
       </ScrollArea>
+
+      {/* User profile sheet — opens when a member row is clicked */}
+      <UserProfileSheet />
     </div>
   )
 

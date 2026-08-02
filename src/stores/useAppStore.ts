@@ -37,6 +37,12 @@ interface AppState {
   // Mobile server rail drawer
   serverRailOpen: boolean
   setServerRailOpen: (open: boolean) => void
+
+  // User profile sheet — when set, opens a side sheet showing the user's
+  // profile (avatar, name, bio, last-seen, role). Set by clicking avatars
+  // in chat / member lists. Closed by setting to null.
+  profileUserId: string | null
+  setProfileUserId: (id: string | null) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -66,4 +72,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   serverRailOpen: false,
   setServerRailOpen: (serverRailOpen) => set({ serverRailOpen }),
+
+  profileUserId: null,
+  setProfileUserId: (profileUserId) => set({ profileUserId }),
 }))

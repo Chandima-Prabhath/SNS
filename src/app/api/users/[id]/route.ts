@@ -22,6 +22,56 @@ const profileUpdateSchema = z.object({
   }).optional(),
 })
 
+/**
+ * GET /api/users?id=<userId> — fetch a single user's public profile.
+ *
+ * Used by the UserProfileSheet to display another user's info when their
+ * avatar is clicked. Returns only public fields: avatar, name, username,
+ * bio, role, status, lastSeenAt (respects lastSeenVisible), createdAt,
+ * and message count.
+ *
+ * The current user's own profile is always fully visible (excluding
+ * notificationPrefs — those are only returned by /api/auth/me).
+ */
+export async function GET(req: Request) {
+  const session = await getServerSession(authOptions)
+  if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
+  const url = new URL(req.url)
+  const targetId = url.searchParams.get('id')
+  if (!targetId) return NextResponse.json({ error: 'id required' }, { status: 400 })
+
+  const isSelf = targetId === session.user.id
+
+  const user = await db.user.findUnique({
+    where: { id: targetId },
+    select: {
+      id: true,
+      username: true,
+      email: isSelf, // only show email to self
+      displayName: true,
+      avatarUrl: true,
+      bio: true,
+      role: true,
+      status: true,
+      customStatus: true,
+      lastSeenAt: true,
+      lastSeenVisible: true,
+      createdAt: true,
+      _count: { select: { messages: true } },
+    },
+  })
+
+  if (!user) return NextResponse.json({ error: 'not found' }, { status: 404 })
+
+  // Respect lastSeenVisible — don't show lastSeenAt to others if hidden
+  const response: any = { ...user }
+  if (!isSelf && user.lastSeenVisible === false) {
+    response.lastSeenAt = null
+  }
+  return NextResponse.json({ user: response })
+}
+
 // Update own profile
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)

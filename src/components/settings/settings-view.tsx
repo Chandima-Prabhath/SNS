@@ -1005,6 +1005,7 @@ function AdminSection() {
 
 function AdminUsers() {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const { data, isLoading } = useQuery({
     queryKey: ['admin-users'],
     queryFn: async () => {
@@ -1030,32 +1031,92 @@ function AdminUsers() {
     onError: () => toast.error('Failed'),
   })
 
+  // Sign out a user from all their devices (admin force-logout).
+  // Uses the same mechanism as the user's own "sign out everywhere" —
+  // bumps tokenVersion so all their JWTs are invalidated.
+  const signOutUser = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await fetch(`/api/admin/users/${userId}/signout`, { method: 'POST' })
+      if (!res.ok) throw new Error('failed')
+      return res.json()
+    },
+    onSuccess: () => toast.success('User signed out from all devices'),
+    onError: () => toast.error('Failed to sign out user'),
+  })
+
+  const handleSignOut = async (u: any) => {
+    const ok = await confirm({
+      title: `Sign out ${u.displayName}?`,
+      message: 'This will invalidate all their sessions and force re-login on every device.',
+      confirmLabel: 'Sign out',
+      variant: 'danger',
+    })
+    if (ok) signOutUser.mutate(u.id)
+  }
+
   if (isLoading) return <div className="text-center py-6 text-sm text-muted-foreground">Loading...</div>
 
   return (
     <Card className="p-2">
-      {data?.users?.map((u: any) => (
-        <div key={u.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-accent/50">
-          <Avatar className="w-9 h-9 shrink-0">
-            <AvatarFallback>{u.displayName?.charAt(0) || '?'}</AvatarFallback>
-          </Avatar>
-          <div className="flex-1 min-w-0">
-            <div className="font-medium text-sm truncate">{u.displayName} <span className="text-xs text-muted-foreground">@{u.username}</span></div>
-            <div className="text-xs text-muted-foreground truncate">{u.email}</div>
-          </div>
-          <Select
-            value={u.role}
-            onValueChange={(role) => updateRole.mutate({ userId: u.id, role })}
+      {data?.users?.map((u: any) => {
+        const lastSeen = new Date(u.lastSeenAt)
+        const isOnline = u.status === 'online'
+        const ago = formatRelative(lastSeen.toISOString())
+        return (
+          <div
+            key={u.id}
+            className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-accent/50 transition-colors"
           >
-            <SelectTrigger className="w-28 h-8 text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="member">member</SelectItem>
-              <SelectItem value="admin">admin</SelectItem>
-              <SelectItem value="owner">owner</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      ))}
+            <div className="relative shrink-0">
+              <Avatar className="w-9 h-9">
+                {u.avatarUrl ? <AvatarImage src={u.avatarUrl} /> : null}
+                <AvatarFallback>{u.displayName?.charAt(0) || '?'}</AvatarFallback>
+              </Avatar>
+              <span
+                className={cn(
+                  'absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-background',
+                  isOnline ? 'bg-status-online' : 'bg-status-offline'
+                )}
+              />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-medium text-sm truncate flex items-center gap-1.5">
+                {u.displayName}
+                <span className="text-xs text-muted-foreground">@{u.username}</span>
+              </div>
+              <div className="text-xs text-muted-foreground truncate flex items-center gap-2">
+                <span>{u.email}</span>
+                <span className="text-white/20">·</span>
+                <span>{u._count?.messages ?? 0} msgs</span>
+                <span className="text-white/20">·</span>
+                <span>{isOnline ? 'online now' : `${ago}`}</span>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8 text-xs text-muted-foreground hover:text-red-400"
+              disabled={signOutUser.isPending}
+              onClick={() => handleSignOut(u)}
+              title="Force sign-out from all devices"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="ml-1 hidden sm:inline">Sign out</span>
+            </Button>
+            <Select
+              value={u.role}
+              onValueChange={(role) => updateRole.mutate({ userId: u.id, role })}
+            >
+              <SelectTrigger className="w-28 h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="member">member</SelectItem>
+                <SelectItem value="admin">admin</SelectItem>
+                <SelectItem value="owner">owner</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )
+      })}
     </Card>
   )
 }

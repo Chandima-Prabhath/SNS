@@ -293,6 +293,7 @@ export function MessageList({ channelId }: MessageListProps) {
                   isBot={isBot}
                   senderDeleted={senderDeleted}
                   senderName={senderName}
+                  senderId={first.senderType === 'user' ? (first.senderId ?? undefined) : undefined}
                   avatarUrl={first.sender?.avatarUrl || null}
                   myId={myId}
                   onReply={(m) =>
@@ -394,6 +395,7 @@ interface MessageGroupProps {
   isBot: boolean
   senderDeleted?: boolean
   senderName: string
+  senderId?: string
   avatarUrl: string | null
   myId?: string
   onReply: (m: ChannelMessage) => void
@@ -403,10 +405,15 @@ interface MessageGroupProps {
 }
 
 function MessageGroup(props: MessageGroupProps) {
-  const { group, isMine, isBot, senderDeleted, senderName, avatarUrl } = props
+  const { group, isMine, isBot, senderDeleted, senderName, senderId, avatarUrl } = props
   const [editingId, setEditingId] = useState<string | null>(null)
   const replyTo = useAppStore((s) => s.replyTo)
   const setReplyTo = useAppStore((s) => s.setReplyTo)
+  const setProfileUserId = useAppStore((s) => s.setProfileUserId)
+
+  const openProfile = () => {
+    if (senderId && !isMine && !isBot) setProfileUserId(senderId)
+  }
 
   return (
     <div className="group/group flex gap-2.5">
@@ -419,12 +426,24 @@ function MessageGroup(props: MessageGroupProps) {
             <UserX className="w-4 h-4 text-muted-foreground" />
           </div>
         ) : (
-          <Avatar className="w-9 h-9 shadow-sm ring-1 ring-white/10">
-            <AvatarImage src={avatarUrl || undefined} />
-            <AvatarFallback className={cn('text-xs font-semibold', isBot && 'bg-primary/20 text-primary')}>
-              {isBot ? <Bot className="w-[18px] h-[18px]" /> : senderName.charAt(0).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
+          <button
+            type="button"
+            onClick={openProfile}
+            disabled={!senderId || isBot}
+            className={cn(
+              'rounded-full transition-transform',
+              senderId && !isBot && 'hover:scale-105 cursor-pointer',
+              (!senderId || isBot) && 'cursor-default'
+            )}
+            aria-label={`View ${senderName}'s profile`}
+          >
+            <Avatar className="w-9 h-9 shadow-sm ring-1 ring-white/10">
+              <AvatarImage src={avatarUrl || undefined} />
+              <AvatarFallback className={cn('text-xs font-semibold', isBot && 'bg-primary/20 text-primary')}>
+                {isBot ? <Bot className="w-[18px] h-[18px]" /> : senderName.charAt(0).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+          </button>
         )}
       </div>
 

@@ -7,6 +7,7 @@ import { MessageList } from './message-list'
 import { MessageComposer } from './message-composer'
 import { ChatHeader } from './chat-header'
 import { ChatInfoPanel } from './chat-info-panel'
+import { UserProfileSheet } from '@/components/ui/user-profile-sheet'
 import { MessageCircle } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -73,6 +74,9 @@ export function ChatView() {
 
       {/* Chat info panel — desktop right panel / mobile Sheet */}
       {chatInfoOpen && <ChatInfoPanel channel={activeChannel} />}
+
+      {/* User profile sheet — opens when any avatar is clicked */}
+      <UserProfileSheet />
     </div>
   )
 }
