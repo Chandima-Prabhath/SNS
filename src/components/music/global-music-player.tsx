@@ -383,10 +383,25 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     if (audioRef.current) audioRef.current.volume = volume
   }, [volume])
 
-  // ─── Effect: wire up <audio> event listeners ──────────────────────────
-  // Re-attaches whenever playNext changes (which it does when its deps
-  // change). The listeners read fresh state via `useMusicStore.getState()`
-  // so they never see stale data.
+  // ─── Refs for stable audio event listeners ────────────────────────────
+  // The audio event listeners must be attached ONCE and never re-attached.
+  // Previously, the listener effect depended on `playNext`, which changed
+  // whenever `isHost` changed (after the server reported hostUserId). This
+  // caused a cleanup → re-attach cycle at EXACTLY the moment a late-joiner's
+  // audio was loading — if `canplay` fired during the gap, it was missed
+  // and the audio never played.
+  //
+  // Solution: keep playNext + setPosition in refs, attach listeners once
+  // (deps: [socket] only), and have the listeners read from refs.
+  const playNextRef = useRef(playNext)
+  playNextRef.current = playNext
+  const setPositionRef = useRef(setPosition)
+  setPositionRef.current = setPosition
+
+  // ─── Effect: wire up <audio> event listeners (ONCE) ───────────────────
+  // Listeners attach on mount and never re-attach. They read fresh callbacks
+  // from refs, so they always call the latest playNext/setPosition without
+  // needing to be re-registered.
   useEffect(() => {
     const audio = audioRef.current
     if (!audio) return
@@ -394,17 +409,17 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     const onTimeUpdate = () => {
       // Don't fight with a freshly-applied remote position
       if (applyingRemoteRef.current) return
-      setPosition(audio.currentTime)
+      setPositionRef.current(audio.currentTime)
     }
     const onEnded = () => {
-      void playNext()
+      void playNextRef.current()
     }
     const onError = () => {
       const state = useMusicStore.getState()
       state.setIsLoading(false)
       if (state.currentTrack) {
         toast.error('Could not play this track — skipping...')
-        void playNext()
+        void playNextRef.current()
       }
     }
     const onWaiting = () => {
@@ -457,6 +472,12 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
     audio.addEventListener('waiting', onWaiting)
     audio.addEventListener('playing', onPlaying)
     audio.addEventListener('canplay', onCanPlay)
+    // Also listen to 'loadeddata' — some mobile browsers fire this instead
+    // of 'canplay' when preload just barely has enough data. Treating it
+    // the same ensures we don't miss the "ready to play" signal.
+    const onLoadedData = () => onCanPlay()
+    audio.addEventListener('loadeddata', onLoadedData)
+
     return () => {
       audio.removeEventListener('timeupdate', onTimeUpdate)
       audio.removeEventListener('ended', onEnded)
@@ -464,8 +485,9 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       audio.removeEventListener('waiting', onWaiting)
       audio.removeEventListener('playing', onPlaying)
       audio.removeEventListener('canplay', onCanPlay)
+      audio.removeEventListener('loadeddata', onLoadedData)
     }
-  }, [playNext, setPosition, socket])
+  }, [socket])
 
   // ─── Effect: Pre-download upcoming queue tracks ───────────────────────
   // When a track starts playing, pre-download the next 2 tracks in the queue
@@ -601,6 +623,24 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
           // buffered and can flip state from 'paused' → 'playing' for all
           // members at once. For late-joiners (state already 'playing'),
           // the canplay handler also kicks off play() locally.
+          //
+          // Fallback: if canplay doesn't fire within 5s (some mobile browsers
+          // with aggressive preload policies), try play() anyway. The play()
+          // call itself triggers loading if the browser hasn't started yet.
+          if (data.state === 'playing') {
+            setTimeout(() => {
+              if (audioRef.current &&
+                  audioRef.current.paused &&
+                  pendingPlayRef.current &&
+                  loadedVideoIdRef.current === data.currentVideoId) {
+                audioRef.current.play().catch((e: any) => {
+                  if (e?.name !== 'AbortError') {
+                    console.warn('[player] fallback play() failed:', e?.name || e?.message)
+                  }
+                })
+              }
+            }, 5_000)
+          }
           applyingRemoteRef.current = false
         } else {
           applyingRemoteRef.current = false
@@ -814,8 +854,12 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
   return (
     <MusicPlayerContext.Provider value={contextValue}>
       {children}
-      {/* The hidden audio element — persists across all tabs */}
-      <audio ref={audioRef} />
+      {/* The hidden audio element — persists across all tabs.
+          preload="auto" is CRITICAL for mobile: without it, iOS Safari
+          defaults to preload="none" and the canplay event never fires,
+          so late-joiners to music rooms never start playing.
+          playsInline prevents iOS from trying to open fullscreen. */}
+      <audio ref={audioRef} preload="auto" playsInline />
       {/* The persistent floating player — collapses to a mini FAB */}
       <AnimatePresence>
         {currentTrack && (
