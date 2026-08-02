@@ -1,13 +1,15 @@
 'use client'
 
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAppStore } from '@/stores/useAppStore'
 import { usePresence } from '@/hooks/usePresence'
+import { useCall } from '@/hooks/useCall'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { Calendar, Mail, MessageSquare, Clock, Crown, Shield } from 'lucide-react'
+import { Calendar, Mail, MessageSquare, Clock, Crown, Shield, Phone, Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
 /**
@@ -21,7 +23,11 @@ import { cn } from '@/lib/utils'
 export function UserProfileSheet() {
   const profileUserId = useAppStore((s) => s.profileUserId)
   const setProfileUserId = useAppStore((s) => s.setProfileUserId)
+  const setActiveChannel = useAppStore((s) => s.setActiveChannel)
+  const setView = useAppStore((s) => s.setView)
   const presence = usePresence()
+  const qc = useQueryClient()
+  const { startCall } = useCall()
 
   const { data, isLoading } = useQuery({
     queryKey: ['user-profile', profileUserId],
@@ -36,6 +42,59 @@ export function UserProfileSheet() {
 
   const user = data?.user
   const status = user ? (presence[user.id]?.status || user.status || 'offline') : 'offline'
+
+  // Start (or open) a DM with the target user. PUT /api/groups with
+  // targetUserId creates a DM group if one doesn't exist, or returns the
+  // existing one. Then we switch to the chats view + activate the channel.
+  const startDm = useMutation({
+    mutationFn: async (targetUserId: string) => {
+      const res = await fetch('/api/groups', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUserId }),
+      })
+      if (!res.ok) throw new Error('failed')
+      return res.json()
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['channels'] })
+      setProfileUserId(null)
+      setActiveChannel(data.channel.id)
+      setView('chats')
+      toast.success('DM opened')
+    },
+    onError: () => toast.error('Could not open DM'),
+  })
+
+  const handleCall = async (video: boolean) => {
+    if (!user) return
+    setProfileUserId(null)
+    setView('chats')
+    // Open the DM first so the call has a channel to attach to
+    try {
+      const dmRes = await fetch('/api/groups', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUserId: user.id }),
+      })
+      if (dmRes.ok) {
+        const dmData = await dmRes.json()
+        qc.invalidateQueries({ queryKey: ['channels'] })
+        setActiveChannel(dmData.channel.id)
+        // Generate a call ID and start the call on that DM group — rings
+        // the partner directly.
+        const callId = crypto.randomUUID()
+        await startCall({
+          callId,
+          dmGroupId: dmData.channel.groupId,
+          enableVideo: video,
+        })
+        setView('voice')
+      }
+    } catch (e: any) {
+      toast.error('Could not start call')
+    }
+  }
 
   return (
     <Sheet open={!!profileUserId} onOpenChange={(o) => !o && setProfileUserId(null)}>
@@ -102,28 +161,35 @@ export function UserProfileSheet() {
 
             {/* Quick actions */}
             <div className="p-4 border-b border-white/5">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    // TODO: open a DM with this user
-                    setProfileUserId(null)
-                  }}
+                  disabled={startDm.isPending}
+                  onClick={() => user && startDm.mutate(user.id)}
                 >
-                  <MessageSquare className="w-4 h-4 mr-2" />
+                  {startDm.isPending ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <MessageSquare className="w-4 h-4 mr-2" />
+                  )}
                   Message
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    // TODO: start a voice call with this user
-                    setProfileUserId(null)
-                  }}
+                  onClick={() => handleCall(false)}
+                >
+                  <Phone className="w-4 h-4 mr-2" />
+                  Call
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleCall(true)}
                 >
                   <MessageSquare className="w-4 h-4 mr-2" />
-                  Call
+                  Video
                 </Button>
               </div>
             </div>

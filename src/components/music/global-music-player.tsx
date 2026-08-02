@@ -122,6 +122,9 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
   // When applying a remote sync that changes the track, this holds the
   // position we should seek to once the new stream has loaded.
   const pendingSeekRef = useRef<number | null>(null)
+  // Whether the canplay handler should auto-play after seeking. Set when
+  // a remote state update arrives with state='playing' (late-joiner case).
+  const pendingPlayRef = useRef<boolean>(false)
   // True while we're applying state that arrived from a remote sync event.
   // Prevents local `timeupdate` from overwriting the freshly-applied
   // position and prevents echoing sync events back to the room.
@@ -140,9 +143,15 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
   // Non-hosts cannot play/pause/seek/skip; their commands are silently
   // dropped by the server. We compute this reactively so the UI can
   // disable controls appropriately.
+  //
+  // CRITICAL: do NOT treat a missing hostUserId or sessionUserId as "I am
+  // host" — that's the bug that made every non-host's UI say "You control
+  // playback" until the state arrived. Only treat as host when we have
+  // BOTH a hostUserId AND a sessionUserId AND they match. Solo mode (no
+  // activeRoomId) is always host.
   const { data: session } = useSession()
   const sessionUserId = (session?.user as any)?.id as string | undefined
-  const isHost = !activeRoomId || !hostUserId || hostUserId === sessionUserId
+  const isHost = !activeRoomId || (!!hostUserId && !!sessionUserId && hostUserId === sessionUserId)
 
   // ─── Action: play a track ─────────────────────────────────────────────
   const playTrack = useCallback(
@@ -410,16 +419,32 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
       // the track), apply it now that the audio is buffered enough.
       if (pendingSeekRef.current !== null && audioRef.current) {
         try { audioRef.current.currentTime = pendingSeekRef.current } catch {}
-        const state = useMusicStore.getState()
-        if (state.isPlaying) {
-          audioRef.current.play().catch(() => {})
-        }
         pendingSeekRef.current = null
+      }
+      // If a remote state update said we should be playing (late-joiner
+      // arriving while the room is already playing, OR the server just
+      // flipped state to 'playing' after the ready handshake), kick off
+      // playback now. This is more reliable than reading store.isPlaying
+      // because the store might be in a transitional state.
+      if (pendingPlayRef.current && audioRef.current) {
+        pendingPlayRef.current = false
+        // Guard with state check — don't play if already playing
+        if (audioRef.current.paused) {
+          audioRef.current.play().catch((e: any) => {
+            // Autoplay blocked (mobile, no user gesture yet). Log it — the
+            // user will see a play button they can click. Don't spam console.
+            if (e?.name !== 'AbortError') {
+              console.warn('[player] autoplay blocked or failed:', e?.name || e?.message)
+            }
+          })
+        }
       }
       // Tell the server we're ready (buffered). The server waits for all
       // members (or just the host) to be ready before flipping state
       // from 'paused' → 'playing' — this prevents the "one person hears
-      // the song 3s before everyone else" problem.
+      // the song 3s before everyone else" problem. For late-joiners
+      // (state already 'playing'), the server sends a targeted state
+      // update back to confirm we should play.
       const rid = useMusicStore.getState().activeRoomId
       if (rid && socket) {
         socket.emit('music:ready', rid)
@@ -556,6 +581,11 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
           durationSeconds: data.currentTrackInfo?.durationSeconds || null,
         }
         pendingSeekRef.current = data.positionSec
+        // Also remember the server-reported state so the canplay handler
+        // knows whether to auto-play (late-joiner during 'playing') or
+        // wait (host loaded a new track, state is 'paused' until ready
+        // handshake completes).
+        pendingPlayRef.current = data.state === 'playing'
         setCurrentTrack(track)
         setIsPlaying(data.state === 'playing')
         setPosition(data.positionSec)
@@ -563,12 +593,14 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
         if (audio) {
           audio.src = `/api/music/stream/${data.currentVideoId}`
           audio.volume = store.volume
+          audio.load()  // explicitly start loading (some browsers need this)
           loadedVideoIdRef.current = data.currentVideoId
           // Don't force a seek/play here — wait for the audio element's
           // 'canplay' event (handled in the listener effect below). That
           // fires the seek + emits 'music:ready' so the server knows we're
           // buffered and can flip state from 'paused' → 'playing' for all
-          // members at once.
+          // members at once. For late-joiners (state already 'playing'),
+          // the canplay handler also kicks off play() locally.
           applyingRemoteRef.current = false
         } else {
           applyingRemoteRef.current = false
@@ -586,8 +618,17 @@ export function GlobalMusicPlayer({ children }: { children: React.ReactNode }) {
           try { audio.currentTime = expectedPos } catch {}
           setPosition(expectedPos)
         }
-        if (data.state === 'playing' && !store.isPlaying) {
-          audio.play().catch(() => {})
+        if (data.state === 'playing' && audio.paused) {
+          // Server says we should be playing but audio is paused. This can
+          // happen for late-joiners after the ready handshake — the server
+          // sends a targeted state update to confirm playback should start.
+          // Try to play; if autoplay is blocked, the user will see the
+          // play button.
+          audio.play().catch((e: any) => {
+            if (e?.name !== 'AbortError') {
+              console.warn('[player] play() blocked in sync:', e?.name || e?.message)
+            }
+          })
           setIsPlaying(true)
         } else if (data.state === 'paused' && store.isPlaying) {
           audio.pause()

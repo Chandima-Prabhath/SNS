@@ -161,7 +161,10 @@ export function MusicView() {
   const setAutoplay = useMusicStore((s) => s.setAutoplay)
   const { data: session } = useSession()
   const myUserId = (session?.user as any)?.id as string | undefined
-  const amHost = !activeRoomId || !hostUserId || hostUserId === myUserId
+  // Only treat as host when we have BOTH hostUserId AND myUserId AND they
+  // match. Missing values = "I don't know yet" → render as non-host (the
+  // safe default that doesn't show host controls to non-hosts).
+  const amHost = !activeRoomId || (!!hostUserId && !!myUserId && hostUserId === myUserId)
 
   // ─── Player actions (broadcast + audio handled by global player) ──────
   const { playTrack, playNext, removeFromQueue, clearQueue } = useMusicPlayer()
@@ -1695,7 +1698,7 @@ function InRoomPanel({
   const { socket } = useSocketSafe()
   const [showMembers, setShowMembers] = useState(false)
   const [members, setMembers] = useState<string[]>([])
-  const amHost = !hostUserId || !myUserId || hostUserId === myUserId
+  const amHost = !!hostUserId && !!myUserId && hostUserId === myUserId
 
   // Listen for state updates from the server — extract the members list so
   // we can show it + offer host-transfer to any non-host member.

@@ -694,12 +694,27 @@ export function attachRealtime(httpServer: HTTPServer): IOServer {
 
     socket.on('music:ready', (roomId: string) => {
       const { allReady, room } = markMemberReady(roomId, userId)
+      if (!room) return
       // Start playback when EITHER all members are ready OR the host is ready
       // (host-ready is sufficient — others will catch up via drift correction).
-      const hostIsReady = room?.readyMembers.has(room.hostUserId) === true
-      if (room && room.state === 'paused' && (allReady || hostIsReady)) {
+      const hostIsReady = room.readyMembers.has(room.hostUserId) === true
+      if (room.state === 'paused' && (allReady || hostIsReady)) {
         updatePlayback(roomId, 'playing', 0)
         broadcastRoomState(io, roomId)
+      } else if (room.state === 'playing') {
+        // Late-joiner sent ready while the room is ALREADY playing. Don't
+        // re-broadcast to everyone (would force a re-seek), but send a
+        // targeted state update to just THIS socket so its client knows it
+        // should now be playing. Without this, the late-joiner's audio
+        // loads but never starts (the canplay handler in the client only
+        // plays if state.isPlaying is true, but the server's state hasn't
+        // changed so no new music:state event was sent).
+        io.to(socket.id).emit('music:state', {
+          roomId: room.roomId, hostUserId: room.hostUserId, state: room.state,
+          currentVideoId: room.currentVideoId, currentTrackInfo: room.currentTrackInfo,
+          positionSec: getExpectedPosition(room), positionAnchor: room.positionAnchor,
+          queue: room.queue, members: Array.from(room.members),
+        })
       }
     })
 
