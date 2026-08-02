@@ -52,38 +52,43 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'videoId, title, artist required' }, { status: 400 })
   }
 
-  // Delete existing entry for this videoId (so it moves to top on re-insert)
-  await db.playHistory.deleteMany({
-    where: { userId, videoId },
-  })
-
-  // Insert new entry at the top
-  await db.playHistory.create({
-    data: {
-      userId,
-      videoId,
-      title,
-      artist,
-      thumbnail: thumbnail || null,
-      durationSeconds: durationSeconds || null,
-    },
-  })
-
-  // Trim to 50 entries (delete oldest beyond 50)
-  const count = await db.playHistory.count({ where: { userId } })
-  if (count > 50) {
-    const oldest = await db.playHistory.findMany({
-      where: { userId },
-      orderBy: { playedAt: 'desc' },
-      skip: 50,
-      select: { id: true },
+  // Wrap the dedupe-insert-trim sequence in a transaction so concurrent
+  // requests can't interleave (e.g. two inserts racing past the deleteMany
+  // would leave duplicate rows; or the trim count could be off-by-one).
+  await db.$transaction(async (tx) => {
+    // Delete existing entry for this videoId (so it moves to top on re-insert)
+    await tx.playHistory.deleteMany({
+      where: { userId, videoId },
     })
-    if (oldest.length > 0) {
-      await db.playHistory.deleteMany({
-        where: { id: { in: oldest.map((h) => h.id) } },
+
+    // Insert new entry at the top
+    await tx.playHistory.create({
+      data: {
+        userId,
+        videoId,
+        title,
+        artist,
+        thumbnail: thumbnail || null,
+        durationSeconds: durationSeconds || null,
+      },
+    })
+
+    // Trim to 50 entries (delete oldest beyond 50)
+    const count = await tx.playHistory.count({ where: { userId } })
+    if (count > 50) {
+      const oldest = await tx.playHistory.findMany({
+        where: { userId },
+        orderBy: { playedAt: 'desc' },
+        skip: 50,
+        select: { id: true },
       })
+      if (oldest.length > 0) {
+        await tx.playHistory.deleteMany({
+          where: { id: { in: oldest.map((h) => h.id) } },
+        })
+      }
     }
-  }
+  })
 
   return NextResponse.json({ ok: true })
 }

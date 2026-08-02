@@ -6,6 +6,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import path from 'path'
 import crypto from 'crypto'
+import { UPLOAD_DIR } from '@/lib/media'
 
 const execFileAsync = promisify(execFile)
 
@@ -47,6 +48,24 @@ export async function POST(req: Request) {
   if (!name?.trim()) return NextResponse.json({ error: 'name required' }, { status: 400 })
   if (!audioUrl?.trim()) return NextResponse.json({ error: 'audioUrl required' }, { status: 400 })
 
+  // Path traversal protection: audioUrl must point to an upload we control.
+  // Accept either "/api/uploads/<filename>" or "/uploads/<filename>" — both
+  // resolve to public/uploads/. Reject anything containing path segments,
+  // query strings, or non-filename characters.
+  const normalizedAudioUrl = audioUrl.trim()
+  const uploadsPrefixMatch = normalizedAudioUrl.match(/^\/(?:api\/)?uploads\/(.+)$/)
+  if (!uploadsPrefixMatch) {
+    return NextResponse.json({ error: 'audioUrl must start with /api/uploads/ or /uploads/' }, { status: 400 })
+  }
+  const filename = uploadsPrefixMatch[1]
+  if (!/^[\w.-]+$/.test(filename)) {
+    return NextResponse.json({ error: 'invalid audioUrl' }, { status: 400 })
+  }
+  const resolvedAudioPath = path.join(UPLOAD_DIR, filename)
+  if (!resolvedAudioPath.startsWith(UPLOAD_DIR + path.sep)) {
+    return NextResponse.json({ error: 'invalid audioUrl' }, { status: 400 })
+  }
+
   // Create the voice record first
   const voice = await db.customVoice.create({
     data: {
@@ -58,7 +77,7 @@ export async function POST(req: Request) {
 
   // Try to export the voice to safetensors for fast inference.
   // This runs in the background — the client doesn't wait for it.
-  exportSafetensors(voice.id, audioUrl).catch((e) => {
+  exportSafetensors(voice.id, resolvedAudioPath).catch((e) => {
     console.error(`[tts-voices] safetensors export failed for ${voice.id}:`, e)
   })
 
@@ -74,19 +93,16 @@ export async function POST(req: Request) {
  * IMPORTANT: Pocket TTS expects WAV files (RIFF header). Browser recordings
  * produce audio/webm, and uploaded files might be mp3/m4a. We convert the
  * audio to WAV using ffmpeg before passing it to pocket-tts.
+ *
+ * `audioPath` MUST be a pre-validated absolute path inside UPLOAD_DIR.
  */
-async function exportSafetensors(voiceId: string, audioUrl: string) {
-  // Resolve the audio file path. audioUrl may be "/uploads/abc.wav" (legacy)
-  // or "/api/uploads/abc.wav" (new) — both point to public/uploads/abc.wav.
-  const normalizedUrl = audioUrl.replace(/^\/api\/uploads\//, '/uploads/')
-  const audioPath = path.join(process.cwd(), 'public', normalizedUrl)
-
+async function exportSafetensors(voiceId: string, audioPath: string) {
   // Convert to WAV first (pocket-tts requires WAV format)
   const wavPath = await ensureWavFile(audioPath)
 
   // Generate the safetensors file path
   const safetensorsFilename = `voice-${voiceId}.safetensors`
-  const safetensorsPath = path.join(process.cwd(), 'public', 'uploads', safetensorsFilename)
+  const safetensorsPath = path.join(UPLOAD_DIR, safetensorsFilename)
   // Use /api/uploads/ so the TTS server can fetch it through our dedicated
   // file-serving route (bypasses Next.js static file caching in production).
   const safetensorsUrl = `/api/uploads/${safetensorsFilename}`

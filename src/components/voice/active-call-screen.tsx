@@ -8,6 +8,7 @@ import { Mic, MicOff, PhoneOff, Volume2, VolumeX, Users, Wifi, Cloud, Shield, Vi
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { getCallManager } from '@/lib/call-manager'
 import { InviteDialog } from '@/components/ui/invite-dialog'
 
 interface ActiveCallScreenProps {
@@ -42,10 +43,19 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
   }, [status])
 
   useEffect(() => {
-    if (localVideoRef.current && localStream && isVideoCall) {
-      localVideoRef.current.srcObject = localStream
-      localVideoRef.current.muted = true
-      localVideoRef.current.play().catch(() => {})
+    // Always clean up srcObject when the stream goes away (including the
+    // call ending). Without the else branch, the <video> element keeps a
+    // reference to the old MediaStream, which prevents the camera tracks
+    // from being garbage-collected — the camera stays "in use" by the
+    // browser even after the call ends.
+    if (localVideoRef.current && isVideoCall) {
+      if (localStream) {
+        localVideoRef.current.srcObject = localStream
+        localVideoRef.current.muted = true
+        localVideoRef.current.play().catch(() => {})
+      } else {
+        localVideoRef.current.srcObject = null
+      }
     }
   }, [localStream, isVideoCall])
 
@@ -79,9 +89,19 @@ export function ActiveCallScreen({ callName, callAvatarUrl, isGroup, isVideoCall
   }
 
   const handleSpeaker = async () => {
+    // Toggle speaker on/off for the CALL only — previously this mutated
+    // ALL <audio> elements app-wide (GlobalMusicPlayer, voice-message
+    // players, TTS preview), which muted the entire app.
     const newSpeakerOn = !speakerOn
     setSpeakerOn(newSpeakerOn)
-    document.querySelectorAll('audio').forEach(el => { (el as HTMLAudioElement).volume = newSpeakerOn ? 1.0 : 0.0 })
+    try {
+      const cm = getCallManager()
+      // CallManager exposes a method to set the audio output volume on
+      // the remote audio elements it owns — not app-wide <audio> tags.
+      cm.setSpeakerVolume(newSpeakerOn ? 1.0 : 0.0)
+    } catch (e) {
+      console.error('[call] failed to set speaker volume:', e)
+    }
   }
 
   const handleSwitchCamera = async () => {

@@ -1010,6 +1010,8 @@ function PlayerBar({
                   value={position}
                   onChange={(e) => onSeek(parseFloat(e.target.value))}
                   className="flex-1 player-slider"
+                  aria-label="Seek"
+                  tabIndex={0}
                 />
                 <span className="text-[10px] text-muted-foreground tabular-nums w-8">{formatTime(currentTrack.durationSeconds || 0)}</span>
               </div>
@@ -1030,6 +1032,8 @@ function PlayerBar({
                   value={volume}
                   onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
                   className="w-20 volume-slider"
+                  aria-label="Volume"
+                  tabIndex={0}
                 />
               </div>
             </div>
@@ -1079,6 +1083,8 @@ function PlayerBar({
                     value={position}
                     onChange={(e) => onSeek(parseFloat(e.target.value))}
                     className="flex-1 player-slider"
+                    aria-label="Seek"
+                    tabIndex={0}
                   />
                   <span className="text-[10px] text-muted-foreground tabular-nums w-9">{formatTime(currentTrack.durationSeconds || 0)}</span>
                 </div>
@@ -1098,6 +1104,8 @@ function PlayerBar({
                       step={0.01}
                       value={volume}
                       onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
+                      aria-label="Volume"
+                      tabIndex={0}
                     />
                   </div>
                 </div>

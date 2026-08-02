@@ -11,6 +11,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { id: channelId } = await params
   const { messageId } = await req.json()
 
+  // Authorization: caller must be a member of this channel
+  const membership = await db.channelMember.findUnique({
+    where: { channelId_userId: { channelId, userId } },
+  })
+  if (!membership) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
+
   await db.messageReadReceipt.upsert({
     where: { messageId_userId: { messageId, userId } },
     create: { messageId, userId },

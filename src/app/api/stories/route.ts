@@ -2,6 +2,15 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { z } from 'zod'
+
+const createStorySchema = z.object({
+  mediaUrl: z.string().startsWith('/api/uploads/'),
+  mediaType: z.enum(['image', 'video', 'text']),
+  caption: z.string().max(2000).optional(),
+  audience: z.enum(['all', 'include', 'exclude']),
+  audienceUserIds: z.array(z.string()).max(100).optional(),
+})
 
 // List stories visible to me (not expired)
 export async function GET() {
@@ -85,10 +94,12 @@ export async function POST(req: Request) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const userId = session.user.id
-  const body = await req.json()
-  const { mediaUrl, mediaType = 'image', caption, audience = 'all', audienceUserIds = [] } = body
-
-  if (!mediaUrl) return NextResponse.json({ error: 'mediaUrl required' }, { status: 400 })
+  const body = await req.json().catch(() => ({}))
+  const parsed = createStorySchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'invalid input', details: parsed.error.issues }, { status: 400 })
+  }
+  const { mediaUrl, mediaType, caption, audience, audienceUserIds = [] } = parsed.data
 
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24h
   const story = await db.story.create({

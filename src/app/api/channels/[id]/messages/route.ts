@@ -192,31 +192,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     })
   }
 
-  // Fetch any bot reply messages that were created in response to the user's message
-  // (and any prior dispatched bot replies). We return them so the client can
-  // broadcast them via socket — otherwise other clients wouldn't see bot replies
-  // in real-time.
-  const botReplies = await db.message.findMany({
-    where: {
-      channelId,
-      senderType: 'bot',
-      createdAt: { gte: message.createdAt },
-    },
-    include: {
-      sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
-      replyTo: {
-        select: { id: true, body: true, senderType: true, sender: { select: { username: true, displayName: true } } },
-      },
-    },
-    orderBy: { createdAt: 'asc' },
-  })
+  // Fetch any bot reply messages that were created in response to the user's message.
+  // We return them so the client can broadcast them via socket — otherwise other
+  // clients wouldn't see bot replies in real-time.
+  //
+  // CRITICAL FIX: previously this used `createdAt: { gte: message.createdAt }`
+  // which races with concurrent dispatches in the same channel — another user's
+  // bot reply created in the same window would be returned to THIS caller.
+  // The framework now tracks exact bot reply IDs per-dispatch via AsyncLocalStorage,
+  // so we fetch by ID (precise, no race).
+  const { getAndClearEditedMessages, getAndClearBotReplyIds } = await import('@/lib/bot/framework')
+  const replyIds = getAndClearBotReplyIds()
+  const botReplies = replyIds.length > 0
+    ? await db.message.findMany({
+        where: { id: { in: replyIds } },
+        include: {
+          sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
+          replyTo: {
+            select: { id: true, body: true, senderType: true, sender: { select: { username: true, displayName: true } } },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      })
+    : []
 
   // Check for bot messages that were EDITED during dispatch (e.g. the
   // visual bot's wait_choice re-prompt edits the keyboard message in-place).
   // The framework tracks edited message IDs via trackEditedMessage().
   const editedMessages: any[] = []
   try {
-    const { getAndClearEditedMessages } = await import('@/lib/bot/framework')
     const editedIds = getAndClearEditedMessages()
     if (editedIds.length > 0) {
       const edited = await db.message.findMany({
@@ -229,9 +233,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         },
       })
       // Only include messages not already in botReplies (avoid duplicates)
-      const replyIds = new Set(botReplies.map((r) => r.id))
+      const existingIds = new Set(botReplies.map((r) => r.id))
       for (const msg of edited) {
-        if (!replyIds.has(msg.id)) {
+        if (!existingIds.has(msg.id)) {
           editedMessages.push(msg)
         }
       }

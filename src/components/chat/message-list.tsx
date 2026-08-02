@@ -701,7 +701,7 @@ function MessageItem(props: MessageItemProps) {
             'video/webm' or 'application/octet-stream' due to a browser bug
             where WebM audio recordings get misclassified. */}
         {m.mediaUrl && m.mediaType?.startsWith('image') && (
-          <img src={m.mediaUrl} alt="" className="rounded-lg mb-1.5 max-w-full -mx-1 w-[calc(100%+0.5rem)]" />
+          <img src={m.mediaUrl} alt="" loading="lazy" className="rounded-lg mb-1.5 max-w-full -mx-1 w-[calc(100%+0.5rem)]" />
         )}
         {m.mediaUrl && m.mediaType?.startsWith('video') && !isAudioFile(m.mediaUrl, m.mediaType) && (
           <video src={m.mediaUrl} controls className="rounded-lg mb-1.5 max-w-full -mx-1 w-[calc(100%+0.5rem)]" />

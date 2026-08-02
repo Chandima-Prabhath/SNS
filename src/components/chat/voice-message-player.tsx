@@ -170,6 +170,53 @@ export function VoiceMessagePlayer({
     setCurrentTime(audio.currentTime)
   }
 
+  // Keyboard seek — the waveform div has role="slider" so it should respond
+  // to the standard slider keyboard interactions (ARIA Authoring Practices).
+  // ArrowLeft/Right seek by 5s, Space toggles play, Home/End jump to ends.
+  const seekBy = (deltaSeconds: number) => {
+    const audio = audioRef.current
+    if (!audio || !duration) return
+    audio.currentTime = Math.max(0, Math.min(duration, audio.currentTime + deltaSeconds))
+    setCurrentTime(audio.currentTime)
+  }
+  const seekToStart = () => {
+    const audio = audioRef.current
+    if (!audio) return
+    audio.currentTime = 0
+    setCurrentTime(0)
+  }
+  const seekToEnd = () => {
+    const audio = audioRef.current
+    if (!audio || !duration) return
+    audio.currentTime = duration
+    setCurrentTime(duration)
+  }
+  const onWaveformKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    switch (e.key) {
+      case 'ArrowLeft':
+        e.preventDefault()
+        seekBy(-5)
+        break
+      case 'ArrowRight':
+        e.preventDefault()
+        seekBy(5)
+        break
+      case ' ':
+      case 'Enter':
+        e.preventDefault()
+        void togglePlay()
+        break
+      case 'Home':
+        e.preventDefault()
+        seekToStart()
+        break
+      case 'End':
+        e.preventDefault()
+        seekToEnd()
+        break
+    }
+  }
+
   const cyclePlaybackRate = () => {
     const audio = audioRef.current
     if (!audio) return
@@ -248,7 +295,9 @@ export function VoiceMessagePlayer({
         {/* Waveform (clickable to seek) */}
         <div
           onClick={seek}
-          className="relative flex items-center gap-[2px] h-7 cursor-pointer select-none"
+          onKeyDown={onWaveformKeyDown}
+          tabIndex={0}
+          className="relative flex items-center gap-[2px] h-7 cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded"
           role="slider"
           aria-valuenow={Math.round(progress)}
           aria-valuemin={0}

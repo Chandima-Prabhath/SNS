@@ -107,7 +107,7 @@ export async function POST(req: Request) {
   } catch (e: any) {
     console.error('[asr] route error:', e?.message || e)
     return NextResponse.json(
-      { error: 'internal error', detail: e?.message || String(e) },
+      { error: 'internal error' },
       { status: 500 },
     )
   }
@@ -130,8 +130,9 @@ export async function GET() {
     const health = await checkAsrHealth()
     return NextResponse.json(health)
   } catch (e: any) {
+    console.error('[asr] health check error:', e?.message || e)
     return NextResponse.json(
-      { reachable: false, loaded: false, error: e?.message || String(e) },
+      { reachable: false, loaded: false, error: 'internal error' },
       { status: 200 },
     )
   }

@@ -2,6 +2,14 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { z } from 'zod'
+
+const patchSchema = z.object({
+  action: z.enum(['play', 'pause', 'seek', 'track', 'queue']).optional(),
+  videoId: z.string().regex(/^[a-zA-Z0-9_-]{11}$/).optional(),
+  position: z.number().nonnegative().max(86400).optional(),
+  queue: z.array(z.string().regex(/^[a-zA-Z0-9_-]{11}$/)).max(1000).optional(),
+})
 
 /**
  * GET /api/music/rooms/[id] — Get a music room with its current state.
@@ -60,8 +68,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: 'only the host can control playback' }, { status: 403 })
   }
 
-  const body = await req.json()
-  const { action, videoId, position, queue } = body
+  const body = await req.json().catch(() => ({}))
+  const parsed = patchSchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'invalid input', details: parsed.error.issues }, { status: 400 })
+  }
+  const { action, videoId, position, queue } = parsed.data
 
   const data: any = { lastSyncAt: new Date() }
 

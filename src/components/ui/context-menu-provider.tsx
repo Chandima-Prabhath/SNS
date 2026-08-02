@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 interface ContextMenuState {
@@ -86,7 +86,7 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
             >
               {menu.items.map((item, i) => (
                 <button
-                  key={i}
+                  key={`${item.label}-${i}`}
                   onClick={() => { item.onClick(); hide() }}
                   className={`w-full flex items-center gap-3 px-3 py-2 text-sm text-left transition-colors hover:bg-accent/50 ${
                     item.variant === 'danger' ? 'text-red-400 hover:text-red-300' : 'text-foreground'
@@ -109,24 +109,39 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
  * Returns handlers to spread on the target element.
  */
 export function useLongPress(callback: () => void, duration = 500) {
-  const timeoutRef = useState<ReturnType<typeof setTimeout> | null>(null)
+  // MUST be a ref, not state. The previous implementation used useState,
+  // which (a) caused stale-closure bugs because callback couldn't see the
+  // latest timer, and (b) had no unmount cleanup — if the component
+  // unmounted with a pending timer, the callback fired on an unmounted
+  // component (React warning + potential bug).
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Keep the callback in a ref so the timer always fires the latest version
+  // without needing to re-create the timer on every callback change.
+  const callbackRef = useRef(callback)
+  callbackRef.current = callback
 
   const start = useCallback((e: React.TouchEvent) => {
-    const touch = e.touches[0]
-    const x = touch.clientX
-    const y = touch.clientY
     const timer = setTimeout(() => {
-      callback()
+      callbackRef.current()
     }, duration)
-    ;(timeoutRef[1] as any)(timer)
-  }, [callback, duration, timeoutRef])
+    timeoutRef.current = timer
+  }, [duration])
 
   const cancel = useCallback(() => {
-    if (timeoutRef[0]) {
-      clearTimeout(timeoutRef[0])
-      ;(timeoutRef[1] as any)(null)
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
     }
-  }, [timeoutRef])
+  }, [])
+
+  // Clear pending timer on unmount — prevents the callback firing after the
+  // component is gone (e.g. user scrolls a long list and the row unmounts).
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    }
+  }, [])
 
   return {
     onTouchStart: start,

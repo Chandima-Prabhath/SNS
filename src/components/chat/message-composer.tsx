@@ -590,6 +590,11 @@ function TtsDialog({
   const abortRef = useRef<AbortController | null>(null)
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null)
 
+  // Ref to the message Textarea — when the dialog opens we move focus here so
+  // keyboard users can start typing immediately. Radix Dialog restores focus
+  // to whatever was focused before opening (the trigger button) on close.
+  const textInputRef = useRef<HTMLTextAreaElement | null>(null)
+
   // Cleanup effect — runs when dialog closes OR component unmounts.
   // Stops the stream reader, aborts the fetch, and closes the AudioContext.
   useEffect(() => {
@@ -629,6 +634,14 @@ function TtsDialog({
       }
     }
   }, [])
+
+  // Move focus to the message Textarea when the dialog opens. Small delay
+  // so the dialog content has time to mount (Radix animates in on first frame).
+  useEffect(() => {
+    if (!open) return
+    const t = setTimeout(() => textInputRef.current?.focus(), 50)
+    return () => clearTimeout(t)
+  }, [open])
 
   // Fetch built-in voices from the API (single source of truth for labels)
   const { data: builtinVoicesData } = useQuery({
@@ -913,6 +926,7 @@ function TtsDialog({
             <div className="space-y-2">
               <Label>Message</Label>
               <Textarea
+                ref={textInputRef}
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 placeholder="Type what the voice should say..."
@@ -1068,8 +1082,14 @@ function CustomVoicesTab({ onUseVoice }: { onUseVoice: (id: string) => void }) {
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [recording, setRecording] = useState(false)
-  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null)
-  const [audioChunks, setAudioChunks] = useState<Blob[]>([])
+
+  // Refs for MediaRecorder + stream — MUST be refs (not state) so the
+  // cleanup function can access the current values without stale closures.
+  // Storing these in useState caused a bug where closing the dialog mid-
+  // recording left the microphone hardware captured indefinitely.
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const chunksRef = useRef<Blob[]>([])
 
   const { data: customVoicesData } = useQuery({
     queryKey: ['tts-voices'],
@@ -1080,6 +1100,21 @@ function CustomVoicesTab({ onUseVoice }: { onUseVoice: (id: string) => void }) {
     },
   })
   const customVoices = customVoicesData?.voices || []
+
+  // Cleanup on unmount: stop any in-flight recording + release the mic.
+  // Without this, navigating away while recording keeps the mic indicator
+  // on and the hardware captured until the next page reload.
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        try { mediaRecorderRef.current.stop() } catch {}
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop())
+        streamRef.current = null
+      }
+    }
+  }, [])
 
   const deleteVoice = useMutation({
     mutationFn: async (id: string) => {
@@ -1131,11 +1166,22 @@ function CustomVoicesTab({ onUseVoice }: { onUseVoice: (id: string) => void }) {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
       const recorder = new MediaRecorder(stream)
-      const chunks: Blob[] = []
-      recorder.ondataavailable = (e) => chunks.push(e.data)
+      chunksRef.current = []
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data)
+      }
       recorder.onstop = async () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' })
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+        chunksRef.current = []
+        // Release the mic NOW — don't wait for the upload to finish.
+        // The previous code only stopped tracks inside onstop, which meant
+        // a failed upload would leave the mic captured.
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((t) => t.stop())
+          streamRef.current = null
+        }
         // Upload the recording
         setUploading(true)
         try {
@@ -1150,20 +1196,20 @@ function CustomVoicesTab({ onUseVoice }: { onUseVoice: (id: string) => void }) {
         } finally {
           setUploading(false)
         }
-        stream.getTracks().forEach((t) => t.stop())
       }
       recorder.start()
-      setMediaRecorder(recorder)
+      mediaRecorderRef.current = recorder
       setRecording(true)
-      setAudioChunks(chunks)
     } catch {
       toast.error('Microphone access denied')
     }
   }
 
   const stopRecording = () => {
-    if (mediaRecorder && mediaRecorder.state === 'recording') {
-      mediaRecorder.stop()
+    const recorder = mediaRecorderRef.current
+    if (recorder && recorder.state === 'recording') {
+      recorder.stop()
+      mediaRecorderRef.current = null
       setRecording(false)
     }
   }

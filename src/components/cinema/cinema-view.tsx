@@ -870,7 +870,7 @@ function DetailView({ item, onBack }: { item: { id: number; type: 'movie' | 'tv'
             >
               <div className="w-28 sm:w-36 md:w-48 aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10">
                 {poster ? (
-                  <img src={poster} alt="" className="w-full h-full object-cover" />
+                  <img src={poster} alt="" loading="lazy" className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full bg-card flex items-center justify-center">
                     <Film className="w-10 h-10 sm:w-12 sm:h-12 text-muted-foreground" />

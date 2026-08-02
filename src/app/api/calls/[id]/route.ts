@@ -10,6 +10,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const userId = session.user.id
   const { id: callId } = await params
 
+  // Fetch the call with its channel + dmGroup relation for authorization
+  const existingCall = await db.voiceCall.findUnique({
+    where: { id: callId },
+    select: { id: true, channelId: true, dmGroupId: true },
+  })
+  if (!existingCall) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 })
+  }
+
+  // Authorization: caller must be a member of the channel or DM group
+  if (existingCall.channelId) {
+    const membership = await db.channelMember.findUnique({
+      where: { channelId_userId: { channelId: existingCall.channelId, userId } },
+    })
+    if (!membership) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+    }
+  } else if (existingCall.dmGroupId) {
+    const dmLink = await db.dmLink.findFirst({
+      where: { id: existingCall.dmGroupId, OR: [{ userAId: userId }, { userBId: userId }] },
+    })
+    if (!dmLink) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+    }
+  }
+
   await db.callParticipant.upsert({
     where: { callId_userId: { callId, userId } },
     create: { callId, userId },
@@ -31,6 +57,32 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const userId = session.user.id
   const { id: callId } = await params
+
+  // Fetch the call with its channel + dmGroup relation for authorization
+  const existingCall = await db.voiceCall.findUnique({
+    where: { id: callId },
+    select: { id: true, channelId: true, dmGroupId: true },
+  })
+  if (!existingCall) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 })
+  }
+
+  // Authorization: caller must be a member of the channel or DM group
+  if (existingCall.channelId) {
+    const membership = await db.channelMember.findUnique({
+      where: { channelId_userId: { channelId: existingCall.channelId, userId } },
+    })
+    if (!membership) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+    }
+  } else if (existingCall.dmGroupId) {
+    const dmLink = await db.dmLink.findFirst({
+      where: { id: existingCall.dmGroupId, OR: [{ userAId: userId }, { userBId: userId }] },
+    })
+    if (!dmLink) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+    }
+  }
 
   await db.callParticipant.updateMany({
     where: { callId, userId },

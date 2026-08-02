@@ -682,7 +682,7 @@ export function MusicView() {
                     {/* Blurred bg */}
                     {currentTrack.thumbnail && (
                       <div className="absolute inset-0">
-                        <img src={currentTrack.thumbnail} alt="" className="w-full h-full object-cover scale-125 blur-2xl opacity-40" />
+                        <img src={currentTrack.thumbnail} alt="" loading="lazy" width={64} height={64} className="w-full h-full object-cover scale-125 blur-2xl opacity-40" />
                         <div className="absolute inset-0 bg-black/40" />
                       </div>
                     )}
@@ -690,7 +690,7 @@ export function MusicView() {
                       {/* Track info row */}
                       <div className="flex items-center gap-4">
                         {currentTrack.thumbnail ? (
-                          <img src={currentTrack.thumbnail} alt="" className="w-16 h-16 rounded-xl object-cover shadow-lg ring-1 ring-white/10 shrink-0" />
+                          <img src={currentTrack.thumbnail} alt="" loading="lazy" width={64} height={64} className="w-16 h-16 rounded-xl object-cover shadow-lg ring-1 ring-white/10 shrink-0" />
                         ) : (
                           <div className="w-16 h-16 rounded-xl gradient-primary flex items-center justify-center shrink-0 shadow-lg">
                             <MusicIcon className="w-7 h-7 text-primary-foreground" />

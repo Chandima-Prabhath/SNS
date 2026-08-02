@@ -3,16 +3,25 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { getOrCreateDmChannel } from '@/lib/chat-utils'
+import { z } from 'zod'
+
+const createGroupSchema = z.object({
+  name: z.string().min(1).max(100),
+  description: z.string().max(500).optional(),
+  channels: z.array(z.string().min(1).max(50)).max(20).default(['general']),
+})
 
 // Create a new group + channels
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const userId = session.user.id
-  const body = await req.json()
-  const { name, description, channels = ['general'] } = body
-
-  if (!name?.trim()) return NextResponse.json({ error: 'name required' }, { status: 400 })
+  const body = await req.json().catch(() => ({}))
+  const parsed = createGroupSchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'invalid input', details: parsed.error.issues }, { status: 400 })
+  }
+  const { name, description, channels } = parsed.data
 
   const group = await db.group.create({
     data: {
@@ -21,8 +30,8 @@ export async function POST(req: Request) {
       ownerId: userId,
       isDm: false,
       channels: {
-        create: channels.map((name: string, i: number) => ({
-          name,
+        create: channels.map((chName: string, i: number) => ({
+          name: chName,
           type: 'text',
           order: i,
         })),

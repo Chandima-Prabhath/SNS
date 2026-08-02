@@ -193,7 +193,7 @@ function UploadStoryCard() {
               {mediaUrl ? (
                 <div className="relative">
                   {mediaType === 'image' ? (
-                    <img src={mediaUrl} alt="" className="max-h-64 mx-auto rounded-lg" />
+                    <img src={mediaUrl} alt="" loading="lazy" className="max-h-64 mx-auto rounded-lg" />
                   ) : (
                     <video src={mediaUrl} controls className="max-h-64 mx-auto rounded-lg" />
                   )}
@@ -260,7 +260,7 @@ function MyStatusCard({
           {stories.stories.map((s) => (
             <div key={s.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-accent/50 cursor-pointer" onClick={() => setViewerOpen(true)}>
               {s.mediaType === 'image' ? (
-              <img src={s.mediaUrl} alt="" className="w-12 h-12 rounded-lg object-cover" />
+              <img src={s.mediaUrl} alt="" loading="lazy" width={48} height={48} className="w-12 h-12 rounded-lg object-cover" />
             ) : (
               <video src={s.mediaUrl} className="w-12 h-12 rounded-lg object-cover" />
             )}
@@ -355,6 +355,21 @@ function StoryViewer({ story, onClose }: { story: StoryGroup; onClose: () => voi
     }
   }, [idx, current, markViewed])
 
+  // Esc-to-close — keyboard users had no way to dismiss the viewer without
+  // hunting for the small X button in the corner. Listener is scoped to
+  // window so it fires regardless of where focus is inside the overlay.
+  useEffect(() => {
+    if (!current) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [current, onClose])
+
   // Reset progress to 0 whenever the current story changes, then animate to 1
   // over the 5s duration. Using requestAnimationFrame gives a smooth fill
   // instead of the previous "instantly full" jump.
@@ -392,6 +407,9 @@ function StoryViewer({ story, onClose }: { story: StoryGroup; onClose: () => voi
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-[100] bg-black flex items-center justify-center"
       onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Story viewer"
     >
       <div
         className="relative w-full h-full max-w-md mx-auto flex flex-col"

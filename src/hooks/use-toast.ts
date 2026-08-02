@@ -9,7 +9,12 @@ import type {
 } from "@/components/ui/toast"
 
 const TOAST_LIMIT = 1
-const TOAST_REMOVE_DELAY = 1000000
+// Match the visible toast duration (Radix Toast default = 5000ms; the
+// Toaster renders inside <ToastProvider> with no explicit duration, so it
+// inherits that default). The previous value of 1000000ms (~16 minutes)
+// meant dismissed toasts lingered in module-level state and the
+// toastTimeouts Map for ~16 minutes after dismissal — pure memory waste.
+const TOAST_REMOVE_DELAY = 5000
 
 type ToasterToast = ToastProps & {
   id: string

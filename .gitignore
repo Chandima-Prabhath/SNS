@@ -79,5 +79,10 @@ prisma/db/custom.db
 # Agent scratch files
 tool-results/
 
-# Editor paste artifacts
-upload/
+# Editor paste artifacts (root-bound: only matches /upload/, NOT /api/upload/)
+# CRITICAL: do NOT remove the leading slash. Without it, the pattern matches
+# ANY folder named "upload" anywhere in the tree, which causes Git to ignore
+# /src/app/api/upload/ and delete its route.ts on branch switches / git clean.
+/upload/
+/public/uploads/
+/public/cache/

@@ -3,6 +3,33 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
 
+// Known push service hosts. Any other host must be explicitly allow-listed
+// via the ALLOWED_PUSH_HOSTS env var (comma-separated) — e.g. for a
+// self-hosted Mastodon push server.
+const ALLOWED_PUSH_HOST_SUFFIXES = [
+  '.fcm.googleapis.com',
+  '.push.apple.com',
+  'updates.push.services.mozilla.com',
+]
+
+function isAllowedPushHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase()
+  // Exact match
+  if (ALLOWED_PUSH_HOST_SUFFIXES.includes(lower)) return true
+  // Suffix match for subdomains (e.g. fcm.googleapis.com, fcmtoken.push.apple.com)
+  for (const suffix of ALLOWED_PUSH_HOST_SUFFIXES) {
+    if (suffix.startsWith('.') ? lower.endsWith(suffix) : lower === suffix) {
+      return true
+    }
+  }
+  // Operator-configured allow-list (e.g. self-hosted Mastodon push server)
+  const extraHosts = (process.env.ALLOWED_PUSH_HOSTS || '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean)
+  return extraHosts.includes(lower)
+}
+
 /**
  * POST /api/push/subscribe
  * Stores a push subscription for the current device.
@@ -15,8 +42,25 @@ export async function POST(req: Request) {
   const userId = session.user.id
 
   const subscription = await req.json()
-  if (!subscription?.endpoint) {
+  if (!subscription?.endpoint || typeof subscription.endpoint !== 'string') {
     return NextResponse.json({ error: 'endpoint required' }, { status: 400 })
+  }
+
+  // SSRF protection: validate the endpoint is an HTTPS URL pointing at a
+  // known push service. Without this, an attacker could store an arbitrary
+  // URL as their endpoint and trick the server into sending push payloads
+  // (with our VAPID auth) to internal services.
+  let endpointUrl: URL
+  try {
+    endpointUrl = new URL(subscription.endpoint)
+  } catch {
+    return NextResponse.json({ error: 'invalid endpoint' }, { status: 400 })
+  }
+  if (endpointUrl.protocol !== 'https:') {
+    return NextResponse.json({ error: 'endpoint must use https' }, { status: 400 })
+  }
+  if (!isAllowedPushHost(endpointUrl.hostname)) {
+    return NextResponse.json({ error: 'endpoint host not allowed' }, { status: 400 })
   }
 
   const userAgent = req.headers.get('user-agent') || 'unknown'

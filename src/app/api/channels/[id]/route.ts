@@ -2,6 +2,12 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { z } from 'zod'
+
+const patchSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  topic: z.string().max(500).optional(),
+})
 
 /**
  * Update a channel (rename, change topic).
@@ -12,8 +18,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const userId = session.user.id
   const { id: channelId } = await params
-  const body = await req.json()
-  const { name, topic } = body
+  const body = await req.json().catch(() => ({}))
+  const parsed = patchSchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'invalid input', details: parsed.error.issues }, { status: 400 })
+  }
+  const { name, topic } = parsed.data
 
   const channel = await db.channel.findUnique({
     where: { id: channelId },

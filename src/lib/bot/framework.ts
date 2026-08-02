@@ -15,28 +15,73 @@ import { writeFile, mkdir } from 'fs/promises'
 import { existsSync } from 'fs'
 import { getIO, sendMusicCommand } from '@/lib/realtime-server'
 import path from 'path'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import crypto from 'node:crypto'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Edited message tracking — used to detect which messages were edited
 // during a bot dispatch so the API route can return them to the client.
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// CRITICAL FIX: previously this was a module-level Set shared across ALL
+// concurrent dispatches. Two users triggering the same bot at the same time
+// would have their edited-message IDs merged into one set — the first
+// dispatch to call getAndClearEditedMessages() drained BOTH sets, and the
+// second dispatch got an empty set (its UI never saw the edit).
+//
+// AsyncLocalStorage gives us per-request isolation: each dispatchBotUpdate /
+// dispatchBotCallback call runs inside its own ALS context, and
+// trackEditedMessage writes to that context's set — not the global one.
+// Calls outside a dispatch (none should exist) fall through to a noop set.
 
-const editedMessageIds = new Set<string>()
+interface DispatchContext {
+  editedMessageIds: Set<string>
+  botReplyIds: Set<string>
+}
+const dispatchAls = new AsyncLocalStorage<DispatchContext>()
 
 /** Record that a message was edited during the current dispatch cycle.
  *  The API route calls getAndClearEditedMessages() after dispatch to
  *  return the edited messages to the client. */
 export function trackEditedMessage(messageId: string) {
-  editedMessageIds.add(messageId)
+  dispatchAls.getStore()?.editedMessageIds.add(messageId)
+}
+
+/** Track a bot reply message ID so the API route can fetch them precisely
+ *  instead of using a timestamp window (which races with concurrent
+ *  dispatches in the same channel). */
+export function trackBotReply(messageId: string) {
+  dispatchAls.getStore()?.botReplyIds.add(messageId)
 }
 
 /** Returns the IDs of messages edited during this dispatch cycle, then
  *  clears the set. Called by the messages POST route and the callback
  *  route after dispatchBotUpdate/dispatchBotCallback returns. */
 export function getAndClearEditedMessages(): string[] {
-  const ids = Array.from(editedMessageIds)
-  editedMessageIds.clear()
+  const store = dispatchAls.getStore()
+  if (!store) return []
+  const ids = Array.from(store.editedMessageIds)
+  store.editedMessageIds.clear()
   return ids
+}
+
+/** Returns the IDs of bot replies created during this dispatch cycle. */
+export function getAndClearBotReplyIds(): string[] {
+  const store = dispatchAls.getStore()
+  if (!store) return []
+  const ids = Array.from(store.botReplyIds)
+  store.botReplyIds.clear()
+  return ids
+}
+
+/** Run a function inside a fresh dispatch context (isolated edited/reply
+ *  tracking). Used by dispatchBotUpdate and dispatchBotCallback. */
+function withDispatchContext<T>(fn: () => Promise<T>): Promise<T> {
+  const store: DispatchContext = {
+    editedMessageIds: new Set(),
+    botReplyIds: new Set(),
+  }
+  return dispatchAls.run(store, fn)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -193,6 +238,7 @@ function buildBotContext(bot: any, params: DispatchParams): BotContext {
         keyboard: keyboard && keyboard.length > 0 ? JSON.stringify(keyboard) : null,
       },
     })
+    trackBotReply(msg.id)
     return msg.id
   }
 
@@ -221,6 +267,7 @@ function buildBotContext(bot: any, params: DispatchParams): BotContext {
         mediaType,
       },
     })
+    trackBotReply(msg.id)
     return msg.id
   }
 
@@ -279,8 +326,11 @@ function buildBotContext(bot: any, params: DispatchParams): BotContext {
         channelId: params.channelId,
         isTyping: true,
       }
-      // Clear any existing timer for this bot
-      const existing = typingTimers.get(bot.id)
+      // Key by bot+channel — multiple channels using the same bot no
+      // longer interfere (previously the second dispatch's setTyping
+      // would clear the first dispatch's typing timer).
+      const timerKey = `${bot.id}:${params.channelId}`
+      const existing = typingTimers.get(timerKey)
       if (existing) clearInterval(existing)
       // Emit immediately
       io.to(room).emit('channel:typing', typingPayload)
@@ -289,13 +339,13 @@ function buildBotContext(bot: any, params: DispatchParams): BotContext {
       const interval = setInterval(() => {
         if (Date.now() >= endTime) {
           clearInterval(interval)
-          typingTimers.delete(bot.id)
+          typingTimers.delete(timerKey)
           io.to(room).emit('channel:typing', { ...typingPayload, isTyping: false })
           return
         }
         io.to(room).emit('channel:typing', typingPayload)
       }, 4000)
-      typingTimers.set(bot.id, interval)
+      typingTimers.set(timerKey, interval)
     } catch (e: any) {
       console.warn('[bot:typing] failed:', e?.message || e)
     }
@@ -313,16 +363,18 @@ function buildBotContext(bot: any, params: DispatchParams): BotContext {
     }
   }
 
-  // Helper: state management
-  const stateKey = { botId: bot.id, userId: params.senderId }
+  // Helper: state management — scoped by channelId so the same user's
+  // bot sessions in different channels don't interfere (paused flows,
+  // poll votes, counters all stay isolated per-channel).
+  const stateKey = { botId: bot.id, userId: params.senderId, channelId: params.channelId }
   const getState = async () => {
-    const session = await db.conversationSession.findUnique({ where: { botId_userId: stateKey } })
+    const session = await db.conversationSession.findUnique({ where: { botId_userId_channelId: stateKey } })
     if (!session) return {}
     try { return JSON.parse(session.state || '{}') } catch { return {} }
   }
   const setState = async (state: any) => {
     await db.conversationSession.upsert({
-      where: { botId_userId: stateKey },
+      where: { botId_userId_channelId: stateKey },
       create: { ...stateKey, state: JSON.stringify(state) },
       update: { state: JSON.stringify(state) },
     })
@@ -379,6 +431,14 @@ export async function dispatchBotUpdate(params: {
   /** ASR transcript of the incoming voice message, if auto-transcription is enabled */
   transcript?: string | null
 }): Promise<void> {
+  // Wrap the entire dispatch in an isolated ALS context so concurrent
+  // dispatches don't cross-contaminate edited-message-ID tracking.
+  return withDispatchContext(async () => {
+    await _dispatchBotUpdateImpl(params)
+  })
+}
+
+async function _dispatchBotUpdateImpl(params: Parameters<typeof dispatchBotUpdate>[0]): Promise<void> {
   const bot = await db.bot.findUnique({ where: { id: params.botId } })
   if (!bot || !bot.enabled) return
 
@@ -499,6 +559,13 @@ export async function dispatchBotCallback(params: {
   callbackData: string // the button's callbackData value
   replyToId?: string | null
 }): Promise<void> {
+  // Wrap in isolated ALS context for the same reason as dispatchBotUpdate.
+  return withDispatchContext(async () => {
+    await _dispatchBotCallbackImpl(params)
+  })
+}
+
+async function _dispatchBotCallbackImpl(params: Parameters<typeof dispatchBotCallback>[0]): Promise<void> {
   const bot = await db.bot.findUnique({ where: { id: params.botId } })
   if (!bot || !bot.enabled) return
 

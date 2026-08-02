@@ -398,6 +398,7 @@ model ConversationSession {
   id        String   @id @default(cuid())
   botId     String
   userId    String
+  channelId String   @default("default") // isolates per-user state across channels
   state     String   @default("{}") // JSON state
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
@@ -405,7 +406,8 @@ model ConversationSession {
   bot       Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([botId, userId])
+  @@unique([botId, userId, channelId])
+  @@index([botId, userId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -239,7 +239,7 @@ export function VoiceView() {
         </section>
 
         {/* Other ongoing calls — channels with activity I haven't joined */}
-        {otherActiveCalls.length > 0 && otherActiveCalls.length > 0 && (
+        {otherActiveCalls.length > 0 && (
           <section>
             <div className="flex items-center gap-2 mb-3">
               <Radio className="w-4 h-4 text-status-online animate-pulse" />

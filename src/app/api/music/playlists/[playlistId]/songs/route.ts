@@ -35,19 +35,24 @@ export async function POST(
     return NextResponse.json({ error: 'videoId, title, artist required' }, { status: 400 })
   }
 
-  // Get the current max order to append at the end
-  const maxOrderRow = await db.playlistSong.findFirst({
-    where: { playlistId },
-    orderBy: { order: 'desc' },
-    select: { order: true },
-  })
-  const nextOrder = (maxOrderRow?.order || 0) + 1
+  // Wrap maxOrder lookup + upsert in a transaction so two concurrent
+  // "append" requests don't both read the same maxOrder and produce two
+  // songs with identical `order` values (which would make ordering unstable).
+  const song = await db.$transaction(async (tx) => {
+    // Get the current max order to append at the end
+    const maxOrderRow = await tx.playlistSong.findFirst({
+      where: { playlistId },
+      orderBy: { order: 'desc' },
+      select: { order: true },
+    })
+    const nextOrder = (maxOrderRow?.order || 0) + 1
 
-  // Upsert — if already in playlist, just update metadata
-  const song = await db.playlistSong.upsert({
-    where: { playlistId_videoId: { playlistId, videoId } },
-    create: { playlistId, videoId, title, artist, thumbnail, durationSeconds, order: nextOrder },
-    update: { title, artist, thumbnail, durationSeconds },
+    // Upsert — if already in playlist, just update metadata
+    return tx.playlistSong.upsert({
+      where: { playlistId_videoId: { playlistId, videoId } },
+      create: { playlistId, videoId, title, artist, thumbnail, durationSeconds, order: nextOrder },
+      update: { title, artist, thumbnail, durationSeconds },
+    })
   })
 
   // Touch the playlist's updatedAt so it sorts to the top

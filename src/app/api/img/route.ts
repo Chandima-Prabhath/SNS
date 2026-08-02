@@ -42,8 +42,17 @@ export async function GET(req: Request) {
 
   // Normalize source path
   const normalizedSrc = src.replace(/^\/api\/uploads\//, '/uploads/')
-  const safePath = normalizedSrc.replace(/\.\./g, '').replace(/^\//, '')
-  const filePath = path.join(process.cwd(), 'public', safePath)
+
+  // Path traversal protection: resolve the requested path and verify it stays
+  // within the public/ directory. Using path.resolve() collapses any `..`
+  // segments, and startsWith() ensures the final path is contained.
+  const publicDir = path.resolve(process.cwd(), 'public')
+  const requestedPath = path.resolve(publicDir, normalizedSrc)
+  if (!requestedPath.startsWith(publicDir + path.sep) && requestedPath !== publicDir) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
+  const filePath = requestedPath
+  const safePath = path.relative(publicDir, requestedPath)
 
   // Generate cache key: sha256(src + w + q)
   const cacheKey = crypto.createHash('sha256').update(`${safePath}-${w}-${q}`).digest('hex').slice(0, 32)

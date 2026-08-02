@@ -68,6 +68,11 @@ export function IncomingCallOverlay() {
       window.removeEventListener('sns:call-cancelled', onCancelled as EventListener)
       window.removeEventListener('sns:call-rejected', onRejected as EventListener)
       window.removeEventListener('sns:call-ended', onEnded as EventListener)
+      // CRITICAL: stop the ring tone on unmount. Without this, if the
+      // component unmounts mid-ring (HMR, session expiry, navigation),
+      // the ring tone keeps playing forever — there's no other code path
+      // that will stop it.
+      CallSounds.stop()
     }
   }, [incoming?.callId])
 

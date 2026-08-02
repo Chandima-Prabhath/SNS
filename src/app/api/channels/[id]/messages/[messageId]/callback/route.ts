@@ -96,26 +96,24 @@ export async function POST(
       replyToId: messageId,
     })
 
-    console.log(`[callback] dispatch complete, fetching bot replies since ${dispatchStart.toISOString()}`)
-
-    // Fetch bot replies created during dispatch (using the dispatch start
-    // timestamp to avoid matching stale messages)
-    const botReplies = await db.message.findMany({
-      where: {
-        channelId,
-        senderType: 'bot',
-        createdAt: { gte: dispatchStart },
-      },
-      include: {
-        sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
-        replyTo: {
-          select: { id: true, body: true, senderType: true, sender: { select: { username: true, displayName: true } } },
-        },
-      },
-      orderBy: { createdAt: 'asc' },
-    })
-
-    console.log(`[callback] found ${botReplies.length} bot replies`)
+    // Fetch bot replies created during dispatch.
+    // CRITICAL FIX: previously used `createdAt: { gte: dispatchStart }` which
+    // races with concurrent dispatches. The framework now tracks exact reply
+    // IDs per-dispatch via AsyncLocalStorage, so we fetch by ID (precise).
+    const { getAndClearBotReplyIds } = await import('@/lib/bot/framework')
+    const replyIds = getAndClearBotReplyIds()
+    const botReplies = replyIds.length > 0
+      ? await db.message.findMany({
+          where: { id: { in: replyIds } },
+          include: {
+            sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } },
+            replyTo: {
+              select: { id: true, body: true, senderType: true, sender: { select: { username: true, displayName: true } } },
+            },
+          },
+          orderBy: { createdAt: 'asc' },
+        })
+      : []
 
     // Check for messages that were EDITED during dispatch (Telegram-style
     // edit-in-place). The framework tracks edited message IDs via
@@ -158,9 +156,9 @@ export async function POST(
       recipientIds,
     })
   } catch (e: any) {
-    console.error('[callback] error:', e)
+    console.error('[callback] error:', e?.message || e)
     return NextResponse.json(
-      { error: e?.message || 'callback failed' },
+      { error: 'internal error' },
       { status: 500 }
     )
   }

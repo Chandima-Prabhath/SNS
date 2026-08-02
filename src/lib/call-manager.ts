@@ -476,6 +476,22 @@ export class CallManager {
   isScreenSharing() { return this.isSharingScreen }
 
   /**
+   * Set the speaker volume for the CALL ONLY — adjusts the volume of the
+   * remote peer audio elements this CallManager owns. Does NOT touch any
+   * other <audio> elements in the DOM (music player, voice messages, TTS
+   * preview, etc.) — the previous implementation in the UI did exactly that
+   * and ended up muting the entire app when the user toggled speaker off.
+   */
+  setSpeakerVolume(volume: number): void {
+    const safeVol = Math.max(0, Math.min(1, volume))
+    for (const peer of this.peers.values()) {
+      if (peer.audioEl) {
+        peer.audioEl.volume = safeVol
+      }
+    }
+  }
+
+  /**
    * End the call — full cleanup.
    * Called when the user clicks End OR when the server says the call ended.
    */

@@ -10,6 +10,30 @@ import path from 'path'
 
 const execFileAsync = promisify(execFile)
 
+// Simple per-user in-memory rate limit: max 20 TTS requests / minute.
+// Resets after the 60s window expires. We intentionally don't use a library
+// here — the goal is just to stop a single user from saturating the (slow)
+// Python TTS sidecar. Multi-instance deployments would need a shared store
+// (e.g. Redis), but a single-process Map is sufficient for this codebase.
+const TTS_RATE_LIMIT_MAX = 20
+const TTS_RATE_LIMIT_WINDOW_MS = 60_000
+interface TtsRateBucket { count: number; resetAt: number }
+const ttsRateBuckets = new Map<string, TtsRateBucket>()
+
+function ttsRateLimit(userId: string): boolean {
+  const now = Date.now()
+  const bucket = ttsRateBuckets.get(userId)
+  if (!bucket || now >= bucket.resetAt) {
+    ttsRateBuckets.set(userId, { count: 1, resetAt: now + TTS_RATE_LIMIT_WINDOW_MS })
+    return true
+  }
+  if (bucket.count >= TTS_RATE_LIMIT_MAX) {
+    return false
+  }
+  bucket.count += 1
+  return true
+}
+
 // Force this route to always run on the Node.js runtime as a dynamic route.
 // In production builds, Next.js can otherwise try to inline/optimize route
 // handlers in ways that break streaming responses. These two exports ensure
@@ -49,6 +73,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     }
     const userId = session.user.id
+
+    // Per-user rate limit — TTS is expensive (Python sidecar + ffmpeg).
+    if (!ttsRateLimit(userId)) {
+      return NextResponse.json(
+        { error: 'rate limit exceeded — try again in a minute' },
+        { status: 429 },
+      )
+    }
 
     const { text, voice = 'alba', customVoiceId } = await req.json()
 
@@ -149,9 +181,9 @@ export async function POST(req: Request) {
       },
     })
   } catch (e: any) {
-    console.error('[tts] error:', e)
+    console.error('[tts] error:', e?.message || e)
     return NextResponse.json(
-      { error: e?.message || 'TTS generation failed' },
+      { error: 'internal error' },
       { status: 500 }
     )
   }

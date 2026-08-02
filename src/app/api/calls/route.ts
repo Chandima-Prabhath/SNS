@@ -24,6 +24,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'channelId or dmGroupId required' }, { status: 400 })
   }
 
+  // Authorization: caller must be a member of the channel or DM group
+  if (channelId) {
+    const membership = await db.channelMember.findUnique({
+      where: { channelId_userId: { channelId, userId } },
+    })
+    if (!membership) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+    }
+  } else if (dmGroupId) {
+    const dmLink = await db.dmLink.findFirst({
+      where: { id: dmGroupId, OR: [{ userAId: userId }, { userBId: userId }] },
+    })
+    if (!dmLink) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+    }
+  }
+
   // Look for an existing active call in this channel/DM
   const where = channelId
     ? { channelId, status: 'active' as const }

@@ -361,25 +361,30 @@ export interface ResumeDescriptor {
  */
 function interpolate(text: string, ctx: BotExecutionContext): string {
   let out = text
+  // Use String.replaceAll instead of new RegExp — variable names can
+  // contain regex metacharacters (e.g. if a user names a variable
+  // 'count.', '(.*)', or 'a+b'), which would either throw a SyntaxError
+  // or match unexpected substrings. replaceAll with a string pattern
+  // treats it as a literal.
   for (const [k, v] of Object.entries(ctx.variables)) {
-    out = out.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), v)
+    out = out.replaceAll(`{{${k}}}`, v)
   }
-  out = out.replace(/\{\{sender\}\}/g, ctx.senderName)
-  out = out.replace(/\{\{args\}\}/g, ctx.args.join(' '))
-  out = out.replace(/\{\{body\}\}/g, ctx.body)
+  out = out.replaceAll('{{sender}}', ctx.senderName)
+  out = out.replaceAll('{{args}}', ctx.args.join(' '))
+  out = out.replaceAll('{{body}}', ctx.body)
   // Convenience: expose the incoming message's media URL/type and any
   // pre-existing ASR transcript as {{mediaUrl}}, {{mediaType}}, {{transcript}}.
   // These are also available as ctx.variables (set by visual.ts at flow start)
   // but the explicit fallbacks here make them work even in debug mode.
-  out = out.replace(/\{\{mediaUrl\}\}/g, ctx.variables.__mediaUrl || '')
-  out = out.replace(/\{\{mediaType\}\}/g, ctx.variables.__mediaType || '')
+  out = out.replaceAll('{{mediaUrl}}', ctx.variables.__mediaUrl || '')
+  out = out.replaceAll('{{mediaType}}', ctx.variables.__mediaType || '')
   // IMPORTANT: prefer the user-set 'transcript' variable (from an explicit
   // asr_transcribe node) over the auto-set '__transcript' (from the incoming
   // message's auto-transcription). The auto-transcript may be stale or empty,
   // and the user's explicit ASR node should take precedence.
-  out = out.replace(/\{\{transcript\}\}/g, ctx.variables.transcript || ctx.variables.__transcript || '')
+  out = out.replaceAll('{{transcript}}', ctx.variables.transcript || ctx.variables.__transcript || '')
   // Also expose the detected message type (set by the message_type node)
-  out = out.replace(/\{\{messageType\}\}/g, ctx.variables.__messageType || '')
+  out = out.replaceAll('{{messageType}}', ctx.variables.__messageType || '')
   return out
 }
 
@@ -1031,6 +1036,37 @@ export async function executeBotFlow(
           const method = currentNode.data.method || 'GET'
           const headers = currentNode.data.headers ? JSON.parse(currentNode.data.headers) : {}
           const body = currentNode.data.body ? interpolate(currentNode.data.body, ctx) : undefined
+
+          // SSRF guard: block requests to private/loopback IPs unless the
+          // admin explicitly allows it via BOT_API_ALLOW_PRIVATE=1.
+          // Without this, any user who can edit a bot (or whose message
+          // interpolates into {{body}}={{url}}) could make the server
+          // fetch internal URLs (cloud metadata service, Ollama, Redis…).
+          const apiNodeId = currentNode.id
+          const allowPrivate = process.env.BOT_API_ALLOW_PRIVATE === '1'
+          if (!allowPrivate) {
+            try {
+              const parsed = new URL(url)
+              const host = parsed.hostname
+              const isLoopback = /^(127\.|localhost$|::1$)/i.test(host) ||
+                host.endsWith('.localhost') ||
+                /^169\.254\./.test(host) // link-local (cloud metadata)
+              const isPrivate = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(host)
+              if (isLoopback || isPrivate) {
+                trace.push({
+                  type: 'error', timestamp: now(), nodeId: apiNodeId,
+                  message: `SSRF guard: blocked request to private/loopback host '${host}'. Set BOT_API_ALLOW_PRIVATE=1 to allow.`
+                })
+                currentNode = followEdge(apiNodeId, null)
+                break
+              }
+            } catch {
+              trace.push({ type: 'error', timestamp: now(), nodeId: apiNodeId, message: `api_call: invalid URL '${url.slice(0, 100)}'` })
+              currentNode = followEdge(apiNodeId, null)
+              break
+            }
+          }
+
           // 30s timeout — external APIs should respond within this window.
           // Prevents a slow/down API from hanging the bot forever.
           const apiController = new AbortController()
