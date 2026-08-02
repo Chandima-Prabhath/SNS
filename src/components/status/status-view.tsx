@@ -100,6 +100,7 @@ function UploadStoryCard() {
   const [mediaType, setMediaType] = useState('image')
   const [caption, setCaption] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [audience, setAudience] = useState<'all' | 'include' | 'exclude'>('all')
   const { upload } = useStories()
 
   const reset = () => {
@@ -107,6 +108,7 @@ function UploadStoryCard() {
     setMediaType('image')
     setCaption('')
     setUploading(false)
+    setAudience('all')
   }
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -148,7 +150,12 @@ function UploadStoryCard() {
   const handleSubmit = async () => {
     if (!mediaUrl) return
     try {
-      await upload({ mediaUrl, mediaType, caption: caption.trim() || undefined })
+      await upload({
+        mediaUrl,
+        mediaType,
+        caption: caption.trim() || undefined,
+        audience,
+      })
       toast.success('Status posted')
       setOpen(false)
       reset()
@@ -231,6 +238,39 @@ function UploadStoryCard() {
                   placeholder="What's happening?"
                   rows={2}
                 />
+              </div>
+              {/* Audience picker — who can see this story */}
+              <div className="space-y-2">
+                <Label>Who can see this?</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    { value: 'all', label: 'Everyone', desc: 'Public' },
+                    { value: 'include', label: 'Only…', desc: 'Share with selected' },
+                    { value: 'exclude', label: 'All except…', desc: 'Hide from selected' },
+                  ] as const).map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setAudience(opt.value)}
+                      className={cn(
+                        'flex flex-col items-start gap-0.5 p-3 rounded-lg border text-left transition-colors',
+                        audience === opt.value
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border hover:bg-accent/50'
+                      )}
+                    >
+                      <span className="text-xs font-medium">{opt.label}</span>
+                      <span className="text-[10px] text-muted-foreground">{opt.desc}</span>
+                    </button>
+                  ))}
+                </div>
+                {audience !== 'all' && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {audience === 'include'
+                      ? "You'll be able to pick friends after posting — for now, the story is saved as 'include' with an empty list (only you can see it)."
+                      : "You'll be able to pick friends to exclude after posting — for now, the story is visible to everyone."}
+                  </p>
+                )}
               </div>
             </div>
             <DialogFooter>

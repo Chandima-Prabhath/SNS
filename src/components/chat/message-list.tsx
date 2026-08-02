@@ -795,20 +795,33 @@ function MessageItem(props: MessageItemProps) {
 
         {/* Read receipt checkmarks — only on the LAST own message in a group.
             Rendered OUTSIDE the bubble div (after it) to prevent any clipping.
-            - Faded Check = sent (not yet delivered)
-            - Solid Check = delivered to recipient's device
+            States (WhatsApp-style):
+            - Single faded Check = sent (server received, not yet delivered)
+            - Single solid Check = delivered to recipient's device
+            - Double gray Check = delivered to multiple devices
             - Blue CheckCheck = read by at least one recipient */}
         {isMine && isLastOfGroup && m.senderType === 'user' && (
           <div className="flex justify-end pr-1 mt-0.5">
-            <span className={cn(
-              'inline-flex items-center gap-0.5',
-              (m.readReceipts?.length ?? 0) > 0
-                ? 'text-cyan-300'
-                : m.deliveredAt
-                  ? 'text-white/90'
-                  : 'text-white/50'
-            )}>
+            <span
+              className={cn(
+                'inline-flex items-center gap-0.5 transition-colors',
+                (m.readReceipts?.length ?? 0) > 0
+                  ? 'text-sky-400'
+                  : m.deliveredAt
+                    ? 'text-white/80'
+                    : 'text-white/40'
+              )}
+              title={
+                (m.readReceipts?.length ?? 0) > 0
+                  ? `Read by ${m.readReceipts?.length ?? 0}`
+                  : m.deliveredAt
+                    ? 'Delivered'
+                    : 'Sent'
+              }
+            >
               {(m.readReceipts?.length ?? 0) > 0 ? (
+                <CheckCheck className="w-4 h-4" strokeWidth={2.5} />
+              ) : m.deliveredAt ? (
                 <CheckCheck className="w-4 h-4" strokeWidth={2.5} />
               ) : (
                 <Check className="w-4 h-4" strokeWidth={2.5} />

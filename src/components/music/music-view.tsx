@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useSession } from 'next-auth/react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -11,6 +12,7 @@ import {
   Loader2, Radio, Headphones, X, ListMusic, Compass,
   Trash2, Repeat, Shuffle, Music as MusicIcon, Users,
   Flame, Sparkles, History, Library, Clock, Heart, ListPlus,
+  Crown, LogOut, UserCog,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -152,9 +154,14 @@ export function MusicView() {
   }, [queue.length, upNextTracks.length])
   const activeRoomId = useMusicStore((s) => s.activeRoomId)
   const setActiveRoomId = useMusicStore((s) => s.setActiveRoomId)
+  const hostUserId = useMusicStore((s) => s.hostUserId)
+  const setHostUserId = useMusicStore((s) => s.setHostUserId)
   const setShuffle = useMusicStore((s) => s.setShuffle)
   const setRepeat = useMusicStore((s) => s.setRepeat)
   const setAutoplay = useMusicStore((s) => s.setAutoplay)
+  const { data: session } = useSession()
+  const myUserId = (session?.user as any)?.id as string | undefined
+  const amHost = !activeRoomId || !hostUserId || hostUserId === myUserId
 
   // ─── Player actions (broadcast + audio handled by global player) ──────
   const { playTrack, playNext, removeFromQueue, clearQueue } = useMusicPlayer()
@@ -676,6 +683,17 @@ export function MusicView() {
                 transition={{ duration: 0.2 }}
                 className="space-y-4"
               >
+                {/* In-Room panel — host info + leave + transfer-host */}
+                {activeRoomId && (
+                  <InRoomPanel
+                    roomId={activeRoomId}
+                    hostUserId={hostUserId}
+                    myUserId={myUserId}
+                    onLeave={() => setActiveRoomId(null)}
+                    onTransferHost={(newHostId) => setHostUserId(newHostId)}
+                  />
+                )}
+
                 {/* Now Playing card — blurred bg + full controls */}
                 {currentTrack && (
                   <div className="relative rounded-2xl overflow-hidden border border-white/10 shadow-xl">
@@ -1656,4 +1674,189 @@ function RoomCard({
       </GlassSurface>
     </div>
   )
+}
+
+// ─── In-Room panel ───────────────────────────────────────────────────────
+// Shows when the user is in a music room: host badge, members list, leave
+// button, and host-transfer UI (host can pick another member to take over).
+function InRoomPanel({
+  roomId,
+  hostUserId,
+  myUserId,
+  onLeave,
+  onTransferHost,
+}: {
+  roomId: string
+  hostUserId: string | null
+  myUserId?: string
+  onLeave: () => void
+  onTransferHost: (newHostId: string) => void
+}) {
+  const { socket } = useSocketSafe()
+  const [showMembers, setShowMembers] = useState(false)
+  const [members, setMembers] = useState<string[]>([])
+  const amHost = !hostUserId || !myUserId || hostUserId === myUserId
+
+  // Listen for state updates from the server — extract the members list so
+  // we can show it + offer host-transfer to any non-host member.
+  useEffect(() => {
+    if (!socket) return
+    const onState = (data: { roomId: string; members: string[]; hostUserId: string }) => {
+      if (data.roomId !== roomId) return
+      setMembers(data.members || [])
+    }
+    socket.on('music:state', onState)
+    socket.on('music:host-changed', (d: { roomId: string; newHostUserId: string }) => {
+      if (d.roomId === roomId) {
+        toast.info('Host changed')
+      }
+    })
+    return () => {
+      socket.off('music:state', onState)
+    }
+  }, [socket, roomId])
+
+  const handleTransferHost = (newHostId: string) => {
+    if (!socket) return
+    socket.emit('music:transfer-host', { roomId, newHostUserId: newHostId })
+    onTransferHost(newHostId)
+    setShowMembers(false)
+    toast.success('Host transferred')
+  }
+
+  const handleLeave = () => {
+    if (socket) socket.emit('music:leave', roomId)
+    onLeave()
+  }
+
+  const otherMembers = members.filter((id) => id !== myUserId)
+
+  return (
+    <GlassSurface blur={12} opacity={0.04} className="p-3 border-primary/20">
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <div className={cn(
+            'w-8 h-8 rounded-lg flex items-center justify-center',
+            amHost ? 'bg-primary/15 text-primary' : 'bg-muted/40 text-muted-foreground'
+          )}>
+            <Crown className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">
+              {amHost ? 'You are hosting' : 'Listening in room'}
+            </div>
+            <div className="text-sm font-medium truncate">
+              {amHost
+                ? 'You control playback for everyone'
+                : 'Only the host can play / pause / skip'}
+            </div>
+          </div>
+        </div>
+
+        <div className="ml-auto flex items-center gap-1.5">
+          {/* Members count + expand */}
+          {members.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs"
+              onClick={() => setShowMembers((v) => !v)}
+            >
+              <Users className="w-3.5 h-3.5 mr-1" />
+              {members.length} {members.length === 1 ? 'member' : 'members'}
+            </Button>
+          )}
+
+          {/* Host: transfer host button */}
+          {amHost && otherMembers.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs"
+              onClick={() => setShowMembers((v) => !v)}
+            >
+              <UserCog className="w-3.5 h-3.5 mr-1" />
+              Transfer host
+            </Button>
+          )}
+
+          {/* Leave room */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10"
+            onClick={handleLeave}
+          >
+            <LogOut className="w-3.5 h-3.5 mr-1" />
+            Leave
+          </Button>
+        </div>
+      </div>
+
+      {/* Members list (expandable) — shows user IDs + transfer buttons for host */}
+      <AnimatePresence>
+        {showMembers && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-3 pt-3 border-t border-white/5 space-y-1">
+              {members.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2 text-center">
+                  No other members in this room.
+                </p>
+              ) : (
+                members.map((mid) => {
+                  const isHost = mid === hostUserId
+                  const isMe = mid === myUserId
+                  return (
+                    <div
+                      key={mid}
+                      className="flex items-center gap-2 p-2 rounded-lg hover:bg-white/[0.04] transition-colors"
+                    >
+                      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary/30 to-purple-500/30 flex items-center justify-center text-[10px] font-bold shrink-0">
+                        {mid.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate">
+                          {isMe ? 'You' : `User ${mid.slice(-4)}`}
+                        </div>
+                        {isHost && (
+                          <div className="text-[10px] text-primary flex items-center gap-1">
+                            <Crown className="w-2.5 h-2.5" /> Host
+                          </div>
+                        )}
+                      </div>
+                      {amHost && !isHost && !isMe && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() => handleTransferHost(mid)}
+                        >
+                          <Crown className="w-3 h-3 mr-1" />
+                          Make host
+                        </Button>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </GlassSurface>
+  )
+}
+
+// Avoid circular import — small inline shim that gets the socket without
+// pulling the full useSocket hook (which would re-render this panel on every
+// connect/disconnect).
+function useSocketSafe(): { socket: any } {
+  const { socket } = (require('@/hooks/useSocket') as typeof import('@/hooks/useSocket')).useSocket()
+  return { socket }
 }

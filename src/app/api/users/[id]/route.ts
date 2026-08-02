@@ -13,6 +13,13 @@ const profileUpdateSchema = z.object({
   lastSeenVisible: z.boolean().optional(),
   readReceiptsEnabled: z.boolean().optional(),
   typingIndicatorsEnabled: z.boolean().optional(),
+  notificationPrefs: z.object({
+    messages: z.boolean().optional(),
+    mentions: z.boolean().optional(),
+    calls: z.boolean().optional(),
+    stories: z.boolean().optional(),
+    sound: z.boolean().optional(),
+  }).optional(),
 })
 
 // Update own profile
@@ -35,9 +42,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   const data = parsed.data
 
+  // notificationPrefs is stored as JSON string — serialize it before saving
+  const updateData: any = { ...data }
+  if (data.notificationPrefs) {
+    updateData.notificationPrefs = JSON.stringify(data.notificationPrefs)
+  }
+
   const updated = await db.user.update({
     where: { id: userId },
-    data,
+    data: updateData,
     select: {
       id: true,
       username: true,
@@ -51,7 +64,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       lastSeenVisible: true,
       readReceiptsEnabled: true,
       typingIndicatorsEnabled: true,
+      notificationPrefs: true,
     },
   })
-  return NextResponse.json({ user: updated })
+
+  // Parse notificationPrefs back into an object for the client
+  const userResponse: any = { ...updated }
+  if (updated.notificationPrefs) {
+    try {
+      userResponse.notificationPrefs = JSON.parse(updated.notificationPrefs)
+    } catch {
+      userResponse.notificationPrefs = null
+    }
+  }
+  return NextResponse.json({ user: userResponse })
 }

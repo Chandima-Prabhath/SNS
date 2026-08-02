@@ -37,9 +37,9 @@ export const authOptions: NextAuthOptions = {
         const forwarded = req?.headers?.['x-forwarded-for'] as string | undefined
         const ip = forwarded?.split(',')[0]?.trim() || req?.headers?.['x-real-ip'] as string | undefined || 'unknown'
 
-        await db.userSession.create({
+        const userSession = await db.userSession.create({
           data: { userId: user.id, userAgent, ip },
-        }).catch(() => {}) // best-effort — don't block login
+        }).catch(() => null) // best-effort — don't block login
 
         return {
           id: user.id,
@@ -48,6 +48,7 @@ export const authOptions: NextAuthOptions = {
           username: user.username,
           role: user.role,
           tokenVersion: user.tokenVersion,
+          sessionId: userSession?.id,
         } as any
       },
     }),
@@ -56,11 +57,12 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        // Initial sign-in — store tokenVersion from DB
+        // Initial sign-in — store tokenVersion + sessionId from DB
         token.id = (user as any).id
         token.username = (user as any).username
         token.role = (user as any).role
         token.tokenVersion = (user as any).tokenVersion ?? 0
+        token.sessionId = (user as any).sessionId
       } else if (token.id) {
         // Subsequent token refreshes — check tokenVersion for invalidation,
         // and fetch the latest role from DB so admin promotions/demotions
@@ -102,6 +104,7 @@ export const authOptions: NextAuthOptions = {
         session.user.id = token.id
         session.user.username = token.username || ''
         session.user.role = token.role || 'member'
+        ;(session as any).sessionId = token.sessionId
       }
       return session
     },

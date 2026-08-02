@@ -18,7 +18,18 @@ export async function GET() {
       role: true,
       status: true,
       customStatus: true,
+      lastSeenVisible: true,
+      readReceiptsEnabled: true,
+      typingIndicatorsEnabled: true,
+      notificationPrefs: true,
     },
   })
-  return NextResponse.json({ user: dbUser })
+  if (!dbUser) return NextResponse.json({ user: null }, { status: 401 })
+
+  // Parse notificationPrefs JSON string → object for the client
+  const user: any = { ...dbUser }
+  if (dbUser.notificationPrefs) {
+    try { user.notificationPrefs = JSON.parse(dbUser.notificationPrefs) } catch { user.notificationPrefs = null }
+  }
+  return NextResponse.json({ user })
 }

@@ -33,7 +33,7 @@ function configure() {
 export async function sendPushNotification(
   userId: string,
   payload: {
-    type: 'call' | 'message' | 'story'
+    type: 'call' | 'message' | 'story' | 'mention'
     title: string
     body: string
     callId?: string
@@ -43,6 +43,27 @@ export async function sendPushNotification(
 ) {
   configure()
   if (!configured) return
+
+  // ── Respect per-user notification preferences ──────────────────────────
+  // The user can toggle off specific notification types in Settings →
+  // Notifications. If they've disabled this type, skip sending entirely.
+  // (Mentions fall under 'mentions'; calls/messages/stories are their own type.)
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { notificationPrefs: true },
+  })
+  if (user?.notificationPrefs) {
+    try {
+      const prefs = JSON.parse(user.notificationPrefs)
+      const prefKey =
+        payload.type === 'mention' ? 'mentions' : payload.type
+      if (prefKey in prefs && prefs[prefKey] === false) {
+        return // user has disabled this notification type
+      }
+    } catch {
+      // invalid JSON in notificationPrefs — ignore, send anyway
+    }
+  }
 
   // Get ALL push subscriptions for this user (multi-device)
   const subscriptions = await db.pushSubscription.findMany({

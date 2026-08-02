@@ -40,6 +40,10 @@ model User {
   readReceiptsEnabled   Boolean @default(true)
   typingIndicatorsEnabled Boolean @default(true)
 
+  // notification prefs — stored as JSON so we can add new toggles without
+  // migrating the schema each time. Shape: { messages, mentions, calls, stories, sound }
+  notificationPrefs String? // JSON
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

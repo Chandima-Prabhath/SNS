@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Bot,
   Shield,
+  ShieldCheck,
   User,
   Server,
   Plus,
@@ -27,6 +28,17 @@ import {
   Terminal,
   Hash,
   Sparkles,
+  Monitor,
+  Smartphone,
+  Tablet,
+  Globe,
+  Clock,
+  AlertTriangle,
+  Bell,
+  MessageSquare,
+  Phone,
+  Heart,
+  Volume2,
 } from 'lucide-react'
 import { signOut } from 'next-auth/react'
 import { toast } from 'sonner'
@@ -44,7 +56,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 
-type SettingsSection = 'profile' | 'privacy' | 'bots' | 'admin' | 'system'
+type SettingsSection = 'profile' | 'privacy' | 'security' | 'notifications' | 'bots' | 'admin' | 'system'
 
 export function SettingsView() {
   const { data: session } = useSession()
@@ -56,6 +68,8 @@ export function SettingsView() {
   const sections: { key: SettingsSection; label: string; icon: typeof User; adminOnly?: boolean }[] = [
     { key: 'profile', label: 'Profile', icon: User },
     { key: 'privacy', label: 'Privacy', icon: Shield },
+    { key: 'security', label: 'Security', icon: ShieldCheck },
+    { key: 'notifications', label: 'Notifications', icon: Bell },
     { key: 'bots', label: 'Bots', icon: Bot },
     ...(isAdmin ? [{ key: 'admin' as SettingsSection, label: 'Admin', icon: Shield, adminOnly: true as const }] : []),
     { key: 'system', label: 'System', icon: Server },
@@ -109,6 +123,8 @@ export function SettingsView() {
             >
               {section === 'profile' && <ProfileSection />}
               {section === 'privacy' && <PrivacySection />}
+              {section === 'security' && <SecuritySection />}
+              {section === 'notifications' && <NotificationsSection />}
               {section === 'bots' && <BotsSection />}
               {section === 'admin' && isAdmin && <AdminSection />}
               {section === 'system' && <SystemSection />}
@@ -377,6 +393,423 @@ function PrivacyRow({ title, desc, checked, onChange }: { title: string; desc: s
       <div className="flex-1 min-w-0 pr-6">
         <div className="font-semibold text-[15px]">{title}</div>
         <div className="text-sm text-muted-foreground mt-0.5">{desc}</div>
+      </div>
+      <Switch checked={checked} onCheckedChange={onChange} className="data-[state=checked]:bg-primary" />
+    </div>
+  )
+}
+
+// ─── Security ────────────────────────────────────────────────────────────
+
+function SecuritySection() {
+  const { data: session } = useSession()
+  const qc = useQueryClient()
+  const confirm = useConfirm()
+  const [revokingId, setRevokingId] = useState<string | null>(null)
+
+  // Fetch active sessions (devices)
+  const { data: sessionsData, isLoading } = useQuery({
+    queryKey: ['auth-sessions'],
+    queryFn: async () => {
+      const res = await fetch('/api/auth/sessions')
+      if (!res.ok) throw new Error('failed')
+      return res.json() as Promise<{ sessions: SessionInfo[] }>
+    },
+  })
+
+  const sessions = sessionsData?.sessions || []
+  const currentSessionId = (session as any)?.sessionId as string | undefined
+
+  // Revoke a single session
+  const revokeSession = useMutation({
+    mutationFn: async (sessionId: string) => {
+      const res = await fetch(`/api/auth/sessions?id=${sessionId}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('failed')
+      return res.json()
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['auth-sessions'] })
+      toast.success('Session revoked')
+    },
+    onError: () => toast.error('Could not revoke session'),
+  })
+
+  // Sign out everywhere
+  const signOutAll = useMutation({
+    mutationFn: async () => {
+      const res = await fetch('/api/auth/signout-all', { method: 'POST' })
+      if (!res.ok) throw new Error('failed')
+      return res.json()
+    },
+    onSuccess: async () => {
+      toast.success('Signed out from all devices')
+      // Clear local caches + redirect to login
+      try { localStorage.removeItem('adoo-session-cache') } catch {}
+      try {
+        const cacheNames = await caches.keys()
+        await Promise.all(cacheNames.map((n) => caches.delete(n)))
+      } catch {}
+      await signOut({ callbackUrl: '/login' })
+    },
+    onError: () => toast.error('Could not sign out everywhere'),
+  })
+
+  const handleRevoke = async (sessionId: string, label: string) => {
+    const ok = await confirm({
+      title: 'Revoke session?',
+      message: `Sign out from ${label}? The user on that device will need to log in again.`,
+      confirmLabel: 'Revoke',
+      variant: 'danger',
+    })
+    if (!ok) return
+    setRevokingId(sessionId)
+    try {
+      await revokeSession.mutateAsync(sessionId)
+    } finally {
+      setRevokingId(null)
+    }
+  }
+
+  const handleSignOutAll = async () => {
+    const ok = await confirm({
+      title: 'Sign out everywhere?',
+      message: 'This will sign you out from ALL devices, including this one. You will need to log in again on every device.',
+      confirmLabel: 'Sign out all',
+      variant: 'danger',
+    })
+    if (!ok) return
+    signOutAll.mutate()
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Active sessions */}
+      <GlassSurface blur={16} opacity={0.03} className="overflow-hidden">
+        <div className="p-5 border-b border-white/5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+                <ShieldCheck className="w-4 h-4 text-primary" />
+              </div>
+              <div>
+                <div className="font-semibold text-[15px]">Active sessions</div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  Devices currently signed in to your account
+                </div>
+              </div>
+            </div>
+            <Badge variant="secondary" className="text-xs">
+              {sessions.length} {sessions.length === 1 ? 'device' : 'devices'}
+            </Badge>
+          </div>
+        </div>
+
+        <div className="divide-y divide-white/5">
+          {isLoading ? (
+            <div className="p-6 flex items-center justify-center text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Loading sessions…
+            </div>
+          ) : sessions.length === 0 ? (
+            <div className="p-6 text-sm text-muted-foreground text-center">
+              No active sessions found.
+            </div>
+          ) : (
+            sessions.map((s) => {
+              const isCurrent = s.id === currentSessionId
+              const device = parseDevice(s.userAgent)
+              const Icon = device.icon
+              return (
+                <div
+                  key={s.id}
+                  className="p-4 flex items-center gap-3 hover:bg-white/[0.02] transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-muted/40 flex items-center justify-center shrink-0">
+                    <Icon className="w-5 h-5 text-muted-foreground" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-sm">{device.label}</span>
+                      {isCurrent && (
+                        <Badge className="text-[10px] px-1.5 py-0 h-4 bg-primary/15 text-primary border border-primary/20">
+                          this device
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                      {device.browser} · {device.os}
+                    </div>
+                    <div className="text-xs text-muted-foreground/70 mt-0.5 flex items-center gap-3 flex-wrap">
+                      {s.ip && (
+                        <span className="flex items-center gap-1">
+                          <Globe className="w-3 h-3" /> {s.ip}
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" /> last active {formatRelative(s.lastActiveAt)}
+                      </span>
+                    </div>
+                  </div>
+                  {!isCurrent && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-red-400 hover:text-red-300 hover:bg-red-500/10 shrink-0"
+                      disabled={revokingId === s.id}
+                      onClick={() => handleRevoke(s.id, device.label)}
+                    >
+                      {revokingId === s.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-3.5 h-3.5" />
+                      )}
+                      <span className="ml-1.5 hidden sm:inline">Revoke</span>
+                    </Button>
+                  )}
+                </div>
+              )
+            })
+          )}
+        </div>
+      </GlassSurface>
+
+      {/* Sign out everywhere */}
+      <GlassSurface blur={16} opacity={0.03} className="overflow-hidden">
+        <div className="p-5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-red-500/10 flex items-center justify-center">
+              <AlertTriangle className="w-4 h-4 text-red-400" />
+            </div>
+            <div>
+              <div className="font-semibold text-[15px]">Sign out everywhere</div>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                Invalidate all sessions and force re-login on every device
+              </div>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            className="border-red-500/30 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+            disabled={signOutAll.isPending}
+            onClick={handleSignOutAll}
+          >
+            {signOutAll.isPending ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <LogOut className="w-4 h-4 mr-2" />
+            )}
+            Sign out all
+          </Button>
+        </div>
+      </GlassSurface>
+    </div>
+  )
+}
+
+interface SessionInfo {
+  id: string
+  userAgent: string | null
+  ip: string | null
+  createdAt: string
+  lastActiveAt: string
+}
+
+function parseDevice(ua: string | null): {
+  label: string
+  browser: string
+  os: string
+  icon: typeof Monitor
+} {
+  const u = (ua || '').toLowerCase()
+  // OS detection
+  let os = 'Unknown'
+  if (/windows nt 10/.test(u)) os = 'Windows 10/11'
+  else if (/windows/.test(u)) os = 'Windows'
+  else if (/mac os x/.test(u)) os = 'macOS'
+  else if (/android/.test(u)) os = 'Android'
+  else if (/iphone|ipad|ipod/.test(u)) os = 'iOS'
+  else if (/linux/.test(u)) os = 'Linux'
+  else if (/cros/.test(u)) os = 'ChromeOS'
+
+  // Browser detection
+  let browser = 'Unknown'
+  if (/edg\//.test(u)) browser = 'Edge'
+  else if (/opr\/|opera/.test(u)) browser = 'Opera'
+  else if (/chrome/.test(u)) browser = 'Chrome'
+  else if (/safari/.test(u) && !/chrome/.test(u)) browser = 'Safari'
+  else if (/firefox/.test(u)) browser = 'Firefox'
+
+  // Device type
+  let label = 'Unknown device'
+  let icon = Monitor
+  if (/ipad|tablet/.test(u)) {
+    label = 'Tablet'
+    icon = Tablet
+  } else if (/android|iphone|mobile/.test(u)) {
+    label = 'Phone'
+    icon = Smartphone
+  } else {
+    label = os === 'Unknown' ? 'Desktop' : `${os} desktop`
+    icon = Monitor
+  }
+
+  return { label, browser, os, icon }
+}
+
+function formatRelative(dateStr: string): string {
+  const d = new Date(dateStr)
+  const diff = Date.now() - d.getTime()
+  const sec = Math.floor(diff / 1000)
+  if (sec < 60) return 'just now'
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}m ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  const day = Math.floor(hr / 24)
+  if (day < 7) return `${day}d ago`
+  return d.toLocaleDateString()
+}
+
+// ─── Notifications ───────────────────────────────────────────────────────
+
+function NotificationsSection() {
+  // Settings are persisted via /api/users/me PATCH (notificationPrefs JSON).
+  // We use a single JSON field for all notification prefs so we don't need
+  // a separate UserSetting row per toggle.
+  const qc = useQueryClient()
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: async () => {
+      const res = await fetch('/api/auth/me')
+      const data = await res.json()
+      return data.user
+    },
+  })
+
+  // Default prefs: all on
+  const prefs: NotificationPrefs = {
+    messages: me?.notificationPrefs?.messages ?? true,
+    mentions: me?.notificationPrefs?.mentions ?? true,
+    calls: me?.notificationPrefs?.calls ?? true,
+    stories: me?.notificationPrefs?.stories ?? true,
+    sound: me?.notificationPrefs?.sound ?? true,
+  }
+
+  const update = useMutation({
+    mutationFn: async (newPrefs: NotificationPrefs) => {
+      const res = await fetch(`/api/users/me`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notificationPrefs: newPrefs }),
+      })
+      if (!res.ok) throw new Error('failed')
+      return res.json()
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['me'] })
+      toast.success('Saved')
+    },
+    onError: () => toast.error('Could not save preferences'),
+  })
+
+  const handleToggle = (key: keyof NotificationPrefs, value: boolean) => {
+    const next = { ...prefs, [key]: value }
+    update.mutate(next)
+  }
+
+  return (
+    <div className="space-y-4">
+      <GlassSurface blur={16} opacity={0.03} className="overflow-hidden">
+        <div className="p-5 border-b border-white/5">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Bell className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <div className="font-semibold text-[15px]">Push notifications</div>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                Choose what triggers a push notification on your devices
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="divide-y divide-white/5">
+          <NotifRow
+            icon={MessageSquare}
+            title="New messages"
+            desc="Get notified when you receive a direct message"
+            checked={prefs.messages}
+            onChange={(v) => handleToggle('messages', v)}
+          />
+          <NotifRow
+            icon={Hash}
+            title="Mentions"
+            desc="Get notified when someone @mentions you in a channel"
+            checked={prefs.mentions}
+            onChange={(v) => handleToggle('mentions', v)}
+          />
+          <NotifRow
+            icon={Phone}
+            title="Incoming calls"
+            desc="Get notified when someone calls you"
+            checked={prefs.calls}
+            onChange={(v) => handleToggle('calls', v)}
+          />
+          <NotifRow
+            icon={Heart}
+            title="New stories"
+            desc="Get notified when friends post a new story"
+            checked={prefs.stories}
+            onChange={(v) => handleToggle('stories', v)}
+          />
+          <NotifRow
+            icon={Volume2}
+            title="Notification sound"
+            desc="Play a sound when a notification arrives"
+            checked={prefs.sound}
+            onChange={(v) => handleToggle('sound', v)}
+          />
+        </div>
+      </GlassSurface>
+
+      <p className="text-xs text-muted-foreground px-1">
+        Notifications are delivered to all of your subscribed devices. You can manage which devices
+        receive them in the Security tab.
+      </p>
+    </div>
+  )
+}
+
+interface NotificationPrefs {
+  messages: boolean
+  mentions: boolean
+  calls: boolean
+  stories: boolean
+  sound: boolean
+}
+
+function NotifRow({
+  icon: Icon,
+  title,
+  desc,
+  checked,
+  onChange,
+}: {
+  icon: typeof Bell
+  title: string
+  desc: string
+  checked: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <div className="flex items-center justify-between p-5 hover:bg-white/[0.02] transition-colors">
+      <div className="flex items-center gap-3 flex-1 min-w-0 pr-6">
+        <div className="w-9 h-9 rounded-lg bg-muted/40 flex items-center justify-center shrink-0">
+          <Icon className="w-4 h-4 text-muted-foreground" />
+        </div>
+        <div className="min-w-0">
+          <div className="font-semibold text-[15px]">{title}</div>
+          <div className="text-sm text-muted-foreground mt-0.5">{desc}</div>
+        </div>
       </div>
       <Switch checked={checked} onCheckedChange={onChange} className="data-[state=checked]:bg-primary" />
     </div>
